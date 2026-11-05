@@ -13,7 +13,7 @@ import {
   SlidersHorizontal,
   ExternalLink
 } from 'lucide-react';
-import { ModelConfig } from '../types';
+import { ModelConfig, DiscoveredModelsMap } from '../types';
 
 export interface ConsoleLog {
   id: string;
@@ -33,6 +33,7 @@ interface ExecutionConsoleProps {
   isExecuting: boolean;
   modelConfig: ModelConfig;
   onUpdateModelConfig: (cfg: ModelConfig) => void;
+  discoveredModels?: DiscoveredModelsMap;
   theme: 'light' | 'dark';
   onClearLogs?: () => void;
   onCollapse?: () => void;
@@ -45,6 +46,7 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
   isExecuting,
   modelConfig,
   onUpdateModelConfig,
+  discoveredModels,
   theme,
   onClearLogs,
   onCollapse,
@@ -232,6 +234,9 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
             <div className="flex items-center gap-2">
               <span className="font-semibold text-indigo-600 dark:text-indigo-400">🚀 Cursor Agent</span>
               <span className="text-[11px] text-slate-400 font-mono">/Users/jamesho/.local/bin/cursor</span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-indigo-50 dark:bg-indigo-950 text-indigo-600 border border-indigo-200 dark:border-indigo-800">
+                CLI 本地探测
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -241,11 +246,20 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, cursorModel: e.target.value })}
                 className="px-2 py-0.5 rounded-lg border border-[#e3e3e3] dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium focus:outline-none focus:border-blue-500"
               >
-                <option value="Sonnet 5.5">Sonnet 5.5 (推荐编码)</option>
-                <option value="Claude 3.7 Sonnet">Claude 3.7 Sonnet</option>
-                <option value="GPT-6">GPT-6</option>
-                <option value="Cursor-Small">Cursor Small (极速)</option>
-                <option value="Auto">Auto (自动选择)</option>
+                {(discoveredModels?.cursor || [
+                  { id: 'auto', name: 'Auto (Default)' },
+                  { id: 'claude-opus-5-5-high', name: 'Claude Opus 5.5 1M High' },
+                  { id: 'claude-sonnet-5-thinking-high', name: 'Claude Sonnet 5 1M Thinking' },
+                  { id: 'gpt-5.6-sol-high', name: 'GPT-5.6 Sol 1M High' },
+                  { id: 'claude-4.6-sonnet-medium-thinking', name: 'Claude Sonnet 4.6 1M Thinking' },
+                  { id: 'claude-4.6-opus-high-thinking', name: 'Claude Opus 4.6 1M Thinking' },
+                  { id: 'gemini-3.7-flash-high', name: 'Gemini 3.7 Flash' },
+                  { id: 'grok-4.7-high', name: 'Grok 4.7 High' },
+                ]).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </select>
 
               <select
@@ -253,8 +267,9 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, cursorThinking: e.target.value })}
                 className="px-2 py-0.5 rounded-lg border border-[#e3e3e3] dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium focus:outline-none focus:border-blue-500"
               >
-                <option value="高强度">高强度思考</option>
-                <option value="标准">标准模式</option>
+                <option value="高强度">高强度思考 (High)</option>
+                <option value="标准">标准模式 (Medium)</option>
+                <option value="极速">极速模式 (Low)</option>
               </select>
             </div>
           </div>
@@ -264,7 +279,10 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-purple-600 dark:text-purple-400">🪐 Antigravity</span>
-              <span className="text-[11px] text-slate-400 font-mono">/Users/jamesho/.local/bin/agy (v1.4.12)</span>
+              <span className="text-[11px] text-slate-400 font-mono">/Users/jamesho/.local/bin/agy</span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-purple-50 dark:bg-purple-950 text-purple-600 border border-purple-200 dark:border-purple-800">
+                真实 CLI 探测 (agy models)
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -274,10 +292,18 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, antigravityModel: e.target.value })}
                 className="px-2 py-0.5 rounded-lg border border-[#e3e3e3] dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium focus:outline-none focus:border-blue-500"
               >
-                <option value="Gemini 2.5 Pro">Gemini 2.5 Pro (严谨架构与测试)</option>
-                <option value="Gemini 2.5 Flash">Gemini 2.5 Flash (快速自愈)</option>
-                <option value="Gemini 3.0 Flash">Gemini 3.0 Flash</option>
-                <option value="Flash Lite">Flash Lite</option>
+                {(discoveredModels?.antigravity || [
+                  { id: 'gemini-3.8-flash-high', name: 'Gemini 3.8 Flash (High)' },
+                  { id: 'gemini-3.8-flash-medium', name: 'Gemini 3.8 Flash (Medium)' },
+                  { id: 'gemini-3.8-flash-low', name: 'Gemini 3.8 Flash (Low)' },
+                  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Thinking)' },
+                  { id: 'claude-opus-4-6-thinking', name: 'Claude Opus 4.6 (Thinking)' },
+                  { id: 'gpt-oss-120b-medium', name: 'GPT-OSS 120B (Medium)' },
+                ]).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </select>
 
               <select
@@ -285,8 +311,9 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, antigravityThinking: e.target.value })}
                 className="px-2 py-0.5 rounded-lg border border-[#e3e3e3] dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium focus:outline-none focus:border-blue-500"
               >
-                <option value="深度思考">深度思考</option>
-                <option value="快速模式">快速模式</option>
+                <option value="深度思考">深度思考 (High)</option>
+                <option value="标准推理">标准推理 (Medium)</option>
+                <option value="快速响应">快速响应 (Low)</option>
               </select>
             </div>
           </div>
@@ -297,6 +324,9 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
             <div className="flex items-center gap-2">
               <span className="font-semibold text-amber-600 dark:text-amber-400">🧠 Claude</span>
               <span className="text-[11px] text-slate-400 font-mono">/Users/jamesho/.local/bin/claude</span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-amber-50 dark:bg-amber-950 text-amber-600 border border-amber-200 dark:border-amber-800">
+                真实 CLI 别名
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -306,13 +336,16 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, claudeModel: e.target.value })}
                 className="px-2 py-0.5 rounded-lg border border-[#e3e3e3] dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium focus:outline-none focus:border-blue-500"
               >
-                <option value="Opus 5.5">Opus 5.5 (高阶日常与复杂设计)</option>
-                <option value="Sonnet 5.5">Sonnet 5.5</option>
-                <option value="Haiku 5.5">Haiku 5.5</option>
-                <option value="Fable 5.1">Fable 5.1</option>
-                <option value="Opus 5">Opus 5</option>
-                <option value="Sonnet 5">Sonnet 5</option>
-                <option value="Sonnet 4.6">Sonnet 4.6</option>
+                {(discoveredModels?.claude || [
+                  { id: 'Opus 5.5', name: 'Opus 5.5 (高阶日常与复杂设计)' },
+                  { id: 'Sonnet 5.5', name: 'Sonnet 5.5 (主力编码)' },
+                  { id: 'Haiku 5.5', name: 'Haiku 5.5 (极速响应)' },
+                  { id: 'Fable 5.1', name: 'Fable 5.1' },
+                ]).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </select>
 
               <select
@@ -334,6 +367,9 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
             <div className="flex items-center gap-2">
               <span className="font-semibold text-teal-600 dark:text-teal-400">🛡️ ChatGPT / Codex</span>
               <span className="text-[11px] text-slate-400 font-mono">/opt/homebrew/bin/codex</span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-teal-50 dark:bg-teal-950 text-teal-600 border border-teal-200 dark:border-teal-800">
+                真实 CLI 探测 (codex cache)
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -343,10 +379,20 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, chatgptModel: e.target.value })}
                 className="px-2 py-0.5 rounded-lg border border-[#e3e3e3] dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium focus:outline-none focus:border-blue-500"
               >
-                <option value="GPT-6">GPT-6 (最新旗舰推理)</option>
-                <option value="GPT-5.6 Sol">GPT-5.6 Sol</option>
-                <option value="o3">o3</option>
-                <option value="GPT-4.5">GPT-4.5</option>
+                {(discoveredModels?.codex || [
+                  { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol (主力旗舰)' },
+                  { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
+                  { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra' },
+                  { id: 'gpt-6-sol', name: 'GPT-6-Sol' },
+                  { id: 'gpt-6-luna', name: 'GPT-6-Luna' },
+                  { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+                  { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' },
+                  { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna' },
+                ]).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </select>
 
               <select

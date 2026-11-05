@@ -14,7 +14,8 @@ import {
   ProjectFolder,
   RoleAssignment,
   DialogueTarget,
-  ModelConfig
+  ModelConfig,
+  DiscoveredModelsMap
 } from './types';
 import { createMessage } from './coordinator/workflow';
 import { 
@@ -90,17 +91,67 @@ export const App: React.FC = () => {
     antigravityRole: '质量总监 & 自动化',
   });
 
-  // Dynamic Model and Reasoning/Thinking Level Configuration
+  // Dynamic Model and Reasoning/Thinking Level Configuration (真实 CLI 模型默认值)
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     claudeModel: 'Opus 5.5',
     claudeThinking: '高',
-    chatgptModel: 'GPT-6',
+    chatgptModel: 'gpt-6.1-sol',
     chatgptThinking: '高',
-    cursorModel: 'Sonnet 5.5',
+    cursorModel: 'auto',
     cursorThinking: '高强度',
-    antigravityModel: 'Gemini 2.5 Pro',
+    antigravityModel: 'gemini-3.8-flash-high',
     antigravityThinking: '深度思考',
   });
+
+  // Machine Discovered Models (真实探测到的 CLI 模型映射表)
+  const [discoveredModels, setDiscoveredModels] = useState<DiscoveredModelsMap>({
+    antigravity: [
+      { id: 'gemini-3.8-flash-high', name: 'Gemini 3.8 Flash (High)' },
+      { id: 'gemini-3.8-flash-medium', name: 'Gemini 3.8 Flash (Medium)' },
+      { id: 'gemini-3.8-flash-low', name: 'Gemini 3.8 Flash (Low)' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Thinking)' },
+      { id: 'claude-opus-4-6-thinking', name: 'Claude Opus 4.6 (Thinking)' },
+      { id: 'gpt-oss-120b-medium', name: 'GPT-OSS 120B (Medium)' },
+    ],
+    codex: [
+      { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol' },
+      { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
+      { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra' },
+      { id: 'gpt-6-sol', name: 'GPT-6-Sol' },
+      { id: 'gpt-6-luna', name: 'GPT-6-Luna' },
+      { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+      { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' },
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna' },
+    ],
+    cursor: [
+      { id: 'auto', name: 'Auto (Default)' },
+      { id: 'claude-opus-5-5-high', name: 'Claude Opus 5.5 1M High' },
+      { id: 'claude-sonnet-5-thinking-high', name: 'Claude Sonnet 5 1M Thinking' },
+      { id: 'gpt-5.6-sol-high', name: 'GPT-5.6 Sol 1M High' },
+      { id: 'claude-4.6-sonnet-medium-thinking', name: 'Claude Sonnet 4.6 1M Thinking' },
+      { id: 'claude-4.6-opus-high-thinking', name: 'Claude Opus 4.6 1M Thinking' },
+      { id: 'gemini-3.7-flash-high', name: 'Gemini 3.7 Flash' },
+      { id: 'grok-4.7-high', name: 'Grok 4.7 High' },
+    ],
+    claude: [
+      { id: 'Opus 5.5', name: 'Opus 5.5 (高阶复杂设计)' },
+      { id: 'Sonnet 5.5', name: 'Sonnet 5.5 (主力编码)' },
+      { id: 'Haiku 5.5', name: 'Haiku 5.5 (极速响应)' },
+      { id: 'Fable 5.1', name: 'Fable 5.1' },
+    ],
+  });
+
+  // Fetch real machine-installed CLI models on mount
+  useEffect(() => {
+    fetch('/api/cli-models')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.antigravity && data.antigravity.length > 0) {
+          setDiscoveredModels(data);
+        }
+      })
+      .catch((err) => console.error('[Discovery Error]', err));
+  }, []);
 
   // Right Panel View Mode (宽屏并排分屏、单栏切换与折叠)
   const [rightViewMode, setRightViewMode] = useState<'canvas' | 'console' | 'split'>('canvas');
@@ -833,6 +884,7 @@ export const App: React.FC = () => {
               onOpenDoc={handleOpenDoc}
               modelConfig={modelConfig}
               onUpdateModelConfig={setModelConfig}
+              discoveredModels={discoveredModels}
               theme={theme}
             />
 
@@ -963,6 +1015,7 @@ export const App: React.FC = () => {
                     isExecuting={projectState === 'executing'}
                     modelConfig={modelConfig}
                     onUpdateModelConfig={setModelConfig}
+                    discoveredModels={discoveredModels}
                     theme={theme}
                     onClearLogs={() => setConsoleLogs([])}
                     onCollapse={() => setIsRightPanelCollapsed(true)}
@@ -988,6 +1041,7 @@ export const App: React.FC = () => {
                         isExecuting={projectState === 'executing'}
                         modelConfig={modelConfig}
                         onUpdateModelConfig={setModelConfig}
+                        discoveredModels={discoveredModels}
                         theme={theme}
                         onClearLogs={() => setConsoleLogs([])}
                       />

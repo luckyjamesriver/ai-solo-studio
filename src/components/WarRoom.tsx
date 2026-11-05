@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChatMessage, ProjectState, DialogueTarget, ModelConfig } from '../types';
+import { ChatMessage, ProjectState, DialogueTarget, ModelConfig, DiscoveredModelsMap } from '../types';
 import { 
   Send, 
   User, 
@@ -22,6 +22,7 @@ interface WarRoomProps {
   onOpenDoc: (docId: string) => void;
   modelConfig: ModelConfig;
   onUpdateModelConfig: (cfg: ModelConfig) => void;
+  discoveredModels?: DiscoveredModelsMap;
   theme: 'light' | 'dark';
 }
 
@@ -32,6 +33,7 @@ export const WarRoom: React.FC<WarRoomProps> = ({
   onOpenDoc,
   modelConfig,
   onUpdateModelConfig,
+  discoveredModels,
   theme,
 }) => {
   const [input, setInput] = useState('');
@@ -300,10 +302,15 @@ export const WarRoom: React.FC<WarRoomProps> = ({
                   onChange={(e) => onUpdateModelConfig({ ...modelConfig, chatgptModel: e.target.value })}
                   className="bg-transparent text-teal-900 dark:text-teal-200 font-medium focus:outline-none cursor-pointer"
                 >
-                  <option value="GPT-6">GPT-6</option>
-                  <option value="GPT-5.6 Sol">GPT-5.6 Sol</option>
-                  <option value="o3">o3</option>
-                  <option value="GPT-4.5">GPT-4.5</option>
+                  {(discoveredModels?.codex || [
+                    { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol' },
+                    { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
+                    { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+                  ]).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
                 </select>
                 <span className="text-teal-300">|</span>
                 <select
@@ -327,13 +334,16 @@ export const WarRoom: React.FC<WarRoomProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, claudeModel: e.target.value })}
                 className="px-2 py-0.5 rounded border border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 text-xs font-medium focus:outline-none"
               >
-                <option value="Opus 5.5">Opus 5.5 (推荐架构)</option>
-                <option value="Sonnet 5.5">Sonnet 5.5</option>
-                <option value="Haiku 5.5">Haiku 5.5</option>
-                <option value="Fable 5.1">Fable 5.1</option>
-                <option value="Opus 5">Opus 5</option>
-                <option value="Sonnet 5">Sonnet 5</option>
-                <option value="Sonnet 4.6">Sonnet 4.6</option>
+                {(discoveredModels?.claude || [
+                  { id: 'Opus 5.5', name: 'Opus 5.5 (高阶日常与复杂设计)' },
+                  { id: 'Sonnet 5.5', name: 'Sonnet 5.5 (主力编码)' },
+                  { id: 'Haiku 5.5', name: 'Haiku 5.5 (极速响应)' },
+                  { id: 'Fable 5.1', name: 'Fable 5.1' },
+                ]).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </select>
 
               <span className="text-slate-400">思考强度:</span>
@@ -352,16 +362,24 @@ export const WarRoom: React.FC<WarRoomProps> = ({
 
           {target === 'chatgpt' && (
             <div className="flex items-center gap-2">
-              <span className="text-teal-700 dark:text-teal-400 font-semibold">ChatGPT 模型:</span>
+              <span className="text-teal-700 dark:text-teal-400 font-semibold">ChatGPT / Codex 模型:</span>
               <select
                 value={modelConfig.chatgptModel}
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, chatgptModel: e.target.value })}
                 className="px-2 py-0.5 rounded border border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 text-xs font-medium focus:outline-none"
               >
-                <option value="GPT-6">GPT-6 (最新旗舰推理)</option>
-                <option value="GPT-5.6 Sol">GPT-5.6 Sol</option>
-                <option value="o3">o3</option>
-                <option value="GPT-4.5">GPT-4.5</option>
+                {(discoveredModels?.codex || [
+                  { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol' },
+                  { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
+                  { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra' },
+                  { id: 'gpt-6-sol', name: 'GPT-6-Sol' },
+                  { id: 'gpt-6-luna', name: 'GPT-6-Luna' },
+                  { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+                ]).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </select>
 
               <span className="text-slate-400">思考强度:</span>
@@ -385,11 +403,16 @@ export const WarRoom: React.FC<WarRoomProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, cursorModel: e.target.value })}
                 className="px-2 py-0.5 rounded border border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 text-xs font-medium focus:outline-none"
               >
-                <option value="Sonnet 5.5">Sonnet 5.5 (主力编码)</option>
-                <option value="Claude 3.7 Sonnet">Claude 3.7 Sonnet</option>
-                <option value="GPT-6">GPT-6</option>
-                <option value="Cursor-Small">Cursor Small (快速)</option>
-                <option value="Auto">Auto (自动)</option>
+                {(discoveredModels?.cursor || [
+                  { id: 'auto', name: 'Auto (Default)' },
+                  { id: 'claude-opus-5-5-high', name: 'Claude Opus 5.5 1M High' },
+                  { id: 'claude-sonnet-5-thinking-high', name: 'Claude Sonnet 5 1M Thinking' },
+                  { id: 'gpt-5.6-sol-high', name: 'GPT-5.6 Sol 1M High' },
+                ]).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </select>
 
               <span className="text-slate-400">级别:</span>
@@ -412,10 +435,18 @@ export const WarRoom: React.FC<WarRoomProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, antigravityModel: e.target.value })}
                 className="px-2 py-0.5 rounded border border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 text-xs font-medium focus:outline-none"
               >
-                <option value="Gemini 2.5 Pro">Gemini 2.5 Pro (严谨自动化构建)</option>
-                <option value="Gemini 2.5 Flash">Gemini 2.5 Flash (快速自愈)</option>
-                <option value="Gemini 3.0 Flash">Gemini 3.0 Flash</option>
-                <option value="Flash Lite">Flash Lite</option>
+                {(discoveredModels?.antigravity || [
+                  { id: 'gemini-3.8-flash-high', name: 'Gemini 3.8 Flash (High)' },
+                  { id: 'gemini-3.8-flash-medium', name: 'Gemini 3.8 Flash (Medium)' },
+                  { id: 'gemini-3.8-flash-low', name: 'Gemini 3.8 Flash (Low)' },
+                  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Thinking)' },
+                  { id: 'claude-opus-4-6-thinking', name: 'Claude Opus 4.6 (Thinking)' },
+                  { id: 'gpt-oss-120b-medium', name: 'GPT-OSS 120B (Medium)' },
+                ]).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </select>
 
               <span className="text-slate-400">级别:</span>
@@ -424,8 +455,9 @@ export const WarRoom: React.FC<WarRoomProps> = ({
                 onChange={(e) => onUpdateModelConfig({ ...modelConfig, antigravityThinking: e.target.value })}
                 className="px-2 py-0.5 rounded border border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 text-xs font-medium focus:outline-none"
               >
-                <option value="深度思考">深度思考</option>
-                <option value="快速模式">快速模式</option>
+                <option value="深度思考">深度思考 (High)</option>
+                <option value="标准推理">标准推理 (Medium)</option>
+                <option value="快速响应">快速响应 (Low)</option>
               </select>
             </div>
           )}

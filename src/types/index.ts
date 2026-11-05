@@ -4,6 +4,20 @@ export type WorkerType = 'cursor' | 'claude_code' | 'antigravity' | 'deepseek';
 
 export type DialogueTarget = 'all_pms' | 'claude' | 'chatgpt' | 'cursor' | 'antigravity';
 
+export interface CliModelItem {
+  id: string;
+  name: string;
+  description?: string;
+  reasoningLevels?: string[];
+}
+
+export interface DiscoveredModelsMap {
+  antigravity: CliModelItem[];
+  codex: CliModelItem[];
+  cursor: CliModelItem[];
+  claude: CliModelItem[];
+}
+
 export interface ModelConfig {
   claudeModel: string;
   claudeThinking: string;

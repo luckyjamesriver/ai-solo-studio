@@ -55,12 +55,131 @@ function runCliProcess(command, args, inputData = '', timeoutMs = 45000, cwd = p
   });
 }
 
+// Helper to discover real CLI models installed on this machine
+async function discoverRealCliModels() {
+  const models = {
+    antigravity: [],
+    codex: [],
+    cursor: [],
+    claude: [
+      { id: 'opus', name: 'Opus 5.5 (高阶复杂设计)' },
+      { id: 'sonnet', name: 'Sonnet 5.5 (主力编码)' },
+      { id: 'haiku', name: 'Haiku 5.5 (极速响应)' },
+      { id: 'fable', name: 'Fable 5.1' }
+    ]
+  };
+
+  // 1. Antigravity CLI: Query real models from `agy models`
+  try {
+    const agyBin = '/Users/jamesho/.local/bin/agy';
+    if (fs.existsSync(agyBin)) {
+      const res = await runCliProcess(agyBin, ['models'], '', 8000);
+      for (const line of res.stdout.split('\n')) {
+        const clean = line.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '').trim();
+        const parts = clean.split(/\s{2,}|\t+/);
+        if (parts.length >= 2 && !clean.includes('Fetching')) {
+          models.antigravity.push({ id: parts[0].trim(), name: parts[1].trim() });
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[Discovery] Antigravity models error:', e);
+  }
+
+  if (models.antigravity.length === 0) {
+    models.antigravity = [
+      { id: 'gemini-3.8-flash-high', name: 'Gemini 3.8 Flash (High)' },
+      { id: 'gemini-3.8-flash-medium', name: 'Gemini 3.8 Flash (Medium)' },
+      { id: 'gemini-3.8-flash-low', name: 'Gemini 3.8 Flash (Low)' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Thinking)' },
+      { id: 'claude-opus-4-6-thinking', name: 'Claude Opus 4.6 (Thinking)' },
+      { id: 'gpt-oss-120b-medium', name: 'GPT-OSS 120B (Medium)' },
+    ];
+  }
+
+  // 2. Codex CLI: Query real models from `~/.codex/models_cache.json`
+  try {
+    const codexCache = path.join(process.env.HOME || '/Users/jamesho', '.codex', 'models_cache.json');
+    if (fs.existsSync(codexCache)) {
+      const data = JSON.parse(fs.readFileSync(codexCache, 'utf8'));
+      if (data && Array.isArray(data.models)) {
+        for (const m of data.models) {
+          if (m.visibility !== 'hide') {
+            models.codex.push({ id: m.slug, name: m.display_name });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[Discovery] Codex models error:', e);
+  }
+
+  if (models.codex.length === 0) {
+    models.codex = [
+      { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol' },
+      { id: 'gpt-6-astra', name: 'GPT-6-Astra' },
+      { id: 'gpt-6.1-terra', name: 'GPT-6.1 Terra' },
+      { id: 'gpt-6-sol', name: 'GPT-6-Sol' },
+      { id: 'gpt-6-luna', name: 'GPT-6-Luna' },
+      { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol' },
+      { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' },
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna' }
+    ];
+  }
+
+  // 3. Cursor Agent CLI: Query real models from `cursor agent --list-models`
+  try {
+    const cursorBin = '/Users/jamesho/.local/bin/cursor';
+    if (fs.existsSync(cursorBin)) {
+      const res = await runCliProcess(cursorBin, ['agent', '--list-models'], '', 8000);
+      for (const line of res.stdout.split('\n')) {
+        if (line.includes(' - ') && !line.includes('Tip:')) {
+          const [id, name] = line.split(' - ');
+          if (id && name) {
+            models.cursor.push({ id: id.trim(), name: name.trim() });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[Discovery] Cursor models error:', e);
+  }
+
+  if (models.cursor.length === 0) {
+    models.cursor = [
+      { id: 'auto', name: 'Auto (Default)' },
+      { id: 'claude-opus-5-5-high', name: 'Claude Opus 5.5 1M High' },
+      { id: 'claude-sonnet-5-thinking-high', name: 'Claude Sonnet 5 1M Thinking' },
+      { id: 'gpt-5.6-sol-high', name: 'GPT-5.6 Sol 1M High' },
+      { id: 'claude-4.6-sonnet-medium-thinking', name: 'Claude Sonnet 4.6 1M Thinking' },
+      { id: 'claude-4.6-opus-high-thinking', name: 'Claude Opus 4.6 1M Thinking' },
+      { id: 'gemini-3.7-flash-high', name: 'Gemini 3.7 Flash' },
+      { id: 'grok-4.7-high', name: 'Grok 4.7 High' }
+    ];
+  }
+
+  return models;
+}
+
 export default defineConfig({
   plugins: [
     react(),
     {
       name: 'ai-orchestrator-middleware',
       configureServer(server) {
+        // API: Query Real Machine CLI Models
+        server.middlewares.use('/api/cli-models', async (req, res) => {
+          if (req.method !== 'GET') return res.end();
+          try {
+            const discovered = await discoverRealCliModels();
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(discovered));
+          } catch (err) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+
         // API: Claude Architect Consultation
         server.middlewares.use('/api/consult-claude', async (req, res) => {
           if (req.method !== 'POST') return res.end();
@@ -179,16 +298,17 @@ export default defineConfig({
 
               if (workerType === 'cursor') {
                 command = '/Users/jamesho/.local/bin/cursor';
-                args = ['agent', '--workspace', targetWorkspace, '-p', '--trust', prompt];
+                args = ['agent', '--model', model || 'auto', '--workspace', targetWorkspace, '-p', '--trust', prompt];
               } else if (workerType === 'antigravity') {
                 command = '/Users/jamesho/.local/bin/agy';
-                args = ['--add-dir', targetWorkspace, '-p', prompt];
+                args = ['--model', model || 'gemini-3.8-flash-high', '--add-dir', targetWorkspace, '-p', prompt];
               } else if (workerType === 'claude_code') {
                 command = '/Users/jamesho/.local/bin/claude';
-                args = ['-p', prompt];
+                const cModel = model && model.toLowerCase().includes('sonnet') ? 'sonnet' : 'opus';
+                args = ['--model', cModel, '-p', prompt];
               } else {
                 command = '/opt/homebrew/bin/codex';
-                args = ['exec', '-C', targetWorkspace, prompt];
+                args = ['exec', '-m', model || 'gpt-6.1-sol', '-C', targetWorkspace, prompt];
               }
 
               console.log(`[Worker] Dispatching real CLI: ${workerType} (${model || 'default'}) -> ${command}...`);
