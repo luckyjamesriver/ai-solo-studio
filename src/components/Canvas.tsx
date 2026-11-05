@@ -4,15 +4,11 @@ import {
 } from '../types';
 import { 
   X, 
-  Plus, 
   Copy, 
   Check, 
   Code, 
   FileText, 
-  GitCompare, 
-  ExternalLink,
-  ChevronRight,
-  Sparkles
+  GitCompare
 } from 'lucide-react';
 
 interface CanvasProps {
@@ -55,42 +51,42 @@ export const Canvas: React.FC<CanvasProps> = ({
   }
 
   return (
-    <div className={`flex-1 flex flex-col h-full border-l transition-colors overflow-hidden select-text ${
+    <div className={`w-full h-full flex flex-col transition-colors overflow-hidden select-text ${
       theme === 'light' 
-        ? 'bg-[#ffffff] border-slate-200 text-slate-800' 
+        ? 'bg-[#ffffff] text-[#1f1f1f]' 
         : 'bg-[#0d1117] border-[#1e293b] text-slate-200'
     }`}>
-      {/* Top Tabs Bar */}
-      <div className={`h-10 px-2 border-b flex items-center justify-between select-none ${
-        theme === 'light' ? 'bg-[#f8fafc] border-slate-200' : 'bg-[#161b22] border-slate-800'
+      {/* Top Tabs Bar (Gemini Style) */}
+      <div className={`h-12 px-3 border-b flex items-center justify-between select-none ${
+        theme === 'light' ? 'bg-[#f0f4f9] border-[#e3e3e3]' : 'bg-[#161b22] border-slate-800'
       }`}>
         {/* Document Tabs */}
-        <div className="flex items-center gap-1 overflow-x-auto h-full">
+        <div className="flex items-center gap-1.5 overflow-x-auto h-full py-1">
           {documents.map((doc) => {
             const isActive = doc.id === activeDoc.id;
             return (
               <div
                 key={doc.id}
                 onClick={() => onSelectDoc(doc.id)}
-                className={`h-8 px-3 rounded-t-lg flex items-center gap-2 text-xs font-mono cursor-pointer border-t-2 transition-all ${
+                className={`h-8 px-3.5 rounded-full flex items-center gap-2 text-xs font-mono cursor-pointer transition-all ${
                   isActive
                     ? theme === 'light'
-                      ? 'bg-white border-blue-600 text-slate-900 font-semibold shadow-sm'
-                      : 'bg-[#0d1117] border-blue-500 text-white font-semibold'
+                      ? 'bg-white text-blue-700 font-semibold shadow-xs border border-[#e3e3e3]'
+                      : 'bg-[#0d1117] border border-blue-500 text-white font-semibold'
                     : theme === 'light'
-                    ? 'border-transparent text-slate-500 hover:bg-slate-200/50 hover:text-slate-800'
-                    : 'border-transparent text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                    ? 'text-[#444746] hover:bg-[#dfe3e7]'
+                    : 'text-slate-400 hover:bg-slate-800'
                 }`}
               >
-                <FileText className="w-3.5 h-3.5 text-blue-500" />
-                <span className="truncate max-w-[140px]">{doc.title}</span>
+                <FileText className="w-3.5 h-3.5 text-blue-600" />
+                <span className="truncate max-w-[150px]">{doc.title}</span>
                 {documents.length > 1 && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       onCloseDoc(doc.id);
                     }}
-                    className="p-0.5 rounded hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    className="p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-700"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -100,15 +96,15 @@ export const Canvas: React.FC<CanvasProps> = ({
           })}
         </div>
 
-        {/* Action Buttons Toolbar (like the screenshot) */}
+        {/* Action Buttons Toolbar */}
         <div className="flex items-center gap-1.5 text-xs">
           <button
             onClick={() => setViewMode(viewMode === 'diff' ? 'preview' : 'diff')}
-            className={`px-2.5 py-1 rounded-md border flex items-center gap-1 text-[11px] font-medium transition-all ${
+            className={`px-3 py-1 rounded-full border flex items-center gap-1 text-[11px] font-medium transition-all shadow-xs ${
               viewMode === 'diff'
                 ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950 dark:border-blue-700 dark:text-blue-300'
                 : theme === 'light'
-                ? 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+                ? 'bg-white border-[#e3e3e3] hover:bg-[#dfe3e7] text-[#1f1f1f]'
                 : 'bg-[#21262d] border-slate-700 hover:bg-slate-800 text-slate-300'
             }`}
           >
@@ -118,11 +114,11 @@ export const Canvas: React.FC<CanvasProps> = ({
 
           <button
             onClick={() => setViewMode(viewMode === 'source' ? 'preview' : 'source')}
-            className={`px-2.5 py-1 rounded-md border flex items-center gap-1 text-[11px] font-medium transition-all ${
+            className={`px-3 py-1 rounded-full border flex items-center gap-1 text-[11px] font-medium transition-all shadow-xs ${
               viewMode === 'source'
                 ? 'bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950 dark:border-blue-700 dark:text-blue-300'
                 : theme === 'light'
-                ? 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+                ? 'bg-white border-[#e3e3e3] hover:bg-[#dfe3e7] text-[#1f1f1f]'
                 : 'bg-[#21262d] border-slate-700 hover:bg-slate-800 text-slate-300'
             }`}
           >
@@ -132,9 +128,9 @@ export const Canvas: React.FC<CanvasProps> = ({
 
           <button
             onClick={handleCopy}
-            className={`p-1.5 rounded-md border transition-all ${
+            className={`p-1.5 rounded-full border transition-all shadow-xs ${
               theme === 'light'
-                ? 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
+                ? 'bg-white border-[#e3e3e3] hover:bg-[#dfe3e7] text-slate-600'
                 : 'bg-[#21262d] border-slate-700 hover:bg-slate-800 text-slate-300'
             }`}
             title="复制全文"
@@ -147,38 +143,38 @@ export const Canvas: React.FC<CanvasProps> = ({
       {/* Main Document Content Canvas (Paper Style) */}
       <div className="flex-1 overflow-y-auto p-8 max-w-4xl mx-auto w-full">
         {/* Document Title & Meta Header */}
-        <div className="mb-6 pb-4 border-b border-slate-200 dark:border-slate-800">
+        <div className="mb-6 pb-4 border-b border-[#e3e3e3] dark:border-slate-800">
           <div className="flex items-center gap-2 text-xs font-mono text-blue-600 dark:text-blue-400 font-semibold mb-1">
             <span>{activeDoc.sourceAgent ? `[${activeDoc.sourceAgent}]` : '[项目产物]'}</span>
             <span>·</span>
             <span>更新时间: {activeDoc.updatedAt}</span>
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+          <h1 className="text-xl font-bold tracking-tight text-[#1f1f1f] dark:text-slate-100">
             {activeDoc.title}
           </h1>
         </div>
 
         {/* Content View Modes */}
         {viewMode === 'diff' ? (
-          <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#090d13] border border-slate-200 dark:border-slate-800 font-mono text-xs leading-relaxed space-y-1">
+          <div className="p-4 rounded-2xl bg-[#f0f4f9] dark:bg-[#090d13] border border-[#e3e3e3] dark:border-slate-800 font-mono text-xs leading-relaxed space-y-1">
             <div className="text-slate-400 mb-2">--- a/specs/{activeDoc.title}</div>
             <div className="text-slate-400 mb-3">+++ b/specs/{activeDoc.title}</div>
-            <div className="text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded">
+            <div className="text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-1.5 py-0.5 rounded">
               + [AUTO-SYNTHESIS] 本文档经 Claude 与 ChatGPT 跨模型磋商后达成共识并写入。
             </div>
-            <div className="text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded">
+            <div className="text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-1.5 py-0.5 rounded">
               + [BOUNDARY] 已严格限制在本地目录内执行，不影响生产数据。
             </div>
-            <div className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap mt-2">
+            <div className="text-[#1f1f1f] dark:text-slate-300 whitespace-pre-wrap mt-2">
               {activeDoc.content}
             </div>
           </div>
         ) : viewMode === 'source' ? (
-          <pre className="p-4 rounded-xl bg-slate-100 dark:bg-[#090d13] border border-slate-200 dark:border-slate-800 font-mono text-xs overflow-x-auto text-slate-800 dark:text-slate-200 leading-relaxed">
+          <pre className="p-4 rounded-2xl bg-[#f0f4f9] dark:bg-[#090d13] border border-[#e3e3e3] dark:border-slate-800 font-mono text-xs overflow-x-auto text-[#1f1f1f] dark:text-slate-200 leading-relaxed">
             {activeDoc.content}
           </pre>
         ) : (
-          <div className="prose prose-slate dark:prose-invert max-w-none text-sm leading-relaxed whitespace-pre-wrap font-sans text-slate-700 dark:text-slate-300">
+          <div className="prose prose-slate dark:prose-invert max-w-none text-xs leading-relaxed whitespace-pre-wrap font-sans text-[#1f1f1f] dark:text-slate-300">
             {activeDoc.content}
           </div>
         )}

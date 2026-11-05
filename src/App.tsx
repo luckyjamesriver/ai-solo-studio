@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { WarRoom } from './components/WarRoom';
@@ -6,7 +6,6 @@ import { Canvas } from './components/Canvas';
 import { ExecutionConsole } from './components/ExecutionConsole';
 import { 
   ChatMessage, 
-  TaskItem, 
   ProjectState, 
   CanvasDocument 
 } from './types';
@@ -20,26 +19,83 @@ interface ConsoleLog {
 }
 
 export const App: React.FC = () => {
-  // Theme state: defaults to 'light' per user's preference!
+  // Theme state: defaults to 'light'
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState('t-2');
   const [projectState, setProjectState] = useState<ProjectState>('idle');
   const [activeCommand, setActiveCommand] = useState<string>('');
 
-  // Initial Documents in Right Canvas (Matching user's screenshot)
+  // Resizable Column Widths (in pixels)
+  const [sidebarWidth, setSidebarWidth] = useState(250);
+  const [warRoomWidth, setWarRoomWidth] = useState(500);
+  const isDraggingRef = useRef<'sidebar' | 'warroom' | null>(null);
+
+  // Resize handler for Sidebar divider
+  const startSidebarResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = 'sidebar';
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (isDraggingRef.current !== 'sidebar') return;
+      const newWidth = Math.min(Math.max(moveEvent.clientX, 170), 420);
+      setSidebarWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      isDraggingRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, []);
+
+  // Resize handler for WarRoom divider
+  const startWarRoomResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = 'warroom';
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const currentSidebarW = isSidebarCollapsed ? 56 : sidebarWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (isDraggingRef.current !== 'warroom') return;
+      const newWidth = Math.min(Math.max(moveEvent.clientX - currentSidebarW, 340), 900);
+      setWarRoomWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      isDraggingRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, [isSidebarCollapsed, sidebarWidth]);
+
+  // Initial Documents in Right Canvas
   const [documents, setDocuments] = useState<CanvasDocument[]>([
     {
       id: 'doc-spec',
       title: 'SPEC-CLIPBOARD-V1.md',
       type: 'markdown',
       sourceAgent: 'Claude 3.7 架构师',
-      updatedAt: '今天 19:15',
+      updatedAt: '今天 19:25',
       content: `# 【桌面极简多剪贴板工具】详细需求与架构规范书
 
 ## 1. 项目定位与目标
 - **目标用户**：日常有高频文本、链接复制需求的独立创作者与普通办公人员。
-- **核心原则**：纯本地运行、零多余进程、无隐私上传、轻量低功耗。
+- **核心原则**：纯本地运行、零多余进程、无隐私上传、极致轻量低功耗。
 
 ## 2. 核心模块与功能点
 - **剪贴板监听器 (Watcher)**：
@@ -48,13 +104,13 @@ export const App: React.FC = () => {
 - **历史记录存储 (Local Store)**：
   - 默认保留最新 50 条历史记录；
   - 采用本地轻量 JSON 或 SQLite 持久化存储。
-- **极简弹窗界面 (Popup UI)**：
+- **极简浮动窗口 (Popup UI)**：
   - 全局快捷键唤起（如 Option + V 或 Ctrl + Shift + V）；
   - 单击任意历史项即可重新复制或直接回车粘贴；
   - 模糊搜索框快速检索过往内容。
 
 ## 3. 技术风控与边界安全 (ChatGPT 审查建议)
-- **密码敏感数据排除**：若剪贴板内容符合密码管理器格式（如含特定前缀或来自 1Password/Bitwarden），提供一键忽略选项；
+- **密码敏感数据排除**：若剪贴板内容符合密码管理器格式，提供一键忽略选项；
 - **纯本地沙箱**：网络权限默认关闭，杜绝任何外部数据泄露风险。`,
     },
     {
@@ -85,7 +141,7 @@ export const App: React.FC = () => {
       avatarColor: 'bg-amber-600',
       roleBadge: '首席架构师',
       content: '收到老板的需求！已为你规划了【桌面极简多剪贴板工具】的核心设计蓝图。\n\n我已将完整的技术规范和架构细则自动同步至右侧画布，你可以点击下方卡片或右侧标签页进行详细阅读。',
-      timestamp: '19:15',
+      timestamp: '19:25',
       linkedDocId: 'doc-spec',
       docPreviewTitle: 'SPEC-CLIPBOARD-V1.md 详细架构规范书',
     },
@@ -96,7 +152,7 @@ export const App: React.FC = () => {
       avatarColor: 'bg-teal-600',
       roleBadge: '技术评审 & 风控',
       content: '我已核验 Claude 的架构书三项要点。补充提示：在数据持久化时应注意异常崩溃保护，并增加快捷键唤起逻辑。整体方案可行，建议立即派发工单！',
-      timestamp: '19:16',
+      timestamp: '19:26',
       forwardedFrom: '由 ChatGPT 从另一个聊天发送',
     },
   ]);
@@ -106,7 +162,7 @@ export const App: React.FC = () => {
       id: 'log-1',
       time: '19:10:00',
       type: 'system',
-      text: '[Runner] AI Solo Studio 本地环境就绪。已切换为浅色工作台模式。',
+      text: '[Runner] AI Solo Studio 本地环境就绪。采用 Google Gemini 现代化视觉与可拖动调节三栏布局。',
     },
   ]);
 
@@ -236,7 +292,7 @@ export const App: React.FC = () => {
 
   return (
     <div className={`flex flex-col h-screen w-screen overflow-hidden font-sans transition-colors ${
-      theme === 'light' ? 'bg-[#f8fafc] text-slate-800' : 'bg-[#0b0f17] text-slate-100'
+      theme === 'light' ? 'bg-[#f0f4f9] text-[#1f1f1f]' : 'bg-[#0b0f17] text-slate-100'
     }`}>
       {/* Top Header */}
       <Header
@@ -249,38 +305,64 @@ export const App: React.FC = () => {
         onReset={handleReset}
       />
 
-      {/* Main 3-Column Studio Layout (Matching user's screenshot!) */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* Main 3-Column Studio Layout with Resizable Dividers */}
+      <div className="flex-1 flex overflow-hidden relative">
         {/* Left Column: Sidebar (Projects & Threads) */}
-        <Sidebar
-          activeThreadId={activeThreadId}
-          onSelectThread={(id) => setActiveThreadId(id)}
-          onNewChat={() => {
-            const newMsg = createMessage('system', '已创建全新议题，请输入你的新 Idea！');
-            setMessages([newMsg]);
-          }}
-          isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          theme={theme}
-        />
+        <div style={{ width: isSidebarCollapsed ? 56 : sidebarWidth }} className="shrink-0 h-full overflow-hidden">
+          <Sidebar
+            activeThreadId={activeThreadId}
+            onSelectThread={(id) => setActiveThreadId(id)}
+            onNewChat={() => {
+              const newMsg = createMessage('system', '已创建全新议题，请输入你的新 Idea！');
+              setMessages([newMsg]);
+            }}
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            theme={theme}
+          />
+        </div>
+
+        {/* Resizer 1: Between Sidebar and WarRoom */}
+        {!isSidebarCollapsed && (
+          <div
+            onMouseDown={startSidebarResize}
+            className="w-1.5 hover:w-2 -ml-1 z-20 cursor-col-resize group flex items-center justify-center transition-all bg-transparent hover:bg-blue-400/30 active:bg-blue-500/60"
+            title="按住左右拖拽调整左栏宽度"
+          >
+            <div className="w-[1px] h-full bg-slate-200 dark:bg-slate-800 group-hover:bg-blue-500 transition-colors" />
+          </div>
+        )}
 
         {/* Middle Column: War Room (Conversational Flow) */}
-        <WarRoom
-          messages={messages}
-          projectState={projectState}
-          onSendMessage={handleSendMessage}
-          onOpenDoc={handleOpenDoc}
-          theme={theme}
-        />
+        <div style={{ width: warRoomWidth }} className="shrink-0 h-full overflow-hidden flex flex-col">
+          <WarRoom
+            messages={messages}
+            projectState={projectState}
+            onSendMessage={handleSendMessage}
+            onOpenDoc={handleOpenDoc}
+            theme={theme}
+          />
+        </div>
 
-        {/* Right Column: Canvas (Detailed Document / Code / Plan Editor) */}
-        <Canvas
-          documents={documents}
-          activeDocId={activeDocId}
-          onSelectDoc={(id) => setActiveDocId(id)}
-          onCloseDoc={handleCloseDoc}
-          theme={theme}
-        />
+        {/* Resizer 2: Between WarRoom and Canvas */}
+        <div
+          onMouseDown={startWarRoomResize}
+          className="w-1.5 hover:w-2 -ml-1 z-20 cursor-col-resize group flex items-center justify-center transition-all bg-transparent hover:bg-blue-400/30 active:bg-blue-500/60"
+          title="按住左右拖拽调整中栏和画布宽度"
+        >
+          <div className="w-[1px] h-full bg-slate-200 dark:bg-slate-800 group-hover:bg-blue-500 transition-colors" />
+        </div>
+
+        {/* Right Column: Canvas (Detailed Document / Code / Plan Editor) - Takes remaining width */}
+        <div className="flex-1 h-full min-w-[320px] overflow-hidden flex flex-col">
+          <Canvas
+            documents={documents}
+            activeDocId={activeDocId}
+            onSelectDoc={(id) => setActiveDocId(id)}
+            onCloseDoc={handleCloseDoc}
+            theme={theme}
+          />
+        </div>
       </div>
 
       {/* Bottom Foldable Console */}
