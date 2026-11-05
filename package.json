@@ -1,0 +1,49 @@
+{
+  "name": "ai-solo-studio",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Multi-AI Collaborative Desktop Studio for Solo Creators (Claude + ChatGPT + Local Execution Agents)",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev:web": "vite",
+    "dev:electron": "electron .",
+    "dev": "concurrently -k \"vite\" \"npm run wait-and-electron\"",
+    "wait-and-electron": "node scripts/wait-for-vite.cjs",
+    "build:web": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build": "npm run build:web && npm run build:electron"
+  },
+  "keywords": [
+    "ai",
+    "multi-agent",
+    "claude",
+    "chatgpt",
+    "cursor",
+    "solo-creator",
+    "desktop-app",
+    "orchestrator"
+  ],
+  "author": "James Ho <luckyjamesriver>",
+  "license": "MIT",
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.16.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^34.2.0",
+    "postcss": "^8.5.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}
