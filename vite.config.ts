@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 
 // Helper to spawn a process and collect output with safety timeout
-function runCliProcess(command, args, inputData = '', timeoutMs = 45000, cwd = process.cwd()) {
+function runCliProcess(command, args, inputData = '', timeoutMs = 90000, cwd = process.cwd()) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
@@ -20,7 +20,8 @@ function runCliProcess(command, args, inputData = '', timeoutMs = 45000, cwd = p
       if (!isDone) {
         isDone = true;
         try { child.kill('SIGTERM'); } catch {}
-        resolve({ code: 0, stdout: stdout || '【执行体已按时完成阶段性操作】', stderr });
+        const timeoutMsg = `[执行超时 (超过 ${Math.round(timeoutMs / 1000)} 秒未完成)]`;
+        resolve({ code: 1, stdout: stdout || timeoutMsg, stderr: stderr || timeoutMsg });
       }
     }, timeoutMs);
 
@@ -188,12 +189,11 @@ export default defineConfig({
           req.on('end', async () => {
             try {
               const { prompt, model, thinking } = JSON.parse(body);
-              const modelName = model || 'Opus 5.5';
+              const modelName = model || 'Sonnet 5.5';
               const thinkingLevel = thinking || '高';
-              const systemPrompt = `你现在是 AI Solo Studio 的【首席架构师 Claude (${modelName})，思考强度: ${thinkingLevel}】。老板提出了一个新项目需求。请用富有同理心与清晰结构的大白话给出：1. 项目定位与架构概要；2. 核心模块与实现路径；3. 预期的三个阶段工单（分别交由 Cursor Agent 与 Antigravity 执行）。语言精炼，突出架构大局观，不要输出冗长废话。需求内容：${prompt}`;
 
               // Map selected model to Claude CLI real flag
-              let claudeArgs = ['-p', systemPrompt];
+              let claudeArgs = ['--dangerously-skip-permissions', '-p', prompt];
               if (modelName.toLowerCase().includes('opus')) {
                 claudeArgs.unshift('--model', 'opus');
               } else if (modelName.toLowerCase().includes('haiku')) {
@@ -205,12 +205,12 @@ export default defineConfig({
               }
 
               console.log(`[Orchestrator] Invoking real Claude CLI with args: ${claudeArgs.join(' ')}`);
-              const result = await runCliProcess('/Users/jamesho/.local/bin/claude', claudeArgs);
+              const result = await runCliProcess('/Users/jamesho/.local/bin/claude', claudeArgs, '', 90000);
 
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ 
                 success: result.code === 0, 
-                text: result.stdout.trim() || result.stderr.trim(),
+                text: result.stdout.trim() || result.stderr.trim() || '【Claude 响应为空】',
                 model: modelName,
                 thinking: thinkingLevel
               }));
@@ -229,14 +229,13 @@ export default defineConfig({
           req.on('end', async () => {
             try {
               const { prompt, claudePlan, model, thinking } = JSON.parse(body);
-              const modelName = model || 'GPT-6';
+              const modelName = model || 'gpt-5.6-sol';
               const thinkingLevel = thinking || '高';
-              const reviewPrompt = `你现在是 AI Solo Studio 的【技术评审与风控 ChatGPT / Codex (${modelName})，思考强度: ${thinkingLevel}】。老板提出了新需求（“${prompt}”）。${claudePlan ? `这是 Claude 架构师的提议方案：\n\n"""\n${claudePlan}\n"""\n\n` : ''}请以严谨负责的态度进行技术审阅：1. 指出 1-2 点关键安全、边界与性能风险；2. 给出具体的防范措施；3. 明确批准该方案进入工程施工阶段。语言干练，条理分明。`;
 
               // Map selected model & reasoning effort to Codex CLI real flag
-              let codexModelFlag = 'gpt-6.1-sol';
-              if (modelName.includes('5.6')) {
-                codexModelFlag = 'gpt-5.6-sol';
+              let codexModelFlag = 'gpt-5.6-sol';
+              if (modelName.includes('6')) {
+                codexModelFlag = 'gpt-6.1-sol';
               } else if (modelName.toLowerCase().includes('o3')) {
                 codexModelFlag = 'o3';
               } else if (modelName.includes('4.5')) {
@@ -250,11 +249,11 @@ export default defineConfig({
                 '--sandbox', 'read-only',
                 '-m', codexModelFlag,
                 '-c', `model_reasoning_effort="${effortValue}"`,
-                reviewPrompt
+                prompt
               ];
 
               console.log(`[Orchestrator] Invoking real Codex CLI with args: ${codexArgs.join(' ')}`);
-              const result = await runCliProcess('/opt/homebrew/bin/codex', codexArgs);
+              const result = await runCliProcess('/opt/homebrew/bin/codex', codexArgs, '', 90000);
 
               let cleanText = result.stdout;
               if (cleanText.includes('codex\n')) {
@@ -267,7 +266,7 @@ export default defineConfig({
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ 
                 success: result.code === 0, 
-                text: cleanText.trim() || result.stdout.trim(),
+                text: cleanText.trim() || result.stdout.trim() || '【ChatGPT / Codex 响应为空】',
                 model: modelName,
                 thinking: thinkingLevel
               }));

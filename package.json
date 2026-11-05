@@ -10,7 +10,7 @@
     "dev": "concurrently -k \"vite\" \"npm run wait-and-electron\"",
     "wait-and-electron": "node scripts/wait-for-vite.cjs",
     "build:web": "vite build",
-    "build:electron": "tsc -p tsconfig.electron.json",
+    "build:electron": "node -c electron/main.cjs",
     "build": "npm run build:web && npm run build:electron"
   },
   "keywords": [
