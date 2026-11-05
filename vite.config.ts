@@ -73,8 +73,20 @@ export default defineConfig({
               const thinkingLevel = thinking || '高';
               const systemPrompt = `你现在是 AI Solo Studio 的【首席架构师 Claude (${modelName})，思考强度: ${thinkingLevel}】。老板提出了一个新项目需求。请用大白话给出：1. 项目定位与架构概要；2. 核心模块与实现路径；3. 预期的三个阶段工单（分别交由 Cursor Agent 与 Antigravity 执行）。语言精炼，突出架构大局观，不要输出冗长废话。需求内容：${prompt}`;
 
-              console.log(`[Orchestrator] Invoking real Claude CLI (${modelName}) (/Users/jamesho/.local/bin/claude)...`);
-              const result = await runCliProcess('/Users/jamesho/.local/bin/claude', ['-p', systemPrompt]);
+              // Map selected model to Claude CLI real flag
+              let claudeArgs = ['-p', systemPrompt];
+              if (modelName.toLowerCase().includes('opus')) {
+                claudeArgs.unshift('--model', 'opus');
+              } else if (modelName.toLowerCase().includes('haiku')) {
+                claudeArgs.unshift('--model', 'haiku');
+              } else if (modelName.toLowerCase().includes('fable')) {
+                claudeArgs.unshift('--model', 'fable');
+              } else if (modelName.toLowerCase().includes('sonnet')) {
+                claudeArgs.unshift('--model', 'sonnet');
+              }
+
+              console.log(`[Orchestrator] Invoking real Claude CLI with args: ${claudeArgs.join(' ')}`);
+              const result = await runCliProcess('/Users/jamesho/.local/bin/claude', claudeArgs);
 
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ 
@@ -102,8 +114,28 @@ export default defineConfig({
               const thinkingLevel = thinking || '高';
               const reviewPrompt = `你现在是 AI Solo Studio 的【技术评审与风控 ChatGPT / Codex (${modelName})，思考强度: ${thinkingLevel}】。这是 Claude 架构师针对老板需求制定的方案：\n\n"""\n${claudePlan}\n"""\n\n请对此方案进行技术审阅：1. 指出 1-2 点关键安全/崩溃/边界风险；2. 提出防范措施；3. 明确批准该方案并宣布工单派发至 Cursor 与 Antigravity 施工队。语言干练，结构清晰。`;
 
-              console.log(`[Orchestrator] Invoking real Codex CLI (${modelName}) (/opt/homebrew/bin/codex)...`);
-              const result = await runCliProcess('/opt/homebrew/bin/codex', ['exec', '--sandbox', 'read-only', reviewPrompt]);
+              // Map selected model & reasoning effort to Codex CLI real flag
+              let codexModelFlag = 'gpt-6.1-sol';
+              if (modelName.includes('5.6')) {
+                codexModelFlag = 'gpt-5.6-sol';
+              } else if (modelName.toLowerCase().includes('o3')) {
+                codexModelFlag = 'o3';
+              } else if (modelName.includes('4.5')) {
+                codexModelFlag = 'gpt-4.5-preview';
+              }
+
+              const effortValue = thinkingLevel === '高' ? 'high' : thinkingLevel === '中' ? 'medium' : 'low';
+
+              const codexArgs = [
+                'exec',
+                '--sandbox', 'read-only',
+                '-m', codexModelFlag,
+                '-c', `model_reasoning_effort="${effortValue}"`,
+                reviewPrompt
+              ];
+
+              console.log(`[Orchestrator] Invoking real Codex CLI with args: ${codexArgs.join(' ')}`);
+              const result = await runCliProcess('/opt/homebrew/bin/codex', codexArgs);
 
               let cleanText = result.stdout;
               if (cleanText.includes('codex\n')) {
@@ -144,7 +176,7 @@ export default defineConfig({
 
               if (workerType === 'cursor') {
                 command = '/Users/jamesho/.local/bin/cursor';
-                args = ['agent', '--workspace', workspaceDir, '-p', prompt];
+                args = ['agent', '--workspace', workspaceDir, '-p', '--trust', prompt];
               } else if (workerType === 'antigravity') {
                 command = '/Users/jamesho/.local/bin/agy';
                 args = ['--add-dir', workspaceDir, '-p', prompt];
