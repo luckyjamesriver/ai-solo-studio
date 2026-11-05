@@ -278,6 +278,62 @@ export default defineConfig({
           });
         });
 
+        // API: Antigravity Direct Consultation
+        server.middlewares.use('/api/consult-antigravity', async (req, res) => {
+          if (req.method !== 'POST') return res.end();
+          let body = '';
+          req.on('data', (chunk) => (body += chunk));
+          req.on('end', async () => {
+            try {
+              const { prompt, model, thinking } = JSON.parse(body);
+              const modelName = model || 'gemini-3.8-flash-high';
+              const agyBin = '/Users/jamesho/.local/bin/agy';
+
+              console.log(`[Orchestrator] Invoking real Antigravity CLI with model: ${modelName}`);
+              const result = await runCliProcess(agyBin, ['--model', modelName, '-p', prompt], '', 35000);
+
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({
+                success: result.code === 0,
+                text: result.stdout.trim() || result.stderr.trim() || '【Antigravity 已就绪】',
+                model: modelName,
+                thinking: thinking || '标准'
+              }));
+            } catch (err) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ success: false, error: err.message }));
+            }
+          });
+        });
+
+        // API: Cursor Agent Direct Consultation
+        server.middlewares.use('/api/consult-cursor', async (req, res) => {
+          if (req.method !== 'POST') return res.end();
+          let body = '';
+          req.on('data', (chunk) => (body += chunk));
+          req.on('end', async () => {
+            try {
+              const { prompt, model, thinking } = JSON.parse(body);
+              const modelName = model || 'auto';
+              const cursorBin = '/Users/jamesho/.local/bin/cursor';
+
+              console.log(`[Orchestrator] Invoking real Cursor Agent CLI with model: ${modelName}`);
+              const result = await runCliProcess(cursorBin, ['agent', '--model', modelName, '-p', '--trust', prompt], '', 35000);
+
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({
+                success: result.code === 0,
+                text: result.stdout.trim() || result.stderr.trim() || '【Cursor Agent 已就绪】',
+                model: modelName,
+                thinking: thinking || '标准'
+              }));
+            } catch (err) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ success: false, error: err.message }));
+            }
+          });
+        });
+
         // API: Real Worker Execution (Cursor Agent & Antigravity CLI)
         server.middlewares.use('/api/run-worker-task', async (req, res) => {
           if (req.method !== 'POST') return res.end();

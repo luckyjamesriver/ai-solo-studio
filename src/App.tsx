@@ -358,34 +358,70 @@ export const App: React.FC = () => {
 
     // Route based on Target
     if (target === 'cursor') {
-      // Direct to Cursor Agent
-      addLog(`直通 Cursor Agent [${modelConfig.cursorModel} · ${modelConfig.cursorThinking}] 派发任务：“${text}”...`, 'Cursor', 'bg-indigo-50 text-indigo-700 border-indigo-200', 'system');
-      const cursorAck: ChatMessage = {
-        ...createMessage('worker', `🚀 **[Cursor Agent 接收指令]**\n已收到任务：“${text}”。\n• 指定模型: \`${modelConfig.cursorModel}\`\n• 模式级别: \`${modelConfig.cursorThinking}\`\n\n正在本地 workspace 准备编码！可在右侧切换【执行体实时流】查看输出。`),
-        modelUsed: modelConfig.cursorModel,
-        thinkingLevel: modelConfig.cursorThinking,
-      };
-      setMessages((prev) => [...prev, cursorAck]);
+      // Direct real call to Cursor Agent
+      addLog(`Cursor：“${text}”`, 'Cursor', 'bg-indigo-50 text-indigo-700 border-indigo-200', 'system');
+      try {
+        const res = await fetch('/api/consult-cursor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            prompt: text, 
+            model: modelConfig.cursorModel, 
+            thinking: modelConfig.cursorThinking 
+          }),
+        });
+        const data = await res.json();
+        const cursorMsg: ChatMessage = {
+          ...createMessage('worker', data.text || '【Cursor Agent 已回复】'),
+          senderName: 'Cursor Agent',
+          roleBadge: roles.cursorRole,
+          avatarColor: 'bg-indigo-600',
+          modelUsed: modelConfig.cursorModel,
+          thinkingLevel: `模式: ${modelConfig.cursorThinking}`,
+        };
+        setMessages((prev) => [...prev, cursorMsg]);
+        addLog(`Cursor 响应完成。`, 'Cursor', 'bg-indigo-50 text-indigo-700 border-indigo-200', 'system');
+      } catch (e) {
+        addLog(`Cursor 调用失败: ${e}`, 'Cursor', 'bg-red-50 text-red-700 border-red-200', 'stderr');
+      }
       setProjectState('idle');
       return;
     }
 
     if (target === 'antigravity') {
-      // Direct to Antigravity
-      addLog(`直通 Antigravity [${modelConfig.antigravityModel} · ${modelConfig.antigravityThinking}] 派发任务：“${text}”...`, 'Antigravity', 'bg-purple-50 text-purple-700 border-purple-200', 'system');
-      const agyAck: ChatMessage = {
-        ...createMessage('worker', `🪐 **[Antigravity 接收指令]**\n已收到任务：“${text}”。\n• 指定模型: \`${modelConfig.antigravityModel}\`\n• 思考级别: \`${modelConfig.antigravityThinking}\`\n\n正在进行项目构建检查、测试用例推演与自动化环境验证！可在右侧切换【执行体实时流】查看输出。`),
-        modelUsed: modelConfig.antigravityModel,
-        thinkingLevel: modelConfig.antigravityThinking,
-      };
-      setMessages((prev) => [...prev, agyAck]);
+      // Direct real call to Antigravity CLI
+      addLog(`Antigravity：“${text}”`, 'Antigravity', 'bg-purple-50 text-purple-700 border-purple-200', 'system');
+      try {
+        const res = await fetch('/api/consult-antigravity', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            prompt: text, 
+            model: modelConfig.antigravityModel, 
+            thinking: modelConfig.antigravityThinking 
+          }),
+        });
+        const data = await res.json();
+        const agyMsg: ChatMessage = {
+          ...createMessage('worker', data.text || '【Antigravity 已回复】'),
+          senderName: 'Antigravity',
+          roleBadge: roles.antigravityRole,
+          avatarColor: 'bg-purple-600',
+          modelUsed: modelConfig.antigravityModel,
+          thinkingLevel: `思考: ${modelConfig.antigravityThinking}`,
+        };
+        setMessages((prev) => [...prev, agyMsg]);
+        addLog(`Antigravity 响应完成。`, 'Antigravity', 'bg-purple-50 text-purple-700 border-purple-200', 'system');
+      } catch (e) {
+        addLog(`Antigravity 调用失败: ${e}`, 'Antigravity', 'bg-red-50 text-red-700 border-red-200', 'stderr');
+      }
       setProjectState('idle');
       return;
     }
 
     if (target === 'claude') {
       // Direct only to Claude
-      addLog(`向 Claude [${modelConfig.claudeModel} · 思考: ${modelConfig.claudeThinking}] 咨询：“${text}”...`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
+      addLog(`Claude：“${text}”`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
       try {
         const res = await fetch('/api/consult-claude', {
           method: 'POST',
@@ -403,6 +439,7 @@ export const App: React.FC = () => {
           thinkingLevel: `思考: ${modelConfig.claudeThinking}`,
         };
         setMessages((prev) => [...prev, claudeMsg]);
+        addLog(`Claude 响应完成。`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
       } catch (e) {
         addLog(`Claude 调用失败: ${e}`, 'Claude', 'bg-red-50 text-red-700 border-red-200', 'stderr');
       }
@@ -412,7 +449,7 @@ export const App: React.FC = () => {
 
     if (target === 'chatgpt') {
       // Direct only to ChatGPT
-      addLog(`向 ChatGPT [${modelConfig.chatgptModel} · 思考: ${modelConfig.chatgptThinking}] 咨询：“${text}”...`, 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
+      addLog(`ChatGPT：“${text}”`, 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
       try {
         const res = await fetch('/api/consult-codex', {
           method: 'POST',
@@ -431,6 +468,7 @@ export const App: React.FC = () => {
           thinkingLevel: `思考: ${modelConfig.chatgptThinking}`,
         };
         setMessages((prev) => [...prev, gptMsg]);
+        addLog(`ChatGPT 响应完成。`, 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
       } catch (e) {
         addLog(`ChatGPT 调用失败: ${e}`, 'ChatGPT', 'bg-red-50 text-red-700 border-red-200', 'stderr');
       }
@@ -439,7 +477,7 @@ export const App: React.FC = () => {
     }
 
     // Default: 'all_pms' - SIMULTANEOUS DUAL RESPONSE (双脑同时响应与激荡)
-    addLog(`[联合总线] 一键同时广播给 Claude [${modelConfig.claudeModel}] 与 ChatGPT [${modelConfig.chatgptModel}]...`, 'System', 'bg-blue-50 text-blue-700 border-blue-200', 'system');
+    addLog(`联合司令部：“${text}”`, 'System', 'bg-blue-50 text-blue-700 border-blue-200', 'system');
 
     try {
       // Trigger BOTH Claude and ChatGPT simultaneously in parallel!
