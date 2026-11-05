@@ -9,7 +9,12 @@ import {
   RefreshCw, 
   Sun, 
   Moon,
-  FolderGit2
+  FolderGit2,
+  FileText,
+  Terminal,
+  Columns2,
+  PanelRightClose,
+  PanelRightOpen
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -21,6 +26,10 @@ interface HeaderProps {
   onPause: () => void;
   onResume: () => void;
   onReset: () => void;
+  rightViewMode?: 'canvas' | 'console' | 'split';
+  onSetRightViewMode?: (mode: 'canvas' | 'console' | 'split') => void;
+  isRightPanelCollapsed?: boolean;
+  onToggleRightPanelCollapsed?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -32,6 +41,10 @@ export const Header: React.FC<HeaderProps> = ({
   onPause,
   onResume,
   onReset,
+  rightViewMode = 'canvas',
+  onSetRightViewMode,
+  isRightPanelCollapsed = false,
+  onToggleRightPanelCollapsed,
 }) => {
   const getStatusBadge = () => {
     switch (projectState) {
@@ -80,7 +93,7 @@ export const Header: React.FC<HeaderProps> = ({
         ? 'bg-[#f0f4f9] border-[#e3e3e3] text-[#1f1f1f]'
         : 'bg-[#161b22] border-slate-800 text-slate-100'
     }`}>
-      {/* Dynamic Project Breadcrumb Path (No duplicate logo!) */}
+      {/* Dynamic Project Breadcrumb Path */}
       <div className="flex items-center gap-2 text-xs">
         <FolderGit2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
         <span className="font-semibold text-slate-700 dark:text-slate-300">
@@ -97,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
         {getStatusBadge()}
       </div>
 
-      {/* Controls & Theme Switcher */}
+      {/* Controls & Right Panel Layout Switchers */}
       <div className="flex items-center gap-2">
         {projectState === 'executing' || projectState === 'discussing' ? (
           <button
@@ -106,7 +119,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="随时一键叫停所有 AI"
           >
             <Pause className="w-3.5 h-3.5 fill-current" />
-            紧急暂停 (Pause)
+            紧急暂停
           </button>
         ) : projectState === 'paused' ? (
           <button
@@ -115,9 +128,81 @@ export const Header: React.FC<HeaderProps> = ({
             title="恢复自动流转"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            继续推进 (Resume)
+            继续推进
           </button>
         ) : null}
+
+        {/* Right Panel View Mode Segmented Control (宽屏分屏/单栏切换) */}
+        {onSetRightViewMode && (
+          <div className="hidden md:flex items-center bg-white dark:bg-slate-800 p-0.5 rounded-full border border-slate-200 dark:border-slate-700 shadow-2xs text-xs">
+            <button
+              onClick={() => {
+                if (isRightPanelCollapsed && onToggleRightPanelCollapsed) onToggleRightPanelCollapsed();
+                onSetRightViewMode('canvas');
+              }}
+              className={`px-2.5 py-1 rounded-full flex items-center gap-1 text-[11px] transition-all ${
+                !isRightPanelCollapsed && rightViewMode === 'canvas'
+                  ? 'bg-blue-600 text-white font-medium shadow-xs'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+              title="切换到方案与规范文档"
+            >
+              <FileText className="w-3 h-3" />
+              <span>文档</span>
+            </button>
+
+            <button
+              onClick={() => {
+                if (isRightPanelCollapsed && onToggleRightPanelCollapsed) onToggleRightPanelCollapsed();
+                onSetRightViewMode('console');
+              }}
+              className={`px-2.5 py-1 rounded-full flex items-center gap-1 text-[11px] transition-all ${
+                !isRightPanelCollapsed && rightViewMode === 'console'
+                  ? 'bg-blue-600 text-white font-medium shadow-xs'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+              title="切换到底层执行体实时流 (包含各执行体独立Tab)"
+            >
+              <Terminal className="w-3 h-3" />
+              <span>执行流</span>
+            </button>
+
+            <button
+              onClick={() => {
+                if (isRightPanelCollapsed && onToggleRightPanelCollapsed) onToggleRightPanelCollapsed();
+                onSetRightViewMode('split');
+              }}
+              className={`px-2.5 py-1 rounded-full flex items-center gap-1 text-[11px] transition-all ${
+                !isRightPanelCollapsed && rightViewMode === 'split'
+                  ? 'bg-blue-600 text-white font-medium shadow-xs'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+              title="宽屏并排分屏：左侧文档 + 右侧执行体"
+            >
+              <Columns2 className="w-3 h-3" />
+              <span>并排</span>
+            </button>
+          </div>
+        )}
+
+        {/* Toggle Right Panel Collapse */}
+        {onToggleRightPanelCollapsed && (
+          <button
+            onClick={onToggleRightPanelCollapsed}
+            className={`p-2 rounded-full border transition-all ${
+              theme === 'light'
+                ? 'bg-white hover:bg-slate-100 border-[#e3e3e3] text-slate-700 shadow-xs'
+                : 'bg-[#21262d] hover:bg-slate-700 border-slate-700 text-slate-200'
+            }`}
+            title={isRightPanelCollapsed ? '展开右侧面板' : '收起右侧面板'}
+          >
+            {isRightPanelCollapsed ? (
+              <PanelRightOpen className="w-4 h-4 text-blue-600" />
+            ) : (
+              <PanelRightClose className="w-4 h-4" />
+            )}
+          </button>
+        )}
 
         {/* Theme Toggle (Light / Dark) */}
         <button

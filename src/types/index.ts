@@ -4,6 +4,17 @@ export type WorkerType = 'cursor' | 'claude_code' | 'antigravity' | 'deepseek';
 
 export type DialogueTarget = 'all_pms' | 'claude' | 'chatgpt' | 'cursor' | 'antigravity';
 
+export interface ModelConfig {
+  claudeModel: string;
+  claudeThinking: string;
+  chatgptModel: string;
+  chatgptThinking: string;
+  cursorModel: string;
+  cursorThinking: string;
+  antigravityModel: string;
+  antigravityThinking: string;
+}
+
 export interface CanvasDocument {
   id: string;
   title: string;
@@ -31,6 +42,8 @@ export interface ChatMessage {
   linkedDocId?: string;   // Reference to CanvasDocument
   docPreviewTitle?: string;
   target?: DialogueTarget;
+  modelUsed?: string;     // e.g. "Opus 5.5", "GPT-6"
+  thinkingLevel?: string; // e.g. "思考: 高"
 }
 
 export interface TaskItem {
@@ -39,6 +52,8 @@ export interface TaskItem {
   description: string;
   assignedTo: WorkerType;
   workerName: string;
+  modelUsed?: string;
+  thinkingLevel?: string;
   status: 'pending' | 'in_progress' | 'completed' | 'paused' | 'failed';
   progress: number;
   outputSummary?: string;

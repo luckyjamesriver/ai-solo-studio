@@ -1,15 +1,12 @@
 import React, { useState } from 'react';
 import { 
   X, 
-  ShieldCheck, 
   Sparkles, 
   Bot, 
   CheckCircle2, 
-  ExternalLink, 
-  Lock,
-  Cpu,
+  Settings2,
   Terminal,
-  Settings2
+  Cpu
 } from 'lucide-react';
 import { RoleAssignment } from '../types';
 
@@ -29,10 +26,8 @@ interface AccountBridgeModalProps {
 export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
   isOpen,
   onClose,
-  accounts,
   roles,
   onUpdateRoles,
-  onConnect,
   theme,
 }) => {
   const [currentRoles, setCurrentRoles] = useState<RoleAssignment>(roles);
@@ -60,9 +55,9 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
               <Settings2 className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold tracking-tight">多 AI 协同舰队与席位角色设置</h2>
+              <h2 className="text-sm font-semibold tracking-tight">多 AI 协同舰队连接与席位设置</h2>
               <p className="text-[11px] text-[#444746] dark:text-slate-400">
-                配置每个 AI 的连接路径与在团队中承担的核心角色（支持随时自定义调换）
+                显示各 AI 的本地连接状态与分工席位（具体模型与思考级别可在对话/执行界面随时切换）
               </p>
             </div>
           </div>
@@ -88,9 +83,9 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-sm">Claude 3.7</span>
+                    <span className="font-semibold text-sm">Claude</span>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold flex items-center gap-0.5">
-                      <CheckCircle2 className="w-3 h-3" /> 已连接 (Pro订阅)
+                      <CheckCircle2 className="w-3 h-3" /> 已连接 (Pro / Max 订阅)
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 font-mono mt-0.5">
@@ -101,7 +96,7 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
 
               {/* Role Dropdown */}
               <div className="flex flex-col items-end gap-1">
-                <span className="text-[10px] text-slate-400">设定当前席位角色:</span>
+                <span className="text-[10px] text-slate-400">设定团队席位:</span>
                 <select
                   value={currentRoles.claudeRole}
                   onChange={(e) => setCurrentRoles({ ...currentRoles, claudeRole: e.target.value })}
@@ -127,9 +122,9 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-sm">ChatGPT 4o / Codex</span>
+                    <span className="font-semibold text-sm">ChatGPT / Codex</span>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold flex items-center gap-0.5">
-                      <CheckCircle2 className="w-3 h-3" /> 已连接 (Plus订阅)
+                      <CheckCircle2 className="w-3 h-3" /> 已连接 (Plus / Pro 订阅)
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 font-mono mt-0.5">
@@ -140,7 +135,7 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
 
               {/* Role Dropdown */}
               <div className="flex flex-col items-end gap-1">
-                <span className="text-[10px] text-slate-400">设定当前席位角色:</span>
+                <span className="text-[10px] text-slate-400">设定团队席位:</span>
                 <select
                   value={currentRoles.chatgptRole}
                   onChange={(e) => setCurrentRoles({ ...currentRoles, chatgptRole: e.target.value })}
@@ -179,7 +174,7 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
 
               {/* Role Dropdown */}
               <div className="flex flex-col items-end gap-1">
-                <span className="text-[10px] text-slate-400">设定当前席位角色:</span>
+                <span className="text-[10px] text-slate-400">设定团队席位:</span>
                 <select
                   value={currentRoles.cursorRole}
                   onChange={(e) => setCurrentRoles({ ...currentRoles, cursorRole: e.target.value })}
@@ -193,7 +188,7 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
             </div>
           </div>
 
-          {/* AI 4: Antigravity (我) */}
+          {/* AI 4: Antigravity */}
           <div className={`p-4 rounded-2xl border transition-all ${
             theme === 'light' ? 'bg-[#f8fafc] border-[#e3e3e3]' : 'bg-[#0d1117] border-slate-800'
           }`}>
@@ -204,7 +199,7 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-sm">Antigravity (我)</span>
+                    <span className="font-semibold text-sm">Antigravity</span>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-semibold flex items-center gap-0.5">
                       <CheckCircle2 className="w-3 h-3" /> 本地 CLI 就绪
                     </span>
@@ -217,7 +212,7 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
 
               {/* Role Dropdown */}
               <div className="flex flex-col items-end gap-1">
-                <span className="text-[10px] text-slate-400">设定当前席位角色:</span>
+                <span className="text-[10px] text-slate-400">设定团队席位:</span>
                 <select
                   value={currentRoles.antigravityRole}
                   onChange={(e) => setCurrentRoles({ ...currentRoles, antigravityRole: e.target.value })}
@@ -233,26 +228,25 @@ export const AccountBridgeModal: React.FC<AccountBridgeModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className={`px-6 py-4 border-t flex items-center justify-between text-[11px] ${
-          theme === 'light' ? 'bg-[#f0f4f9] border-[#e3e3e3] text-[#444746]' : 'bg-[#1c2128] border-slate-800 text-slate-400'
+        <div className={`px-6 py-3.5 border-t flex items-center justify-between text-xs ${
+          theme === 'light' ? 'bg-[#f8fafc] border-[#e3e3e3]' : 'bg-[#1c2128] border-slate-800'
         }`}>
-          <div className="flex items-center gap-1.5">
-            <Lock className="w-3.5 h-3.5 text-slate-400" />
-            <span>老板随时可以调换席位角色，系统会自动按最新角色派工</span>
+          <div className="text-[11px] text-[#444746] dark:text-slate-400">
+            🔒 全程直连本地已验证 CLI，0 额外 Token 费用
           </div>
 
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
-              className="px-4 py-2 rounded-full border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100"
+              className="px-4 py-2 rounded-full border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium transition-colors"
             >
               取消
             </button>
             <button
               onClick={handleSave}
-              className="px-5 py-2 rounded-full bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-xs"
+              className="px-5 py-2 rounded-full bg-blue-600 hover:bg-blue-500 text-white font-medium shadow-xs transition-colors"
             >
-              保存席位角色配置
+              保存设定
             </button>
           </div>
         </div>

@@ -13,9 +13,17 @@ import {
   CanvasDocument,
   ProjectFolder,
   RoleAssignment,
-  DialogueTarget
+  DialogueTarget,
+  ModelConfig
 } from './types';
 import { createMessage } from './coordinator/workflow';
+import { 
+  FileText, 
+  Terminal, 
+  Columns2, 
+  PanelRightClose, 
+  PanelRightOpen 
+} from 'lucide-react';
 
 export const App: React.FC = () => {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -61,13 +69,29 @@ export const App: React.FC = () => {
   const [activeProjectId, setActiveProjectId] = useState('p-1');
   const [activeThreadId, setActiveThreadId] = useState('t-1');
 
-  // Customizable AI Seat Roles (仓位角色设定)
+  // Customizable AI Seat Roles (席位分工设定)
   const [roles, setRoles] = useState<RoleAssignment>({
     claudeRole: '首席架构师',
     chatgptRole: '技术评审 & 风控',
     cursorRole: '编码主力',
     antigravityRole: '质量总监 & 自动化',
   });
+
+  // Dynamic Model and Reasoning/Thinking Level Configuration
+  const [modelConfig, setModelConfig] = useState<ModelConfig>({
+    claudeModel: 'Opus 5.5',
+    claudeThinking: '高',
+    chatgptModel: 'GPT-6',
+    chatgptThinking: '高',
+    cursorModel: 'Sonnet 5.5',
+    cursorThinking: '高强度',
+    antigravityModel: 'Gemini 2.5 Pro',
+    antigravityThinking: '深度思考',
+  });
+
+  // Right Panel View Mode (宽屏并排分屏、单栏切换与折叠)
+  const [rightViewMode, setRightViewMode] = useState<'canvas' | 'console' | 'split'>('canvas');
+  const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
 
   // Account modal
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -78,7 +102,7 @@ export const App: React.FC = () => {
 
   // Resizable Column Widths
   const [sidebarWidth, setSidebarWidth] = useState(260);
-  const [warRoomWidth, setWarRoomWidth] = useState(480);
+  const [warRoomWidth, setWarRoomWidth] = useState(500);
   const isDraggingRef = useRef<'sidebar' | 'warroom' | null>(null);
 
   // Execution state references for pausing
@@ -121,7 +145,7 @@ export const App: React.FC = () => {
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       if (isDraggingRef.current !== 'warroom') return;
-      const newWidth = Math.min(Math.max(moveEvent.clientX - currentSidebarW, 340), 900);
+      const newWidth = Math.min(Math.max(moveEvent.clientX - currentSidebarW, 340), 960);
       setWarRoomWidth(newWidth);
     };
 
@@ -143,15 +167,15 @@ export const App: React.FC = () => {
       id: 'doc-spec',
       title: 'SPEC-CLIPBOARD-V1.md',
       type: 'markdown',
-      sourceAgent: 'Claude 3.7 架构师 (真实直连)',
+      sourceAgent: 'Claude (Opus 5.5) · 首席架构师',
       updatedAt: '今天 19:25',
       content: `# 【桌面极简多剪贴板工具】详细需求与架构规范书
 
 ## 1. 项目定位与目标
-- **目标用户**：日常有高频文本、链接复制需求的独立创作者与普通办公人员。
+- **目标用户**：日常有高频文本、链接复制需求的独立创作者与办公人员。
 - **核心原则**：纯本地运行、零多余进程、无隐私上传、极致轻量低功耗。
 
-## 2. 核心模块与功能点
+## 2. 核心模块与实现路径
 - **剪贴板监听器 (Watcher)**：
   - 后台轮询或系统剪贴板事件监听，自动捕获最新文本内容；
   - 自动去重过滤与长度保护（单条上限 100KB，避免超大文本卡顿）。
@@ -171,17 +195,17 @@ export const App: React.FC = () => {
       id: 'doc-observe',
       title: 'OBSERVE-RUNNER.md',
       type: 'markdown',
-      sourceAgent: '总管理员 | 观察简报',
+      sourceAgent: '系统监控简报',
       updatedAt: '19:10',
       content: `【HOME-UI-PRESENCE | 已就绪】 本地运行环境检查
 
 - **当前运行节点**：独立 Electron / Web 渲染沙箱
 - **底层执行体探测**：
-  - Claude Code CLI (v2.1.318) 已挂载就绪 (直通官方订阅)
-  - Codex CLI (v0.166.0) 已挂载就绪 (直通官方订阅)
+  - Claude CLI 已挂载就绪 (直通官方订阅，可选 Opus 5.5 / Sonnet 5.5)
+  - Codex CLI 已挂载就绪 (直通官方订阅，可选 GPT-6 / GPT-5.6 Sol)
   - Cursor Agent 已就绪 (/Users/jamesho/.local/bin/cursor)
   - Antigravity 已就绪 (/Users/jamesho/.local/bin/agy)
-- **状态**：真实多 AI 协同总线就绪！`,
+- **状态**：多 AI 协同总线就绪！右侧控制台可随时查看独立 Tab 执行状态。`,
     },
   ]);
 
@@ -195,7 +219,7 @@ export const App: React.FC = () => {
       senderName: '系统总线',
       avatarColor: 'bg-blue-600',
       roleBadge: 'System',
-      content: '✅ **已成功接入你本地的 Claude、ChatGPT、Cursor 与 Antigravity 协同舰队！**\n\n你可以自由选择受话方：\n• **【联合司令部】**：Claude 负责系统设计，ChatGPT 负责安全审阅；\n• **【单独提问】**：直接对话 Claude、ChatGPT，或直通 Cursor、Antigravity 进行指令派发。',
+      content: '✅ **已成功接入你本地的 Claude、ChatGPT、Cursor 与 Antigravity 协同舰队！**\n\n你可以自由选择受话方：\n• **【联合司令部】**：Claude 负责系统设计，ChatGPT 负责安全审阅；\n• **【单体对话】**：直接对话 Claude、ChatGPT，或直通 Cursor、Antigravity 进行指令派发。\n• **【模型与强度】**：输入框上方可随时手动切换具体的模型版本与思考强度。',
       timestamp: '刚刚',
     },
   ]);
@@ -210,7 +234,7 @@ export const App: React.FC = () => {
       workerTag: 'System',
       workerColor: 'bg-blue-50 text-blue-700 border-blue-200',
       type: 'system',
-      text: '[Runner] 协同舰队就绪。Claude, Codex, Cursor Agent, Antigravity 均已配置。',
+      text: '[Runner] 协同舰队就绪。Claude, Codex, Cursor Agent, Antigravity 均已挂载通信总线。',
     },
   ]);
 
@@ -266,25 +290,50 @@ export const App: React.FC = () => {
 
     // Route based on Target
     if (target === 'cursor') {
-      // Direct to Cursor
-      addLog(`直通 Cursor Agent 派发任务：“${text}”...`, 'Cursor', 'bg-indigo-50 text-indigo-700 border-indigo-200', 'system');
-      const cursorAck = createMessage('worker', `🚀 **[Cursor Agent 接收指令]**\n已收到任务：“${text}”。正在本地 workspace 准备编码！`);
+      // Direct to Cursor Agent
+      addLog(`直通 Cursor Agent [${modelConfig.cursorModel} · ${modelConfig.cursorThinking}] 派发任务：“${text}”...`, 'Cursor', 'bg-indigo-50 text-indigo-700 border-indigo-200', 'system');
+      const cursorAck: ChatMessage = {
+        ...createMessage('worker', `🚀 **[Cursor Agent 接收指令]**\n已收到任务：“${text}”。\n• 指定模型: \`${modelConfig.cursorModel}\`\n• 模式级别: \`${modelConfig.cursorThinking}\`\n\n正在本地 workspace 准备编码！可在右侧切换【执行体实时流】查看输出。`),
+        modelUsed: modelConfig.cursorModel,
+        thinkingLevel: modelConfig.cursorThinking,
+      };
       setMessages((prev) => [...prev, cursorAck]);
+      setProjectState('idle');
+      return;
+    }
+
+    if (target === 'antigravity') {
+      // Direct to Antigravity
+      addLog(`直通 Antigravity [${modelConfig.antigravityModel} · ${modelConfig.antigravityThinking}] 派发任务：“${text}”...`, 'Antigravity', 'bg-purple-50 text-purple-700 border-purple-200', 'system');
+      const agyAck: ChatMessage = {
+        ...createMessage('worker', `🪐 **[Antigravity 接收指令]**\n已收到任务：“${text}”。\n• 指定模型: \`${modelConfig.antigravityModel}\`\n• 思考级别: \`${modelConfig.antigravityThinking}\`\n\n正在进行项目构建检查、测试用例推演与自动化环境验证！可在右侧切换【执行体实时流】查看输出。`),
+        modelUsed: modelConfig.antigravityModel,
+        thinkingLevel: modelConfig.antigravityThinking,
+      };
+      setMessages((prev) => [...prev, agyAck]);
       setProjectState('idle');
       return;
     }
 
     if (target === 'claude') {
       // Direct only to Claude
-      addLog(`向 Claude 咨询：“${text}”...`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
+      addLog(`向 Claude [${modelConfig.claudeModel} · 思考: ${modelConfig.claudeThinking}] 咨询：“${text}”...`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
       try {
         const res = await fetch('/api/consult-claude', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: text }),
+          body: JSON.stringify({ 
+            prompt: text, 
+            model: modelConfig.claudeModel, 
+            thinking: modelConfig.claudeThinking 
+          }),
         });
         const data = await res.json();
-        const claudeMsg = createMessage('claude', data.text || '【Claude 架构师已回复】');
+        const claudeMsg: ChatMessage = {
+          ...createMessage('claude', data.text || '【Claude 架构师已回复】'),
+          modelUsed: modelConfig.claudeModel,
+          thinkingLevel: `思考: ${modelConfig.claudeThinking}`,
+        };
         setMessages((prev) => [...prev, claudeMsg]);
       } catch (e) {
         addLog(`Claude 调用失败: ${e}`, 'Claude', 'bg-red-50 text-red-700 border-red-200', 'stderr');
@@ -295,15 +344,24 @@ export const App: React.FC = () => {
 
     if (target === 'chatgpt') {
       // Direct only to ChatGPT
-      addLog(`向 ChatGPT 咨询：“${text}”...`, 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
+      addLog(`向 ChatGPT [${modelConfig.chatgptModel} · 思考: ${modelConfig.chatgptThinking}] 咨询：“${text}”...`, 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
       try {
         const res = await fetch('/api/consult-codex', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: text, claudePlan: '用户单独咨询 ChatGPT' }),
+          body: JSON.stringify({ 
+            prompt: text, 
+            claudePlan: '用户单独向 ChatGPT 咨询', 
+            model: modelConfig.chatgptModel, 
+            thinking: modelConfig.chatgptThinking 
+          }),
         });
         const data = await res.json();
-        const gptMsg = createMessage('chatgpt', data.text || '【ChatGPT 评审员已回复】');
+        const gptMsg: ChatMessage = {
+          ...createMessage('chatgpt', data.text || '【ChatGPT 评审员已回复】'),
+          modelUsed: modelConfig.chatgptModel,
+          thinkingLevel: `思考: ${modelConfig.chatgptThinking}`,
+        };
         setMessages((prev) => [...prev, gptMsg]);
       } catch (e) {
         addLog(`ChatGPT 调用失败: ${e}`, 'ChatGPT', 'bg-red-50 text-red-700 border-red-200', 'stderr');
@@ -313,19 +371,23 @@ export const App: React.FC = () => {
     }
 
     // Default: 'all_pms' - Full Co-PM Collaborative Workflow
-    addLog(`接收新任务：“${text}”。正在调起真实 Claude 3.7 进行架构推演...`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
+    addLog(`接收新任务：“${text}”。正在调起真实 Claude [${modelConfig.claudeModel}] 进行架构推演...`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
 
     try {
       // 1. Claude Architect Call
       const claudeRes = await fetch('/api/consult-claude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify({ 
+          prompt: text, 
+          model: modelConfig.claudeModel, 
+          thinking: modelConfig.claudeThinking 
+        }),
       });
       const claudeData = await claudeRes.json();
       const claudeText = claudeData.text || '【Claude 方案生成完成】建议采用轻量模块化设计，分为配置、业务与交付三层。';
 
-      addLog('真实 Claude 3.7 响应成功，已捕获架构方案！', 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
+      addLog(`真实 Claude [${modelConfig.claudeModel}] 响应成功，已捕获架构方案！`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
 
       // Update right canvas with real spec
       const newDocId = `doc-${Date.now()}`;
@@ -334,9 +396,9 @@ export const App: React.FC = () => {
         id: newDocId,
         title: docTitle,
         type: 'markdown',
-        sourceAgent: `Claude 3.7 (${roles.claudeRole})`,
+        sourceAgent: `Claude (${modelConfig.claudeModel}) · ${roles.claudeRole}`,
         updatedAt: '刚刚',
-        content: `# 【${text}】真实架构规划方案\n\n${claudeText}`,
+        content: `# 【${text}】架构规范方案书\n\n- **架构设计**: Claude (${modelConfig.claudeModel})\n- **思考强度**: ${modelConfig.claudeThinking}\n- **生成时间**: ${new Date().toLocaleTimeString()}\n\n---\n\n${claudeText}`,
       };
 
       setDocuments((prev) => [newDoc, ...prev]);
@@ -346,29 +408,38 @@ export const App: React.FC = () => {
         ...createMessage('claude', claudeText),
         linkedDocId: newDocId,
         docPreviewTitle: `${docTitle} 架构设计书`,
+        modelUsed: modelConfig.claudeModel,
+        thinkingLevel: `思考: ${modelConfig.claudeThinking}`,
       };
       setMessages((prev) => [...prev, claudeMsg]);
 
       // 2. ChatGPT Review Call
-      addLog('正在将 Claude 方案自动喂给真实 Codex / ChatGPT 进行风控审阅...', 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
+      addLog(`正在将 Claude 方案自动喂给真实 Codex / ChatGPT [${modelConfig.chatgptModel}] 进行风控审阅...`, 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
 
       const codexRes = await fetch('/api/consult-codex', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text, claudePlan: claudeText }),
+        body: JSON.stringify({ 
+          prompt: text, 
+          claudePlan: claudeText, 
+          model: modelConfig.chatgptModel, 
+          thinking: modelConfig.chatgptThinking 
+        }),
       });
       const codexData = await codexRes.json();
       const codexText = codexData.text || '【ChatGPT 风控审核】已核对架构方案，边界条件已确立，批准进入施工阶段！';
 
-      addLog('真实 Codex / ChatGPT 审阅完毕！共识达成。', 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
+      addLog(`真实 Codex / ChatGPT [${modelConfig.chatgptModel}] 审阅完毕！共识达成。`, 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
 
       const gptMsg: ChatMessage = {
         ...createMessage('chatgpt', codexText),
         forwardedFrom: '由 ChatGPT 从另一个聊天发送',
+        modelUsed: modelConfig.chatgptModel,
+        thinkingLevel: `思考: ${modelConfig.chatgptThinking}`,
       };
       setMessages((prev) => [...prev, gptMsg]);
 
-      // 3. Generate Task Matrix & Trigger Checkpoint
+      // 3. Generate Task Matrix with Selected Worker Models
       const generatedTasks: TaskItem[] = [
         {
           id: 'task-1',
@@ -376,6 +447,8 @@ export const App: React.FC = () => {
           description: `为【${text}】在本地 workspace 目录建立工程脚手架。`,
           assignedTo: 'cursor',
           workerName: `Cursor Agent (${roles.cursorRole})`,
+          modelUsed: modelConfig.cursorModel,
+          thinkingLevel: modelConfig.cursorThinking,
           status: 'pending',
           progress: 0,
         },
@@ -385,6 +458,8 @@ export const App: React.FC = () => {
           description: '实现具体业务逻辑与模块代码。',
           assignedTo: 'cursor',
           workerName: `Cursor Agent (${roles.cursorRole})`,
+          modelUsed: modelConfig.cursorModel,
+          thinkingLevel: modelConfig.cursorThinking,
           status: 'pending',
           progress: 0,
         },
@@ -394,6 +469,8 @@ export const App: React.FC = () => {
           description: '执行本地语法检查、构建测试并输出运行报告。',
           assignedTo: 'antigravity',
           workerName: `Antigravity (${roles.antigravityRole})`,
+          modelUsed: modelConfig.antigravityModel,
+          thinkingLevel: modelConfig.antigravityThinking,
           status: 'pending',
           progress: 0,
         },
@@ -404,8 +481,8 @@ export const App: React.FC = () => {
       const cp: MilestoneCheckpoint = {
         id: 'cp-1',
         title: '里程碑：方案经双脑真实磋商达成共识',
-        description: 'Claude 3.7 与 ChatGPT 4o 均已完成推演。点击【批准开工】即可调度真实施工队在 workspace 写入代码。',
-        deliverables: ['右侧已生成的架构设计规范', '待落地的三项工程任务工单'],
+        description: `Claude (${modelConfig.claudeModel}) 与 ChatGPT (${modelConfig.chatgptModel}) 均已完成推演。点击【批准开工】即可调度施工队在 workspace 写入代码。`,
+        deliverables: ['右侧已生成的架构设计规范', '待落地的三项工程工单 (Cursor + Antigravity)'],
         suggestedAction: '请老板拍板批准，点击后底层自动开始敲代码。',
       };
       setCheckpoint(cp);
@@ -413,7 +490,7 @@ export const App: React.FC = () => {
 
       const sysReady = createMessage(
         'system',
-        '📋 **双脑真实磋商完毕！**\n请在右侧检阅方案，并在下方确认。如需开工，点击【批准开工】；如需修改，可继续在对话框指出！'
+        '📋 **双脑磋商完毕！**\n请在右侧检阅方案，并在下方确认。如需开工，点击【批准开工】；如需修改，可继续在对话框指出！'
       );
       setMessages((prev) => [...prev, sysReady]);
       addLog('等待老板审批开工权限...', 'System', 'bg-blue-50 text-blue-700 border-blue-200', 'system');
@@ -428,12 +505,18 @@ export const App: React.FC = () => {
   // Boss clicks "Approve" on Checkpoint -> REAL execution
   const handleApproveCheckpoint = async () => {
     setProjectState('executing');
+    // Ensure right panel is open and show execution stream
+    setIsRightPanelCollapsed(false);
+    if (rightViewMode === 'canvas') {
+      setRightViewMode('split');
+    }
+
     addLog('老板已批准！向本地施工队下发工单...', 'System', 'bg-emerald-50 text-emerald-700 border-emerald-200', 'system');
 
     const approveMsg = createMessage('user', '✅ 批准开工！立即执行。');
     const startMsg = createMessage(
       'system',
-      '🚀 **真实施工流水线启动！** 底层执行体正在本地 workspace 目录进行代码构建。可在底部展开控制台查看实时日志。'
+      '🚀 **真实施工流水线启动！** 底层执行体正在本地 workspace 目录进行代码构建。可在右侧实时流查看各执行体独立 Tab 日志。'
     );
     setMessages((prev) => [...prev, approveMsg, startMsg]);
 
@@ -449,14 +532,15 @@ export const App: React.FC = () => {
       addLog('🎉 所有任务已在本地 workspace/ 施工完毕！', 'Antigravity', 'bg-purple-50 text-purple-700 border-purple-200', 'system');
       const doneMsg = createMessage(
         'worker',
-        '🎉 **报告老板：所有规划任务已真实施工完毕！**\n\n已成功在本地 `workspace/` 目录生成工程文件并通过所有校验。你可以检阅项目成果，或继续输入新的需求想法！'
+        '🎉 **报告老板：所有规划任务已真实施工完毕！**\n\n已成功在本地 `workspace/` 目录生成工程文件并通过全部校验。你可以检阅项目成果，或继续输入新的需求想法！'
       );
       setMessages((m) => [...m, doneMsg]);
       return;
     }
 
     const currentTask = tasks[taskIndex];
-    setActiveCommand(`${currentTask.workerName} run --task ${taskIndex + 1}`);
+    const taskModel = currentTask.modelUsed || (currentTask.assignedTo === 'cursor' ? modelConfig.cursorModel : modelConfig.antigravityModel);
+    setActiveCommand(`${currentTask.workerName} [${taskModel}] run --task ${taskIndex + 1}`);
     setActiveWorkerName(currentTask.workerName);
 
     const workerTag = currentTask.assignedTo === 'cursor' ? 'Cursor' : 'Antigravity';
@@ -464,7 +548,7 @@ export const App: React.FC = () => {
       ? 'bg-indigo-50 text-indigo-700 border-indigo-200' 
       : 'bg-purple-50 text-purple-700 border-purple-200';
 
-    addLog(`调度 ${currentTask.workerName} 执行: ${currentTask.title}`, workerTag, workerColor, 'system');
+    addLog(`调度 ${currentTask.workerName} [${taskModel}] 执行: ${currentTask.title}`, workerTag, workerColor, 'system');
 
     setTasks((prev) => {
       const updated = [...prev];
@@ -480,6 +564,8 @@ export const App: React.FC = () => {
           taskTitle: currentTask.title,
           workerType: currentTask.assignedTo,
           taskDesc: currentTask.description,
+          model: taskModel,
+          thinking: currentTask.thinkingLevel,
         }),
       });
       const data = await res.json();
@@ -502,10 +588,13 @@ export const App: React.FC = () => {
       addLog(`${currentTask.title} 执行成功，退出码 0。`, workerTag, workerColor, 'system');
 
       // De-noised report sent back to War Room
-      const report = createMessage(
-        'worker',
-        `📌 **工头简报 [阶段 ${taskIndex + 1}] 完成**\n由 **${currentTask.workerName}** 施工完毕：\n- 状态：真实通过校验 (ExitCode: 0)\n- 产物：已写入 \`workspace/${data.artifactFile}\`\n\n▶ 正在自动推进下一步...`
-      );
+      const report: ChatMessage = {
+        ...createMessage(
+          'worker',
+          `📌 **工头简报 [阶段 ${taskIndex + 1}] 完成**\n由 **${currentTask.workerName}** 施工完毕：\n- 模型级别: \`${taskModel}\`\n- 状态：真实通过校验 (ExitCode: 0)\n- 产物：已写入 \`workspace/${data.artifactFile}\`\n\n▶ 正在自动推进下一步...`
+        ),
+        modelUsed: taskModel,
+      };
       setMessages((m) => [...m, report]);
 
       // Proceed to next task
@@ -520,6 +609,8 @@ export const App: React.FC = () => {
 
   const handleOpenDoc = (docId: string) => {
     setActiveDocId(docId);
+    if (isRightPanelCollapsed) setIsRightPanelCollapsed(false);
+    if (rightViewMode === 'console') setRightViewMode('canvas');
   };
 
   const handleCloseDoc = (docId: string) => {
@@ -577,9 +668,13 @@ export const App: React.FC = () => {
         onPause={handlePause}
         onResume={handleResume}
         onReset={handleReset}
+        rightViewMode={rightViewMode}
+        onSetRightViewMode={setRightViewMode}
+        isRightPanelCollapsed={isRightPanelCollapsed}
+        onToggleRightPanelCollapsed={() => setIsRightPanelCollapsed(!isRightPanelCollapsed)}
       />
 
-      {/* Main 3-Column Studio Layout with Resizable Dividers */}
+      {/* Main Studio Layout with Resizable Dividers */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Left Column: Sidebar (Projects on Top, Threads underneath) */}
         <div style={{ width: isSidebarCollapsed ? 56 : sidebarWidth }} className="shrink-0 h-full overflow-hidden">
@@ -651,38 +746,203 @@ export const App: React.FC = () => {
             projectState={projectState}
             onSendMessage={handleSendMessage}
             onOpenDoc={handleOpenDoc}
+            modelConfig={modelConfig}
+            onUpdateModelConfig={setModelConfig}
             theme={theme}
           />
+
+          {/* Milestone Checkpoint Approval Banner (if waiting) */}
+          {checkpoint && projectState === 'awaiting_approval' && (
+            <div className={`p-4 border-t select-none transition-all shadow-lg ${
+              theme === 'light'
+                ? 'bg-blue-50 border-blue-200 text-blue-900'
+                : 'bg-blue-950/70 border-blue-800 text-blue-200'
+            }`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-600 text-white font-semibold">
+                      里程碑拍板
+                    </span>
+                    <h3 className="text-xs font-bold">{checkpoint.title}</h3>
+                  </div>
+                  <p className="text-[11px] opacity-90">{checkpoint.description}</p>
+                </div>
+
+                <button
+                  onClick={handleApproveCheckpoint}
+                  className="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md active:scale-95 transition-all shrink-0"
+                >
+                  批准开工 (Approve) 🚀
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Resizer 2: Between WarRoom and Canvas */}
+        {/* Resizer 2: Between WarRoom and Right Panel */}
         <div
           onMouseDown={startWarRoomResize}
           className="w-1.5 hover:w-2 -ml-1 z-20 cursor-col-resize group flex items-center justify-center transition-all bg-transparent hover:bg-blue-400/30 active:bg-blue-500/60"
-          title="按住左右拖拽调整中栏和画布宽度"
+          title="按住左右拖拽调整中栏和右栏宽度"
         >
           <div className="w-[1px] h-full bg-[#e3e3e3] dark:bg-slate-800 group-hover:bg-blue-500 transition-colors" />
         </div>
 
-        {/* Right Column: Canvas */}
-        <div className="flex-1 h-full min-w-[320px] overflow-hidden flex flex-col">
-          <Canvas
-            documents={documents}
-            activeDocId={activeDocId}
-            onSelectDoc={(id) => setActiveDocId(id)}
-            onCloseDoc={handleCloseDoc}
-            theme={theme}
-          />
-        </div>
-      </div>
+        {/* Right Area: Flexible Right Panel (Canvas + Live Worker Runner with Tabs) */}
+        {!isRightPanelCollapsed ? (
+          <div className="flex-1 min-w-[380px] h-full flex flex-col overflow-hidden bg-white dark:bg-[#0d1117]">
+            {/* Top Navigation Bar of Right Panel */}
+            <div className={`h-10 px-4 border-b flex items-center justify-between select-none ${
+              theme === 'light' ? 'bg-[#f0f4f9] border-[#e3e3e3]' : 'bg-[#161b22] border-slate-800'
+            }`}>
+              {/* Segmented Mode Switcher */}
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setRightViewMode('canvas')}
+                  className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all ${
+                    rightViewMode === 'canvas'
+                      ? theme === 'light'
+                        ? 'bg-white text-blue-700 shadow-xs border border-[#e3e3e3] font-semibold'
+                        : 'bg-slate-800 text-blue-400 border border-slate-700 font-semibold'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>方案与规范文档</span>
+                  <span className="text-[10px] opacity-70 font-mono">({documents.length})</span>
+                </button>
 
-      {/* Bottom Foldable Console */}
-      <ExecutionConsole
-        logs={consoleLogs}
-        activeCommand={activeCommand}
-        activeWorkerName={activeWorkerName}
-        isExecuting={projectState === 'executing'}
-      />
+                <button
+                  onClick={() => setRightViewMode('console')}
+                  className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all ${
+                    rightViewMode === 'console'
+                      ? theme === 'light'
+                        ? 'bg-white text-blue-700 shadow-xs border border-[#e3e3e3] font-semibold'
+                        : 'bg-slate-800 text-blue-400 border border-slate-700 font-semibold'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+                  }`}
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  <span>执行体实时流 (4 AI 独立Tab)</span>
+                  {projectState === 'executing' ? (
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  ) : (
+                    <span className="text-[10px] opacity-70 font-mono">({consoleLogs.length})</span>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => setRightViewMode('split')}
+                  className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all ${
+                    rightViewMode === 'split'
+                      ? theme === 'light'
+                        ? 'bg-white text-blue-700 shadow-xs border border-[#e3e3e3] font-semibold'
+                        : 'bg-slate-800 text-blue-400 border border-slate-700 font-semibold'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+                  }`}
+                  title="宽屏并排查看：左侧文档 + 右侧执行体"
+                >
+                  <Columns2 className="w-3.5 h-3.5" />
+                  <span>并排分屏</span>
+                </button>
+              </div>
+
+              {/* Collapse Right Panel Button */}
+              <button
+                onClick={() => setIsRightPanelCollapsed(true)}
+                className="p-1.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-700 transition-colors"
+                title="收起右栏"
+              >
+                <PanelRightClose className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Right Panel Main Views */}
+            <div className="flex-1 flex overflow-hidden">
+              {rightViewMode === 'canvas' && (
+                <Canvas
+                  documents={documents}
+                  activeDocId={activeDocId}
+                  onSelectDoc={(id) => setActiveDocId(id)}
+                  onCloseDoc={handleCloseDoc}
+                  theme={theme}
+                />
+              )}
+
+              {rightViewMode === 'console' && (
+                <ExecutionConsole
+                  logs={consoleLogs}
+                  activeCommand={activeCommand}
+                  activeWorkerName={activeWorkerName}
+                  isExecuting={projectState === 'executing'}
+                  modelConfig={modelConfig}
+                  onUpdateModelConfig={setModelConfig}
+                  theme={theme}
+                  onClearLogs={() => setConsoleLogs([])}
+                  onCollapse={() => setIsRightPanelCollapsed(true)}
+                />
+              )}
+
+              {rightViewMode === 'split' && (
+                <div className="w-full h-full flex overflow-hidden">
+                  <div className="w-1/2 h-full border-r border-[#e3e3e3] dark:border-slate-800 overflow-hidden">
+                    <Canvas
+                      documents={documents}
+                      activeDocId={activeDocId}
+                      onSelectDoc={(id) => setActiveDocId(id)}
+                      onCloseDoc={handleCloseDoc}
+                      theme={theme}
+                    />
+                  </div>
+                  <div className="w-1/2 h-full overflow-hidden">
+                    <ExecutionConsole
+                      logs={consoleLogs}
+                      activeCommand={activeCommand}
+                      activeWorkerName={activeWorkerName}
+                      isExecuting={projectState === 'executing'}
+                      modelConfig={modelConfig}
+                      onUpdateModelConfig={setModelConfig}
+                      theme={theme}
+                      onClearLogs={() => setConsoleLogs([])}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* Slim Collapsed Strip on the Right Edge */
+          <div className={`w-12 h-full border-l flex flex-col items-center py-4 select-none transition-colors ${
+            theme === 'light' ? 'bg-[#f0f4f9] border-[#e3e3e3]' : 'bg-[#161b22] border-slate-800'
+          }`}>
+            <button
+              onClick={() => {
+                setIsRightPanelCollapsed(false);
+                setRightViewMode('canvas');
+              }}
+              className="p-2.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors mb-2"
+              title="展开文档"
+            >
+              <FileText className="w-4 h-4 text-blue-600" />
+            </button>
+
+            <button
+              onClick={() => {
+                setIsRightPanelCollapsed(false);
+                setRightViewMode('console');
+              }}
+              className="p-2.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-colors"
+              title="展开执行流"
+            >
+              <Terminal className="w-4 h-4 text-emerald-600" />
+              {projectState === 'executing' && (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping absolute" />
+              )}
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Role Assignment & Fleet Connection Modal */}
       <AccountBridgeModal
