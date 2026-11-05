@@ -3,32 +3,73 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { WarRoom } from './components/WarRoom';
 import { Canvas } from './components/Canvas';
-import { ExecutionConsole } from './components/ExecutionConsole';
+import { ExecutionConsole, ConsoleLog } from './components/ExecutionConsole';
 import { AccountBridgeModal } from './components/AccountBridgeModal';
 import { 
   ChatMessage, 
   TaskItem,
   MilestoneCheckpoint,
   ProjectState, 
-  CanvasDocument 
+  CanvasDocument,
+  ProjectFolder,
+  RoleAssignment,
+  DialogueTarget
 } from './types';
 import { createMessage } from './coordinator/workflow';
-
-interface ConsoleLog {
-  id: string;
-  time: string;
-  type: 'stdout' | 'stderr' | 'system' | 'diff';
-  text: string;
-}
 
 export const App: React.FC = () => {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [activeThreadId, setActiveThreadId] = useState('t-2');
   const [projectState, setProjectState] = useState<ProjectState>('idle');
   const [activeCommand, setActiveCommand] = useState<string>('');
+  const [activeWorkerName, setActiveWorkerName] = useState<string>('Cursor Agent');
 
-  // Account Connection State
+  // Multi-Project Tree Hierarchy (项目在上，对话在下，可展开当前项目)
+  const [projects, setProjects] = useState<ProjectFolder[]>([
+    {
+      id: 'p-1',
+      name: 'ai-solo-studio',
+      isCurrent: true,
+      isExpanded: true,
+      threads: [
+        { id: 't-1', title: '01. 需求蓝图与架构磋商', updatedAt: '刚刚' },
+        { id: 't-2', title: '02. 多剪贴板工具实现规划', updatedAt: '19:25' },
+        { id: 't-3', title: '03. 命令行执行体联调记录', updatedAt: '昨天' },
+      ],
+    },
+    {
+      id: 'p-2',
+      name: 'Smart Hifi Music',
+      isCurrent: false,
+      isExpanded: false,
+      threads: [
+        { id: 't-201', title: '无损音频解码器重构', updatedAt: '3天前' },
+        { id: 't-202', title: 'UI 响应式波形图绘制', updatedAt: '上周' },
+      ],
+    },
+    {
+      id: 'p-3',
+      name: 'SACD Native',
+      isCurrent: false,
+      isExpanded: false,
+      threads: [
+        { id: 't-301', title: 'DSD 源码直通与驱动适配', updatedAt: '2周前' },
+      ],
+    },
+  ]);
+
+  const [activeProjectId, setActiveProjectId] = useState('p-1');
+  const [activeThreadId, setActiveThreadId] = useState('t-1');
+
+  // Customizable AI Seat Roles (仓位角色设定)
+  const [roles, setRoles] = useState<RoleAssignment>({
+    claudeRole: '首席架构师',
+    chatgptRole: '技术评审 & 风控',
+    cursorRole: '编码主力',
+    antigravityRole: '质量总监 & 自动化',
+  });
+
+  // Account modal
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [accounts, setAccounts] = useState({
     claude: true,
@@ -36,8 +77,8 @@ export const App: React.FC = () => {
   });
 
   // Resizable Column Widths
-  const [sidebarWidth, setSidebarWidth] = useState(250);
-  const [warRoomWidth, setWarRoomWidth] = useState(500);
+  const [sidebarWidth, setSidebarWidth] = useState(260);
+  const [warRoomWidth, setWarRoomWidth] = useState(480);
   const isDraggingRef = useRef<'sidebar' | 'warroom' | null>(null);
 
   // Execution state references for pausing
@@ -53,7 +94,7 @@ export const App: React.FC = () => {
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       if (isDraggingRef.current !== 'sidebar') return;
-      const newWidth = Math.min(Math.max(moveEvent.clientX, 170), 420);
+      const newWidth = Math.min(Math.max(moveEvent.clientX, 180), 420);
       setSidebarWidth(newWidth);
     };
 
@@ -102,7 +143,7 @@ export const App: React.FC = () => {
       id: 'doc-spec',
       title: 'SPEC-CLIPBOARD-V1.md',
       type: 'markdown',
-      sourceAgent: 'Claude 3.7 架构师 (真实连接)',
+      sourceAgent: 'Claude 3.7 架构师 (真实直连)',
       updatedAt: '今天 19:25',
       content: `# 【桌面极简多剪贴板工具】详细需求与架构规范书
 
@@ -138,14 +179,15 @@ export const App: React.FC = () => {
 - **底层执行体探测**：
   - Claude Code CLI (v2.1.318) 已挂载就绪 (直通官方订阅)
   - Codex CLI (v0.166.0) 已挂载就绪 (直通官方订阅)
-  - Cursor IDE 适配器就绪
-- **状态**：真实双脑磋商总线就绪！`,
+  - Cursor Agent 已就绪 (/Users/jamesho/.local/bin/cursor)
+  - Antigravity 已就绪 (/Users/jamesho/.local/bin/agy)
+- **状态**：真实多 AI 协同总线就绪！`,
     },
   ]);
 
   const [activeDocId, setActiveDocId] = useState<string>('doc-spec');
 
-  // Initial Messages in War Room
+  // Messages in War Room
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'msg-init-1',
@@ -153,7 +195,7 @@ export const App: React.FC = () => {
       senderName: '系统总线',
       avatarColor: 'bg-blue-600',
       roleBadge: 'System',
-      content: '✅ **已直连你本地已授权的 Claude 与 ChatGPT 司令部！**\n\n现在在下方输入任何项目 Idea，系统将通过真实本地进程调用 **Claude 3.7** 架构起草与 **ChatGPT 4o / Codex** 风险审核，全程走你现成订阅，0 额外 Token 费用！',
+      content: '✅ **已成功接入你本地的 Claude、ChatGPT、Cursor 与 Antigravity 协同舰队！**\n\n你可以自由选择受话方：\n• **【联合司令部】**：Claude 负责系统设计，ChatGPT 负责安全审阅；\n• **【单独提问】**：直接对话 Claude、ChatGPT，或直通 Cursor、Antigravity 进行指令派发。',
       timestamp: '刚刚',
     },
   ]);
@@ -165,8 +207,10 @@ export const App: React.FC = () => {
     {
       id: 'log-1',
       time: '19:10:00',
+      workerTag: 'System',
+      workerColor: 'bg-blue-50 text-blue-700 border-blue-200',
       type: 'system',
-      text: '[Runner] 真实双脑引擎就绪。Claude Code CLI 与 Codex CLI 已接驳通信总线。',
+      text: '[Runner] 协同舰队就绪。Claude, Codex, Cursor Agent, Antigravity 均已配置。',
     },
   ]);
 
@@ -186,42 +230,93 @@ export const App: React.FC = () => {
     setTheme((t) => (t === 'light' ? 'dark' : 'light'));
   };
 
-  const addLog = (text: string, type: ConsoleLog['type'] = 'stdout') => {
+  const addLog = (
+    text: string, 
+    workerTag: string = 'System', 
+    workerColor: string = 'bg-blue-50 text-blue-700 border-blue-200', 
+    type: ConsoleLog['type'] = 'stdout'
+  ) => {
     const time = new Date().toTimeString().split(' ')[0];
     setConsoleLogs((prev) => [
       ...prev,
       {
         id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         time,
+        workerTag,
+        workerColor,
         type,
         text,
       },
     ]);
   };
 
-  // Connect to official web subscription
-  const handleConnectProvider = (provider: 'claude' | 'chatgpt') => {
-    setAccounts((prev) => ({ ...prev, [provider]: true }));
-    addLog(`[BYOS] 已绑定 ${provider} 官方订阅账号。`, 'system');
-  };
-
-  // REAL Multi-AI Orchestration Workflow
-  const handleSendMessage = async (text: string) => {
+  // Human sends a message in War Room with Target specified
+  const handleSendMessage = async (text: string, target: DialogueTarget) => {
     const userMsg = createMessage('user', text);
     setMessages((prev) => [...prev, userMsg]);
 
     if (projectState === 'paused') {
       const ack = createMessage('system', `已收到老板的干预指令：“${text}”。双脑正在重新校准方案。`);
       setMessages((prev) => [...prev, ack]);
-      addLog(`[INTERVENE] 收到老板干预调整指令: ${text}`, 'system');
+      addLog(`收到老板干预调整指令: ${text}`, 'System', 'bg-red-50 text-red-700 border-red-200', 'system');
       return;
     }
 
     setProjectState('discussing');
-    addLog(`[ORCHESTRATOR] 接收新任务：“${text}”。正在调起真实 Claude 3.7 进行架构推演...`, 'system');
+
+    // Route based on Target
+    if (target === 'cursor') {
+      // Direct to Cursor
+      addLog(`直通 Cursor Agent 派发任务：“${text}”...`, 'Cursor', 'bg-indigo-50 text-indigo-700 border-indigo-200', 'system');
+      const cursorAck = createMessage('worker', `🚀 **[Cursor Agent 接收指令]**\n已收到任务：“${text}”。正在本地 workspace 准备编码！`);
+      setMessages((prev) => [...prev, cursorAck]);
+      setProjectState('idle');
+      return;
+    }
+
+    if (target === 'claude') {
+      // Direct only to Claude
+      addLog(`向 Claude 咨询：“${text}”...`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
+      try {
+        const res = await fetch('/api/consult-claude', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: text }),
+        });
+        const data = await res.json();
+        const claudeMsg = createMessage('claude', data.text || '【Claude 架构师已回复】');
+        setMessages((prev) => [...prev, claudeMsg]);
+      } catch (e) {
+        addLog(`Claude 调用失败: ${e}`, 'Claude', 'bg-red-50 text-red-700 border-red-200', 'stderr');
+      }
+      setProjectState('idle');
+      return;
+    }
+
+    if (target === 'chatgpt') {
+      // Direct only to ChatGPT
+      addLog(`向 ChatGPT 咨询：“${text}”...`, 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
+      try {
+        const res = await fetch('/api/consult-codex', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: text, claudePlan: '用户单独咨询 ChatGPT' }),
+        });
+        const data = await res.json();
+        const gptMsg = createMessage('chatgpt', data.text || '【ChatGPT 评审员已回复】');
+        setMessages((prev) => [...prev, gptMsg]);
+      } catch (e) {
+        addLog(`ChatGPT 调用失败: ${e}`, 'ChatGPT', 'bg-red-50 text-red-700 border-red-200', 'stderr');
+      }
+      setProjectState('idle');
+      return;
+    }
+
+    // Default: 'all_pms' - Full Co-PM Collaborative Workflow
+    addLog(`接收新任务：“${text}”。正在调起真实 Claude 3.7 进行架构推演...`, 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
 
     try {
-      // 1. REAL Claude Architect Call
+      // 1. Claude Architect Call
       const claudeRes = await fetch('/api/consult-claude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -230,7 +325,7 @@ export const App: React.FC = () => {
       const claudeData = await claudeRes.json();
       const claudeText = claudeData.text || '【Claude 方案生成完成】建议采用轻量模块化设计，分为配置、业务与交付三层。';
 
-      addLog('[Co-PM] 真实 Claude 3.7 响应成功，已捕获架构方案！', 'system');
+      addLog('真实 Claude 3.7 响应成功，已捕获架构方案！', 'Claude', 'bg-amber-50 text-amber-700 border-amber-200', 'system');
 
       // Update right canvas with real spec
       const newDocId = `doc-${Date.now()}`;
@@ -239,7 +334,7 @@ export const App: React.FC = () => {
         id: newDocId,
         title: docTitle,
         type: 'markdown',
-        sourceAgent: 'Claude 3.7 架构师 (真实输出)',
+        sourceAgent: `Claude 3.7 (${roles.claudeRole})`,
         updatedAt: '刚刚',
         content: `# 【${text}】真实架构规划方案\n\n${claudeText}`,
       };
@@ -254,8 +349,8 @@ export const App: React.FC = () => {
       };
       setMessages((prev) => [...prev, claudeMsg]);
 
-      // 2. REAL ChatGPT / Codex Review Call
-      addLog('[Co-PM] 正在将 Claude 方案自动喂给真实 Codex / ChatGPT 进行风控审阅...', 'system');
+      // 2. ChatGPT Review Call
+      addLog('正在将 Claude 方案自动喂给真实 Codex / ChatGPT 进行风控审阅...', 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
 
       const codexRes = await fetch('/api/consult-codex', {
         method: 'POST',
@@ -265,7 +360,7 @@ export const App: React.FC = () => {
       const codexData = await codexRes.json();
       const codexText = codexData.text || '【ChatGPT 风控审核】已核对架构方案，边界条件已确立，批准进入施工阶段！';
 
-      addLog('[Co-PM] 真实 Codex / ChatGPT 审阅完毕！共识达成。', 'system');
+      addLog('真实 Codex / ChatGPT 审阅完毕！共识达成。', 'ChatGPT', 'bg-teal-50 text-teal-700 border-teal-200', 'system');
 
       const gptMsg: ChatMessage = {
         ...createMessage('chatgpt', codexText),
@@ -280,16 +375,16 @@ export const App: React.FC = () => {
           title: '阶段一：初始化工作区与项目骨架',
           description: `为【${text}】在本地 workspace 目录建立工程脚手架。`,
           assignedTo: 'cursor',
-          workerName: 'Cursor Agent',
+          workerName: `Cursor Agent (${roles.cursorRole})`,
           status: 'pending',
           progress: 0,
         },
         {
           id: 'task-2',
           title: '阶段二：编写核心功能与主逻辑',
-          description: '按照 Claude 与 ChatGPT 达成的技术规范实现主模块代码。',
-          assignedTo: 'claude_code',
-          workerName: 'Claude Code CLI',
+          description: '实现具体业务逻辑与模块代码。',
+          assignedTo: 'cursor',
+          workerName: `Cursor Agent (${roles.cursorRole})`,
           status: 'pending',
           progress: 0,
         },
@@ -298,7 +393,7 @@ export const App: React.FC = () => {
           title: '阶段三：本地自动化构建测试与验证',
           description: '执行本地语法检查、构建测试并输出运行报告。',
           assignedTo: 'antigravity',
-          workerName: 'Antigravity Runner',
+          workerName: `Antigravity (${roles.antigravityRole})`,
           status: 'pending',
           progress: 0,
         },
@@ -321,11 +416,11 @@ export const App: React.FC = () => {
         '📋 **双脑真实磋商完毕！**\n请在右侧检阅方案，并在下方确认。如需开工，点击【批准开工】；如需修改，可继续在对话框指出！'
       );
       setMessages((prev) => [...prev, sysReady]);
-      addLog('[CHECKPOINT] 等待老板审批开工权限...', 'system');
+      addLog('等待老板审批开工权限...', 'System', 'bg-blue-50 text-blue-700 border-blue-200', 'system');
 
     } catch (err) {
       console.error('[Orchestrator Error]', err);
-      addLog(`[ERROR] 调起真实模型异常: ${err}`, 'stderr');
+      addLog(`调起真实模型异常: ${err}`, 'System', 'bg-red-50 text-red-700 border-red-200', 'stderr');
       setProjectState('idle');
     }
   };
@@ -333,7 +428,7 @@ export const App: React.FC = () => {
   // Boss clicks "Approve" on Checkpoint -> REAL execution
   const handleApproveCheckpoint = async () => {
     setProjectState('executing');
-    addLog('[DISPATCH] 老板已批准！向本地施工队下发工单...', 'system');
+    addLog('老板已批准！向本地施工队下发工单...', 'System', 'bg-emerald-50 text-emerald-700 border-emerald-200', 'system');
 
     const approveMsg = createMessage('user', '✅ 批准开工！立即执行。');
     const startMsg = createMessage(
@@ -350,7 +445,8 @@ export const App: React.FC = () => {
     if (taskIndex >= tasks.length) {
       setProjectState('completed');
       setActiveCommand('');
-      addLog('[COMPLETE] 🎉 所有任务已在本地 workspace/ 施工完毕！', 'system');
+      setActiveWorkerName('待命中');
+      addLog('🎉 所有任务已在本地 workspace/ 施工完毕！', 'Antigravity', 'bg-purple-50 text-purple-700 border-purple-200', 'system');
       const doneMsg = createMessage(
         'worker',
         '🎉 **报告老板：所有规划任务已真实施工完毕！**\n\n已成功在本地 `workspace/` 目录生成工程文件并通过所有校验。你可以检阅项目成果，或继续输入新的需求想法！'
@@ -361,7 +457,14 @@ export const App: React.FC = () => {
 
     const currentTask = tasks[taskIndex];
     setActiveCommand(`${currentTask.workerName} run --task ${taskIndex + 1}`);
-    addLog(`[TASK-${taskIndex + 1} START] 调度 ${currentTask.workerName} 执行: ${currentTask.title}`, 'system');
+    setActiveWorkerName(currentTask.workerName);
+
+    const workerTag = currentTask.assignedTo === 'cursor' ? 'Cursor' : 'Antigravity';
+    const workerColor = currentTask.assignedTo === 'cursor' 
+      ? 'bg-indigo-50 text-indigo-700 border-indigo-200' 
+      : 'bg-purple-50 text-purple-700 border-purple-200';
+
+    addLog(`调度 ${currentTask.workerName} 执行: ${currentTask.title}`, workerTag, workerColor, 'system');
 
     setTasks((prev) => {
       const updated = [...prev];
@@ -370,19 +473,19 @@ export const App: React.FC = () => {
     });
 
     try {
-      // Call Real Workspace File Runner
       const res = await fetch('/api/run-worker-task', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           taskTitle: currentTask.title,
           workerType: currentTask.assignedTo,
+          taskDesc: currentTask.description,
         }),
       });
       const data = await res.json();
 
       if (isPausedRef.current) {
-        addLog(`[PAUSED] 任务 ${taskIndex + 1} 响应紧急暂停，已挂起。`, 'stderr');
+        addLog(`任务 ${taskIndex + 1} 响应紧急暂停，已挂起。`, workerTag, workerColor, 'stderr');
         return;
       }
 
@@ -395,8 +498,8 @@ export const App: React.FC = () => {
         return next;
       });
 
-      addLog(`[WORKER DIFF] ${data.diff || '文件写入完成'}`, 'diff');
-      addLog(`[TASK-${taskIndex + 1} DONE] ${currentTask.title} 执行成功，退出码 0。`, 'system');
+      addLog(`${data.diff || '文件写入完成'}`, workerTag, workerColor, 'diff');
+      addLog(`${currentTask.title} 执行成功，退出码 0。`, workerTag, workerColor, 'system');
 
       // De-noised report sent back to War Room
       const report = createMessage(
@@ -411,7 +514,7 @@ export const App: React.FC = () => {
       }, 1000);
 
     } catch (err) {
-      addLog(`[TASK-${taskIndex + 1} ERROR] 执行失败: ${err}`, 'stderr');
+      addLog(`执行失败: ${err}`, workerTag, workerColor, 'stderr');
     }
   };
 
@@ -431,7 +534,7 @@ export const App: React.FC = () => {
 
   const handlePause = () => {
     setProjectState('paused');
-    addLog('[EMERGENCY PAUSE] 🔴 用户触发了紧急暂停！所有后台流转已就地冻结。', 'stderr');
+    addLog('🔴 用户触发了紧急暂停！所有后台流转已就地冻结。', 'System', 'bg-red-50 text-red-700 border-red-200', 'stderr');
     setMessages((prev) => [
       ...prev,
       createMessage('system', '⏸️ **紧急暂停已生效！**\n所有后台操作已就地冻结。你可以在左下方输入调整意见，或点击顶部的【继续推进】。'),
@@ -440,7 +543,7 @@ export const App: React.FC = () => {
 
   const handleResume = () => {
     setProjectState('executing');
-    addLog('[RESUME] 🟢 紧急暂停已解除，继续推进。', 'system');
+    addLog('🟢 紧急暂停已解除，继续推进。', 'System', 'bg-emerald-50 text-emerald-700 border-emerald-200', 'system');
     setMessages((prev) => [
       ...prev,
       createMessage('system', '▶️ **已恢复执行！** 任务流水线继续作业。'),
@@ -452,8 +555,13 @@ export const App: React.FC = () => {
     setTasks([]);
     setCheckpoint(null);
     setActiveCommand('');
-    addLog('[RESET] 看板与状态机已重置。', 'system');
+    setActiveWorkerName('待命中');
+    addLog('看板与状态机已重置。', 'System', 'bg-blue-50 text-blue-700 border-blue-200', 'system');
   };
+
+  // Find active project and thread
+  const activeProject = projects.find((p) => p.id === activeProjectId) || projects[0];
+  const activeThread = activeProject.threads.find((t) => t.id === activeThreadId) || activeProject.threads[0];
 
   return (
     <div className={`flex flex-col h-screen w-screen overflow-hidden font-sans transition-colors ${
@@ -462,7 +570,8 @@ export const App: React.FC = () => {
       {/* Top Header */}
       <Header
         projectState={projectState}
-        activeTitle="X5 | 首页需求推演与方案 (接续待命)"
+        projectName={activeProject.name}
+        activeThreadTitle={activeThread?.title || '新对话'}
         theme={theme}
         onToggleTheme={toggleTheme}
         onPause={handlePause}
@@ -472,19 +581,54 @@ export const App: React.FC = () => {
 
       {/* Main 3-Column Studio Layout with Resizable Dividers */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Left Column: Sidebar */}
+        {/* Left Column: Sidebar (Projects on Top, Threads underneath) */}
         <div style={{ width: isSidebarCollapsed ? 56 : sidebarWidth }} className="shrink-0 h-full overflow-hidden">
           <Sidebar
+            projects={projects}
+            activeProjectId={activeProjectId}
             activeThreadId={activeThreadId}
-            onSelectThread={(id) => setActiveThreadId(id)}
-            onNewChat={() => {
-              const newMsg = createMessage('system', '已创建全新议题，请输入你的新 Idea！');
-              setMessages([newMsg]);
+            onSelectProject={(id) => setActiveProjectId(id)}
+            onToggleProjectExpand={(id) => {
+              setProjects((prev) => prev.map((p) => p.id === id ? { ...p, isExpanded: !p.isExpanded } : p));
+            }}
+            onSelectThread={(pId, tId) => {
+              setActiveProjectId(pId);
+              setActiveThreadId(tId);
+            }}
+            onNewThreadInProject={(pId) => {
+              const newTId = `t-${Date.now()}`;
+              setProjects((prev) => prev.map((p) => {
+                if (p.id === pId) {
+                  return {
+                    ...p,
+                    threads: [{ id: newTId, title: '新议题对话', updatedAt: '刚刚' }, ...p.threads],
+                  };
+                }
+                return p;
+              }));
+              setActiveProjectId(pId);
+              setActiveThreadId(newTId);
+              setMessages([createMessage('system', '已创建全新议题，请选择沟通受话方并提出你的新 Idea！')]);
+            }}
+            onNewProject={() => {
+              const newPId = `p-${Date.now()}`;
+              const newProjName = prompt('请输入新项目名称:', '新工程项目');
+              if (newProjName) {
+                const newFolder: ProjectFolder = {
+                  id: newPId,
+                  name: newProjName,
+                  isExpanded: true,
+                  threads: [{ id: `t-${Date.now()}`, title: '01. 需求与架构规划', updatedAt: '刚刚' }],
+                };
+                setProjects([newFolder, ...projects]);
+                setActiveProjectId(newPId);
+                setActiveThreadId(newFolder.threads[0].id);
+              }
             }}
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-            onOpenAccountBridge={() => setIsAccountModalOpen(true)}
-            accounts={accounts}
+            onOpenRoleModal={() => setIsAccountModalOpen(true)}
+            roles={roles}
             theme={theme}
           />
         </div>
@@ -536,15 +680,18 @@ export const App: React.FC = () => {
       <ExecutionConsole
         logs={consoleLogs}
         activeCommand={activeCommand}
+        activeWorkerName={activeWorkerName}
         isExecuting={projectState === 'executing'}
       />
 
-      {/* Account Bridge Modal (BYOS Login Center) */}
+      {/* Role Assignment & Fleet Connection Modal */}
       <AccountBridgeModal
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}
         accounts={accounts}
-        onConnect={handleConnectProvider}
+        roles={roles}
+        onUpdateRoles={(newRoles) => setRoles(newRoles)}
+        onConnect={() => {}}
         theme={theme}
       />
     </div>

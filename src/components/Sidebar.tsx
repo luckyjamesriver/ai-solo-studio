@@ -1,57 +1,51 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { 
   Plus, 
-  Pin, 
   FolderKanban, 
+  FolderOpen,
   ChevronDown, 
+  ChevronRight,
   PanelLeftClose, 
   PanelLeftOpen,
   MessageSquare,
   Sparkles,
-  Link2,
-  CheckCircle2,
   Cpu,
-  Terminal
+  CheckCircle2,
+  FolderPlus
 } from 'lucide-react';
-import { ThreadItem } from '../types';
+import { ProjectFolder, RoleAssignment } from '../types';
 
 interface SidebarProps {
+  projects: ProjectFolder[];
+  activeProjectId: string;
   activeThreadId: string;
-  onSelectThread: (id: string) => void;
-  onNewChat: () => void;
+  onSelectProject: (projectId: string) => void;
+  onToggleProjectExpand: (projectId: string) => void;
+  onSelectThread: (projectId: string, threadId: string) => void;
+  onNewThreadInProject: (projectId: string) => void;
+  onNewProject: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  onOpenAccountBridge: () => void;
-  accounts: {
-    claude: boolean;
-    chatgpt: boolean;
-  };
+  onOpenRoleModal: () => void;
+  roles: RoleAssignment;
   theme: 'light' | 'dark';
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
+  projects,
+  activeProjectId,
   activeThreadId,
+  onSelectProject,
+  onToggleProjectExpand,
   onSelectThread,
-  onNewChat,
+  onNewThreadInProject,
+  onNewProject,
   isCollapsed,
   onToggleCollapse,
-  onOpenAccountBridge,
-  accounts,
+  onOpenRoleModal,
+  roles,
   theme,
 }) => {
-  const [pinnedThreads] = useState<ThreadItem[]>([
-    { id: 't-1', title: '总管理员 | 项目总规划与派工', category: 'pinned' },
-    { id: 't-2', title: 'X5 | 首页需求推演与方案 (接续待命)', category: 'pinned', isActive: true },
-    { id: 't-3', title: 'AI 工具协同机制研究', category: 'pinned' },
-    { id: 't-4', title: '总管理员 | Claude & ChatGPT 联动测试', category: 'pinned' },
-  ]);
-
-  const [projectList] = useState([
-    { id: 'p-1', name: 'ai-solo-studio (当前)' },
-    { id: 'p-2', name: 'Smart Hifi Music' },
-    { id: 'p-3', name: 'SACD Native' },
-  ]);
-
   if (isCollapsed) {
     return (
       <div className={`w-14 shrink-0 h-full border-r flex flex-col items-center py-4 transition-colors select-none ${
@@ -67,17 +61,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <PanelLeftOpen className="w-5 h-5" />
         </button>
         <button
-          onClick={onNewChat}
+          onClick={onNewProject}
           className="mt-4 p-3 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-md transition-all active:scale-95"
-          title="新聊天"
+          title="新建项目"
         >
-          <Plus className="w-4 h-4" />
+          <FolderPlus className="w-4 h-4" />
         </button>
         <div className="flex-1" />
         <button
-          onClick={onOpenAccountBridge}
+          onClick={onOpenRoleModal}
           className="p-2.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-blue-600 transition-colors"
-          title="多 AI 舰队状态"
+          title="AI 席位与角色分配"
         >
           <Cpu className="w-4 h-4" />
         </button>
@@ -91,7 +85,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ? 'bg-[#f0f4f9] border-[#e3e3e3] text-[#1f1f1f]' 
         : 'bg-[#0b0f17] border-[#1e293b] text-slate-300'
     }`}>
-      {/* Top Header / App Switcher */}
+      {/* Brand Header */}
       <div className={`p-4 border-b flex items-center justify-between ${
         theme === 'light' ? 'border-[#e3e3e3]' : 'border-slate-800'
       }`}>
@@ -100,9 +94,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Sparkles className="w-3.5 h-3.5" />
           </div>
           <span className={theme === 'light' ? 'text-[#1f1f1f]' : 'text-slate-100'}>
-            Solo Studio
+            AI Solo Studio
           </span>
-          <ChevronDown className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
         </div>
 
         <button
@@ -116,127 +109,160 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      {/* New Chat Button (Gemini Style Pill) */}
-      <div className="p-3">
+      {/* Top Action Buttons (新建项目 & 新建议题) */}
+      <div className="p-3 grid grid-cols-2 gap-2 border-b border-[#e3e3e3] dark:border-slate-800">
         <button
-          onClick={onNewChat}
-          className={`w-full py-2.5 px-4 rounded-full border flex items-center gap-2.5 font-medium transition-all shadow-sm ${
+          onClick={onNewProject}
+          className={`py-2 px-3 rounded-full border flex items-center justify-center gap-1.5 font-medium transition-all shadow-xs ${
             theme === 'light'
               ? 'bg-white hover:bg-[#dfe3e7] border-[#e3e3e3] text-[#1f1f1f]'
               : 'bg-[#161f30] hover:bg-[#1e293b] border-slate-700 text-slate-100'
           }`}
+          title="在本地初始化一个全新项目"
         >
-          <Plus className="w-4 h-4 text-blue-600" />
-          <span>新建对话 / 项目议题</span>
+          <FolderPlus className="w-3.5 h-3.5 text-blue-600" />
+          <span>新建项目</span>
+        </button>
+
+        <button
+          onClick={() => onNewThreadInProject(activeProjectId)}
+          className={`py-2 px-3 rounded-full border flex items-center justify-center gap-1.5 font-medium transition-all shadow-xs ${
+            theme === 'light'
+              ? 'bg-blue-600 hover:bg-blue-500 text-white border-blue-600'
+              : 'bg-blue-500 hover:bg-blue-400 text-white border-blue-500'
+          }`}
+          title="在当前项目中开始新对话"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          <span>新建对话</span>
         </button>
       </div>
 
-      {/* Navigation & Section List */}
-      <div className="flex-1 overflow-y-auto px-3 space-y-4">
-        {/* Pinned Section */}
-        <div>
-          <div className="flex items-center justify-between px-3 py-1 text-[11px] font-semibold text-[#444746] dark:text-slate-400 uppercase tracking-wider">
-            <span className="flex items-center gap-1.5">
-              <Pin className="w-3 h-3 text-slate-400" /> 置顶任务
-            </span>
-          </div>
-          <div className="mt-1 space-y-1">
-            {pinnedThreads.map((thread) => {
-              const isActive = thread.id === activeThreadId;
-              return (
-                <button
-                  key={thread.id}
-                  onClick={() => onSelectThread(thread.id)}
-                  className={`w-full text-left px-3.5 py-2.5 rounded-full flex items-center gap-2.5 transition-all text-xs ${
-                    isActive
-                      ? theme === 'light'
-                        ? 'bg-white text-blue-700 font-semibold shadow-sm border border-[#e3e3e3]'
-                        : 'bg-[#1e293b] text-blue-400 font-semibold'
-                      : theme === 'light'
-                      ? 'hover:bg-[#dfe3e7] text-[#444746] hover:text-[#1f1f1f]'
-                      : 'hover:bg-slate-800/60 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <MessageSquare className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
-                  <span className="truncate">{thread.title}</span>
-                </button>
-              );
-            })}
-          </div>
+      {/* Projects & Nested Conversations Tree (项目在上，对话在下，可展开当前项目) */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="px-2 py-1 text-[11px] font-semibold text-[#444746] dark:text-slate-400 uppercase tracking-wider flex items-center justify-between">
+          <span>工程项目与议题</span>
+          <span className="text-[10px] text-slate-400 font-mono">{projects.length} 个项目</span>
         </div>
 
-        {/* Projects Section */}
-        <div>
-          <div className="flex items-center justify-between px-3 py-1 text-[11px] font-semibold text-[#444746] dark:text-slate-400 uppercase tracking-wider">
-            <span className="flex items-center gap-1.5">
-              <FolderKanban className="w-3 h-3 text-slate-400" /> 本地工程项目
-            </span>
-          </div>
-          <div className="mt-1 space-y-1">
-            {projectList.map((p) => (
-              <div
-                key={p.id}
-                className={`px-3.5 py-2 rounded-full flex items-center gap-2.5 cursor-pointer transition-colors text-xs ${
-                  theme === 'light'
-                    ? 'hover:bg-[#dfe3e7] text-[#444746]'
-                    : 'hover:bg-slate-800/60 text-slate-400'
-                }`}
-              >
-                <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                <span className="truncate">{p.name}</span>
+        <div className="space-y-1.5">
+          {projects.map((proj) => {
+            const isCurrent = proj.id === activeProjectId;
+            return (
+              <div key={proj.id} className="rounded-2xl overflow-hidden">
+                {/* Project Header Row */}
+                <div
+                  onClick={() => {
+                    onSelectProject(proj.id);
+                    onToggleProjectExpand(proj.id);
+                  }}
+                  className={`px-3 py-2.5 rounded-full flex items-center justify-between cursor-pointer transition-all ${
+                    isCurrent
+                      ? theme === 'light'
+                        ? 'bg-white border border-[#e3e3e3] shadow-xs text-blue-700 font-semibold'
+                        : 'bg-[#1c2436] border border-blue-500/40 text-blue-400 font-semibold'
+                      : theme === 'light'
+                      ? 'hover:bg-[#dfe3e7] text-[#1f1f1f]'
+                      : 'hover:bg-slate-800 text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {proj.isExpanded ? (
+                      <FolderOpen className="w-4 h-4 text-blue-600 shrink-0" />
+                    ) : (
+                      <FolderKanban className="w-4 h-4 text-slate-400 shrink-0" />
+                    )}
+                    <span className="truncate text-xs">{proj.name}</span>
+                    {proj.isCurrent && (
+                      <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 font-normal">
+                        活跃
+                      </span>
+                    )}
+                  </div>
+
+                  {proj.isExpanded ? (
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  )}
+                </div>
+
+                {/* Sub-Threads under Project (Nested Tree) */}
+                {proj.isExpanded && (
+                  <div className="ml-4 pl-2.5 border-l-2 border-slate-200 dark:border-slate-800 mt-1 space-y-1 py-1">
+                    {proj.threads.map((thread) => {
+                      const isThreadActive = isCurrent && thread.id === activeThreadId;
+                      return (
+                        <button
+                          key={thread.id}
+                          onClick={() => onSelectThread(proj.id, thread.id)}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-full flex items-center gap-2 transition-all text-[11px] ${
+                            isThreadActive
+                              ? theme === 'light'
+                                ? 'bg-blue-50 text-blue-700 font-semibold border border-blue-200'
+                                : 'bg-[#1e293b] text-blue-400 font-semibold'
+                              : theme === 'light'
+                              ? 'hover:bg-slate-200/60 text-[#444746] hover:text-[#1f1f1f]'
+                              : 'hover:bg-slate-800/60 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <MessageSquare className={`w-3 h-3 shrink-0 ${isThreadActive ? 'text-blue-600' : 'text-slate-400'}`} />
+                          <span className="truncate">{thread.title}</span>
+                        </button>
+                      );
+                    })}
+
+                    {/* Quick Add Thread Button */}
+                    <button
+                      onClick={() => onNewThreadInProject(proj.id)}
+                      className="w-full text-left px-2.5 py-1 text-[10px] text-blue-600 hover:text-blue-700 flex items-center gap-1 opacity-80 hover:opacity-100"
+                    >
+                      <Plus className="w-2.5 h-2.5" />
+                      <span>新建对话</span>
+                    </button>
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Multi-AI Full Fleet Status Card */}
+      {/* Multi-AI Fleet Status & Role Assignment Button */}
       <div className="p-3 border-t border-[#e3e3e3] dark:border-slate-800">
         <div 
-          onClick={onOpenAccountBridge}
+          onClick={onOpenRoleModal}
           className={`p-3 rounded-2xl border cursor-pointer transition-all ${
             theme === 'light'
               ? 'bg-white hover:bg-slate-50 border-[#e3e3e3] shadow-xs'
               : 'bg-[#161f30] hover:bg-[#1e293b] border-slate-700'
           }`}
+          title="点击自定义每个 AI 的席位角色"
         >
           <div className="flex items-center justify-between mb-2">
             <span className="font-semibold text-[11px] flex items-center gap-1.5">
               <Cpu className="w-3.5 h-3.5 text-blue-600" />
-              <span>多 AI 协同舰队 (已接入)</span>
+              <span>多 AI 协同席位分配</span>
             </span>
-            <span className="text-[10px] text-blue-600 font-medium">详情</span>
+            <span className="text-[10px] text-blue-600 font-medium hover:underline">角色设置 ⚙️</span>
           </div>
 
-          <div className="space-y-1 text-[10px]">
-            {/* PM Layer */}
+          <div className="space-y-1.5 text-[10px]">
             <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
-              <span>🧠 架构师: Claude 3.7</span>
-              <span className="text-emerald-600 font-semibold flex items-center gap-0.5">
-                <CheckCircle2 className="w-3 h-3" /> 就绪
-              </span>
+              <span className="truncate">🧠 Claude: {roles.claudeRole}</span>
+              <span className="text-emerald-600 font-semibold shrink-0">就绪</span>
             </div>
             <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
-              <span>🛡️ 评审员: ChatGPT 4o</span>
-              <span className="text-emerald-600 font-semibold flex items-center gap-0.5">
-                <CheckCircle2 className="w-3 h-3" /> 就绪
-              </span>
+              <span className="truncate">🛡️ ChatGPT: {roles.chatgptRole}</span>
+              <span className="text-emerald-600 font-semibold shrink-0">就绪</span>
             </div>
-
-            {/* Worker Layer */}
-            <div className="pt-1 border-t border-slate-100 dark:border-slate-800 space-y-1">
-              <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
-                <span>🚀 编码主力: Cursor Agent</span>
-                <span className="text-blue-600 font-semibold flex items-center gap-0.5">
-                  <CheckCircle2 className="w-3 h-3" /> 本地就绪
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
-                <span>🪐 质量总监: Antigravity (我)</span>
-                <span className="text-indigo-600 font-semibold flex items-center gap-0.5">
-                  <CheckCircle2 className="w-3 h-3" /> 本地就绪
-                </span>
-              </div>
+            <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+              <span className="truncate">🚀 Cursor: {roles.cursorRole}</span>
+              <span className="text-blue-600 font-semibold shrink-0">本地</span>
+            </div>
+            <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+              <span className="truncate">🪐 Antigravity: {roles.antigravityRole}</span>
+              <span className="text-indigo-600 font-semibold shrink-0">本地</span>
             </div>
           </div>
         </div>

@@ -8,12 +8,14 @@ import {
   CheckCircle2, 
   RefreshCw, 
   Sun, 
-  Moon
+  Moon,
+  FolderGit2
 } from 'lucide-react';
 
 interface HeaderProps {
   projectState: ProjectState;
-  activeTitle?: string;
+  projectName: string;
+  activeThreadTitle: string;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   onPause: () => void;
@@ -23,7 +25,8 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   projectState,
-  activeTitle = 'X5 | 首页需求推演与方案 (接续待命)',
+  projectName,
+  activeThreadTitle,
   theme,
   onToggleTheme,
   onPause,
@@ -64,7 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
         );
       default:
         return (
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shadow-sm">
+          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shadow-xs">
             待命中 / 等待新 Idea
           </span>
         );
@@ -72,26 +75,20 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className={`h-14 px-5 border-b flex items-center justify-between z-10 select-none transition-colors ${
+    <header className={`h-13 px-5 border-b flex items-center justify-between z-10 select-none transition-colors ${
       theme === 'light'
         ? 'bg-[#f0f4f9] border-[#e3e3e3] text-[#1f1f1f]'
         : 'bg-[#161b22] border-slate-800 text-slate-100'
     }`}>
-      {/* Brand & Title (Gemini Style Sparkle) */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          {/* Gemini Gradient Star */}
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-blue-500 via-indigo-500 to-pink-500 flex items-center justify-center shadow-sm">
-            <Sparkles className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <h1 className="font-semibold text-xs text-[#1f1f1f] dark:text-slate-200 truncate max-w-sm tracking-tight">
-              {activeTitle}
-            </h1>
-          </div>
-        </div>
-        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-800">
-          Gemini Style UI
+      {/* Dynamic Project Breadcrumb Path (No duplicate logo!) */}
+      <div className="flex items-center gap-2 text-xs">
+        <FolderGit2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+        <span className="font-semibold text-slate-700 dark:text-slate-300">
+          {projectName}
+        </span>
+        <span className="text-slate-400">/</span>
+        <span className="text-slate-500 dark:text-slate-400 truncate max-w-xs font-medium">
+          {activeThreadTitle}
         </span>
       </div>
 
@@ -127,7 +124,7 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={onToggleTheme}
           className={`p-2 rounded-full border transition-all ${
             theme === 'light'
-              ? 'bg-white hover:bg-slate-100 border-[#e3e3e3] text-slate-700 shadow-sm'
+              ? 'bg-white hover:bg-slate-100 border-[#e3e3e3] text-slate-700 shadow-xs'
               : 'bg-[#21262d] hover:bg-slate-700 border-slate-700 text-slate-200'
           }`}
           title={theme === 'light' ? '切换为深色模式' : '切换为浅色模式'}
@@ -139,7 +136,7 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={onReset}
           className={`px-3 py-1.5 rounded-full text-xs border transition-all ${
             theme === 'light'
-              ? 'text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border-[#e3e3e3] shadow-sm'
+              ? 'text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border-[#e3e3e3] shadow-xs'
               : 'text-slate-400 hover:text-slate-200 hover:bg-[#21262d] border-transparent hover:border-slate-700'
           }`}
         >

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChatMessage, ProjectState } from '../types';
+import { ChatMessage, ProjectState, DialogueTarget } from '../types';
 import { 
   Send, 
   User, 
@@ -8,13 +8,15 @@ import {
   Terminal, 
   AlertCircle, 
   FileText, 
-  ArrowUpRight
+  ArrowUpRight,
+  Users2,
+  Cpu
 } from 'lucide-react';
 
 interface WarRoomProps {
   messages: ChatMessage[];
   projectState: ProjectState;
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, target: DialogueTarget) => void;
   onOpenDoc: (docId: string) => void;
   theme: 'light' | 'dark';
 }
@@ -27,6 +29,7 @@ export const WarRoom: React.FC<WarRoomProps> = ({
   theme,
 }) => {
   const [input, setInput] = useState('');
+  const [target, setTarget] = useState<DialogueTarget>('all_pms');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,7 +39,7 @@ export const WarRoom: React.FC<WarRoomProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
-    onSendMessage(input.trim());
+    onSendMessage(input.trim(), target);
     setInput('');
   };
 
@@ -68,15 +71,15 @@ export const WarRoom: React.FC<WarRoomProps> = ({
         <div className="flex items-center gap-2">
           <div className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
           <span className="font-semibold text-[#1f1f1f] dark:text-slate-300">
-            双脑磋商对话流
+            多 AI 对话总线 (War Room)
           </span>
         </div>
         <div className="flex items-center gap-2 text-[11px] text-[#444746] dark:text-slate-400">
-          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white dark:bg-slate-800 border border-[#e3e3e3] dark:border-slate-700 shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-amber-500" /> Claude
+          <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white dark:bg-slate-800 border border-[#e3e3e3] dark:border-slate-700 shadow-xs">
+            <span className="w-2 h-2 rounded-full bg-amber-500" /> Claude (架构)
           </span>
-          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white dark:bg-slate-800 border border-[#e3e3e3] dark:border-slate-700 shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-teal-500" /> ChatGPT
+          <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white dark:bg-slate-800 border border-[#e3e3e3] dark:border-slate-700 shadow-xs">
+            <span className="w-2 h-2 rounded-full bg-teal-500" /> ChatGPT (评审)
           </span>
         </div>
       </div>
@@ -118,10 +121,15 @@ export const WarRoom: React.FC<WarRoomProps> = ({
                     : 'bg-[#161f30] border border-slate-700 text-slate-200 rounded-tl-none'
                 }`}
               >
-                {/* Sender Title */}
+                {/* Sender Title and Clear Role Badge */}
                 {msg.sender !== 'user' && (
                   <div className="flex items-center justify-between gap-3 mb-2 pb-1.5 border-b border-black/5 dark:border-white/10 text-[11px] text-[#444746] dark:text-slate-400 font-medium">
-                    <span>{msg.senderName}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">{msg.senderName}</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 font-mono">
+                        {msg.roleBadge}
+                      </span>
+                    </div>
                     <span className="font-mono text-[10px] opacity-70">{msg.timestamp}</span>
                   </div>
                 )}
@@ -137,7 +145,7 @@ export const WarRoom: React.FC<WarRoomProps> = ({
                     onClick={() => onOpenDoc(msg.linkedDocId!)}
                     className={`mt-3 p-2.5 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition-all ${
                       theme === 'light'
-                        ? 'bg-[#f0f4f9] hover:bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                        ? 'bg-[#f0f4f9] hover:bg-blue-50 border-blue-200 text-blue-700 shadow-xs'
                         : 'bg-[#0d1117] hover:bg-blue-950/40 border-blue-500/40 text-blue-300'
                     }`}
                   >
@@ -159,19 +167,80 @@ export const WarRoom: React.FC<WarRoomProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Floating Pill Input Form (Gemini Signature Floating Style) */}
-      <div className={`p-4 border-t select-none ${
+      {/* Target Selector & Input Box Area (解决“在和哪个AI沟通”的疑问) */}
+      <div className={`p-4 border-t select-none space-y-2.5 ${
         theme === 'light' ? 'border-[#e3e3e3] bg-[#f0f4f9]' : 'border-slate-800 bg-[#161b22]'
       }`}>
+        {/* Recipient Target Selector (解答用户疑问：我在和谁沟通) */}
+        <div className="flex items-center gap-1.5 overflow-x-auto text-[11px] text-[#444746] py-0.5">
+          <span className="text-slate-400 shrink-0 flex items-center gap-1">
+            <Users2 className="w-3.5 h-3.5" /> 沟通受话方:
+          </span>
+
+          <button
+            type="button"
+            onClick={() => setTarget('all_pms')}
+            className={`shrink-0 px-3 py-1 rounded-full border transition-all text-xs flex items-center gap-1 ${
+              target === 'all_pms'
+                ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs'
+                : 'bg-white hover:bg-[#dfe3e7] border-[#e3e3e3] text-slate-700'
+            }`}
+          >
+            <Sparkles className="w-3 h-3 text-amber-300" />
+            <span>联合司令部 (Claude先策划 + GPT评审)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTarget('claude')}
+            className={`shrink-0 px-2.5 py-1 rounded-full border transition-all text-xs flex items-center gap-1 ${
+              target === 'claude'
+                ? 'bg-amber-600 text-white border-amber-600 font-semibold shadow-xs'
+                : 'bg-white hover:bg-[#dfe3e7] border-[#e3e3e3] text-slate-700'
+            }`}
+          >
+            <span>🧠 仅找 Claude</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTarget('chatgpt')}
+            className={`shrink-0 px-2.5 py-1 rounded-full border transition-all text-xs flex items-center gap-1 ${
+              target === 'chatgpt'
+                ? 'bg-teal-600 text-white border-teal-600 font-semibold shadow-xs'
+                : 'bg-white hover:bg-[#dfe3e7] border-[#e3e3e3] text-slate-700'
+            }`}
+          >
+            <span>🛡️ 仅找 ChatGPT</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTarget('cursor')}
+            className={`shrink-0 px-2.5 py-1 rounded-full border transition-all text-xs flex items-center gap-1 ${
+              target === 'cursor'
+                ? 'bg-indigo-600 text-white border-indigo-600 font-semibold shadow-xs'
+                : 'bg-white hover:bg-[#dfe3e7] border-[#e3e3e3] text-slate-700'
+            }`}
+          >
+            <span>🚀 直通 Cursor</span>
+          </button>
+        </div>
+
+        {/* Input Form */}
         <form onSubmit={handleSubmit} className="relative flex items-center">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={
-              projectState === 'paused'
-                ? '已暂停：输入干预调整指令...'
-                : '用大白话输入你的新需求或任务想法...'
+              target === 'all_pms'
+                ? '向【联合司令部】提出新想法（Claude 架构规划，ChatGPT 风险审阅）...'
+                : target === 'claude'
+                ? '向【Claude 架构师】咨询系统方案与设计思考...'
+                : target === 'chatgpt'
+                ? '向【ChatGPT 评审员】咨询逻辑审阅与漏洞排查...'
+                : '向【Cursor Agent】直接下达编码指令...'
             }
             className={`w-full rounded-full py-3 pl-5 pr-14 text-xs shadow-[0_2px_8px_rgba(0,0,0,0.06)] border focus:outline-none transition-all ${
               theme === 'light'
@@ -189,13 +258,13 @@ export const WarRoom: React.FC<WarRoomProps> = ({
           </button>
         </form>
 
-        {/* Quick Suggestion Pills (Gemini Rounded Style) */}
-        <div className="mt-2.5 flex items-center gap-2 overflow-x-auto text-[11px] text-[#444746]">
+        {/* Quick Suggestion Pills */}
+        <div className="flex items-center gap-2 overflow-x-auto text-[11px] text-[#444746]">
           <span className="shrink-0 text-slate-400">💡 示例:</span>
           <button
             type="button"
             onClick={() => setInput('我想做一个极简的桌面多剪贴板历史记录工具')}
-            className={`shrink-0 px-3 py-1 rounded-full border transition-all text-xs ${
+            className={`shrink-0 px-3 py-0.5 rounded-full border transition-all text-xs ${
               theme === 'light'
                 ? 'bg-white hover:bg-[#dfe3e7] border-[#e3e3e3] text-[#1f1f1f] shadow-xs'
                 : 'bg-[#21262d] hover:bg-slate-700 border-slate-700 text-slate-300'
@@ -206,7 +275,7 @@ export const WarRoom: React.FC<WarRoomProps> = ({
           <button
             type="button"
             onClick={() => setInput('生成一个自动抓取并整理科技快讯的脚本')}
-            className={`shrink-0 px-3 py-1 rounded-full border transition-all text-xs ${
+            className={`shrink-0 px-3 py-0.5 rounded-full border transition-all text-xs ${
               theme === 'light'
                 ? 'bg-white hover:bg-[#dfe3e7] border-[#e3e3e3] text-[#1f1f1f] shadow-xs'
                 : 'bg-[#21262d] hover:bg-slate-700 border-slate-700 text-slate-300'
