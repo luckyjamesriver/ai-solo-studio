@@ -79,6 +79,7 @@ export interface ThreadItem {
 export interface ProjectFolder {
   id: string;
   name: string;
+  path?: string;
   isCurrent?: boolean;
   isExpanded: boolean;
   threads: ThreadItem[];

@@ -11,8 +11,8 @@ const CHATGPT_PARTITION = 'persist:ai_solo_chatgpt';
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1380,
-    height: 920,
+    width: 1440,
+    height: 940,
     minWidth: 1024,
     minHeight: 700,
     titleBarStyle: 'hiddenInset',
@@ -20,6 +20,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
+      webviewTag: true, // Enable native embedded official webviews
     },
   });
 
@@ -38,8 +39,11 @@ function createWindow() {
     });
   }
 
-  // Open external links in default browser
+  // Handle external links (open in system default browser)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://claude.ai') || url.startsWith('https://chatgpt.com')) {
+      return { action: 'allow' };
+    }
     shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -98,6 +102,15 @@ ipcMain.handle('open-login-window', async (event, provider) => {
     // Re-check cookies upon window close
     checkAccountStatus();
   });
+});
+
+// IPC: Open local project folder in Finder
+ipcMain.handle('open-project-folder', async (event, folderPath) => {
+  if (folderPath && fs.existsSync(folderPath)) {
+    shell.openPath(folderPath);
+    return { success: true };
+  }
+  return { success: false, error: 'Path not found' };
 });
 
 // IPC: Check current login status based on stored cookies

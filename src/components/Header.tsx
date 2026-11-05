@@ -14,8 +14,13 @@ import {
   Terminal,
   Columns2,
   PanelRightClose,
-  PanelRightOpen
+  PanelRightOpen,
+  LayoutDashboard,
+  Bot,
+  SplitSquareVertical
 } from 'lucide-react';
+
+export type StudioViewMode = 'war_room' | 'claude_web' | 'chatgpt_web' | 'dual_web';
 
 interface HeaderProps {
   projectState: ProjectState;
@@ -26,6 +31,8 @@ interface HeaderProps {
   onPause: () => void;
   onResume: () => void;
   onReset: () => void;
+  studioView: StudioViewMode;
+  onSetStudioView: (view: StudioViewMode) => void;
   rightViewMode?: 'canvas' | 'console' | 'split';
   onSetRightViewMode?: (mode: 'canvas' | 'console' | 'split') => void;
   isRightPanelCollapsed?: boolean;
@@ -41,6 +48,8 @@ export const Header: React.FC<HeaderProps> = ({
   onPause,
   onResume,
   onReset,
+  studioView,
+  onSetStudioView,
   rightViewMode = 'canvas',
   onSetRightViewMode,
   isRightPanelCollapsed = false,
@@ -51,7 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
       case 'discussing':
         return (
           <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200 dark:border-amber-800 animate-pulse">
-            <Sparkles className="w-3.5 h-3.5 text-amber-500" /> 双脑磋商中 (Claude ⇄ ChatGPT)
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" /> 双脑实时磋商中 (Claude ⇄ ChatGPT)
           </span>
         );
       case 'awaiting_approval':
@@ -63,7 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
       case 'executing':
         return (
           <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-500" /> 执行体施工中...
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-500" /> 施工队工作中 (Cursor / Antigravity)...
           </span>
         );
       case 'paused':
@@ -75,7 +84,7 @@ export const Header: React.FC<HeaderProps> = ({
       case 'completed':
         return (
           <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> 本轮施工已完成
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> 本轮施工已交付
           </span>
         );
       default:
@@ -88,34 +97,86 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className={`h-13 px-5 border-b flex items-center justify-between z-10 select-none transition-colors ${
+    <header className={`h-13 px-4 border-b flex items-center justify-between z-10 select-none transition-colors ${
       theme === 'light'
         ? 'bg-[#f0f4f9] border-[#e3e3e3] text-[#1f1f1f]'
         : 'bg-[#161b22] border-slate-800 text-slate-100'
     }`}>
       {/* Dynamic Project Breadcrumb Path */}
-      <div className="flex items-center gap-2 text-xs">
-        <FolderGit2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-        <span className="font-semibold text-slate-700 dark:text-slate-300">
+      <div className="flex items-center gap-2 text-xs min-w-[200px]">
+        <FolderGit2 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+        <span className="font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[120px]">
           {projectName}
         </span>
         <span className="text-slate-400">/</span>
-        <span className="text-slate-500 dark:text-slate-400 truncate max-w-xs font-medium">
+        <span className="text-slate-500 dark:text-slate-400 truncate max-w-[150px] font-medium">
           {activeThreadTitle}
         </span>
       </div>
 
-      {/* Status Center */}
-      <div className="flex items-center gap-3">
-        {getStatusBadge()}
+      {/* Main Studio Viewport Switcher (方案2：官方网页直通 & 联合中枢) */}
+      <div className="flex items-center bg-white dark:bg-slate-800 p-0.5 rounded-full border border-slate-200 dark:border-slate-700 shadow-xs text-xs">
+        <button
+          onClick={() => onSetStudioView('war_room')}
+          className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 font-medium transition-all ${
+            studioView === 'war_room'
+              ? 'bg-blue-600 text-white shadow-xs font-semibold'
+              : 'text-slate-600 dark:text-slate-300 hover:text-blue-600'
+          }`}
+          title="双脑联合司令部 (同时响应、里程碑拍板与施工总线)"
+        >
+          <LayoutDashboard className="w-3.5 h-3.5" />
+          <span>联合中枢 (War Room)</span>
+        </button>
+
+        <button
+          onClick={() => onSetStudioView('claude_web')}
+          className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 font-medium transition-all ${
+            studioView === 'claude_web'
+              ? 'bg-amber-600 text-white shadow-xs font-semibold'
+              : 'text-slate-600 dark:text-slate-300 hover:text-amber-600'
+          }`}
+          title="官方 Claude.ai 原生视界 (持久化独立沙箱)"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+          <span>官方 Claude</span>
+        </button>
+
+        <button
+          onClick={() => onSetStudioView('chatgpt_web')}
+          className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 font-medium transition-all ${
+            studioView === 'chatgpt_web'
+              ? 'bg-teal-600 text-white shadow-xs font-semibold'
+              : 'text-slate-600 dark:text-slate-300 hover:text-teal-600'
+          }`}
+          title="官方 ChatGPT.com 原生视界 (持久化独立沙箱)"
+        >
+          <Bot className="w-3.5 h-3.5 text-teal-300" />
+          <span>官方 ChatGPT</span>
+        </button>
+
+        <button
+          onClick={() => onSetStudioView('dual_web')}
+          className={`px-3 py-1.5 rounded-full flex items-center gap-1.5 font-medium transition-all ${
+            studioView === 'dual_web'
+              ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+              : 'text-slate-600 dark:text-slate-300 hover:text-indigo-600'
+          }`}
+          title="宽屏并排视界：左侧 Claude.ai + 右侧 ChatGPT.com 官方原生同题打擂"
+        >
+          <Columns2 className="w-3.5 h-3.5" />
+          <span>双脑并排打擂</span>
+        </button>
       </div>
 
-      {/* Controls & Right Panel Layout Switchers */}
+      {/* Status Center & Right Controls */}
       <div className="flex items-center gap-2">
+        {getStatusBadge()}
+
         {projectState === 'executing' || projectState === 'discussing' ? (
           <button
             onClick={onPause}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-red-600 hover:bg-red-500 text-white shadow-sm transition-all active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-600 hover:bg-red-500 text-white shadow-sm transition-all active:scale-95"
             title="随时一键叫停所有 AI"
           >
             <Pause className="w-3.5 h-3.5 fill-current" />
@@ -124,7 +185,7 @@ export const Header: React.FC<HeaderProps> = ({
         ) : projectState === 'paused' ? (
           <button
             onClick={onResume}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all active:scale-95"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all active:scale-95"
             title="恢复自动流转"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
@@ -132,9 +193,9 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         ) : null}
 
-        {/* Right Panel View Mode Segmented Control (宽屏分屏/单栏切换) */}
-        {onSetRightViewMode && (
-          <div className="hidden md:flex items-center bg-white dark:bg-slate-800 p-0.5 rounded-full border border-slate-200 dark:border-slate-700 shadow-2xs text-xs">
+        {/* Right Panel View Mode Segmented Control (in War Room view only) */}
+        {studioView === 'war_room' && onSetRightViewMode && (
+          <div className="hidden lg:flex items-center bg-white dark:bg-slate-800 p-0.5 rounded-full border border-slate-200 dark:border-slate-700 shadow-2xs text-xs">
             <button
               onClick={() => {
                 if (isRightPanelCollapsed && onToggleRightPanelCollapsed) onToggleRightPanelCollapsed();
@@ -161,7 +222,7 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'bg-blue-600 text-white font-medium shadow-xs'
                   : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
-              title="切换到底层执行体实时流 (包含各执行体独立Tab)"
+              title="切换到底层执行体实时流"
             >
               <Terminal className="w-3 h-3" />
               <span>执行流</span>
@@ -180,13 +241,13 @@ export const Header: React.FC<HeaderProps> = ({
               title="宽屏并排分屏：左侧文档 + 右侧执行体"
             >
               <Columns2 className="w-3 h-3" />
-              <span>并排</span>
+              <span>分屏</span>
             </button>
           </div>
         )}
 
         {/* Toggle Right Panel Collapse */}
-        {onToggleRightPanelCollapsed && (
+        {studioView === 'war_room' && onToggleRightPanelCollapsed && (
           <button
             onClick={onToggleRightPanelCollapsed}
             className={`p-2 rounded-full border transition-all ${
@@ -204,7 +265,7 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        {/* Theme Toggle (Light / Dark) */}
+        {/* Theme Toggle */}
         <button
           onClick={onToggleTheme}
           className={`p-2 rounded-full border transition-all ${
