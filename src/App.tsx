@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { WarRoom } from './components/WarRoom';
 import { Canvas } from './components/Canvas';
 import { ExecutionConsole } from './components/ExecutionConsole';
+import { AccountBridgeModal } from './components/AccountBridgeModal';
 import { 
   ChatMessage, 
   ProjectState, 
@@ -19,14 +20,20 @@ interface ConsoleLog {
 }
 
 export const App: React.FC = () => {
-  // Theme state: defaults to 'light'
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState('t-2');
   const [projectState, setProjectState] = useState<ProjectState>('idle');
   const [activeCommand, setActiveCommand] = useState<string>('');
 
-  // Resizable Column Widths (in pixels)
+  // Account Connection State (BYOS)
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [accounts, setAccounts] = useState({
+    claude: false,
+    chatgpt: false,
+  });
+
+  // Resizable Column Widths
   const [sidebarWidth, setSidebarWidth] = useState(250);
   const [warRoomWidth, setWarRoomWidth] = useState(500);
   const isDraggingRef = useRef<'sidebar' | 'warroom' | null>(null);
@@ -162,11 +169,31 @@ export const App: React.FC = () => {
       id: 'log-1',
       time: '19:10:00',
       type: 'system',
-      text: '[Runner] AI Solo Studio 本地环境就绪。采用 Google Gemini 现代化视觉与可拖动调节三栏布局。',
+      text: '[Runner] AI Solo Studio 本地环境就绪。支持官方网页订阅直连 (BYOS)。',
     },
   ]);
 
-  // Keep html class in sync with theme state
+  // Check Electron IPC availability on mount
+  useEffect(() => {
+    // @ts-ignore
+    if (window.require) {
+      try {
+        // @ts-ignore
+        const { ipcRenderer } = window.require('electron');
+        ipcRenderer.invoke('check-account-status').then((res: any) => {
+          if (res) setAccounts(res);
+        });
+
+        ipcRenderer.on('account-status-change', (_: any, data: any) => {
+          setAccounts((prev) => ({ ...prev, [data.provider]: data.connected }));
+        });
+      } catch (e) {
+        console.log('[Runner] Not in electron renderer', e);
+      }
+    }
+  }, []);
+
+  // Theme synchronization
   useEffect(() => {
     const root = document.documentElement;
     if (theme === 'dark') {
@@ -193,6 +220,22 @@ export const App: React.FC = () => {
         text,
       },
     ]);
+  };
+
+  // Connect to official web subscription
+  const handleConnectProvider = (provider: 'claude' | 'chatgpt') => {
+    // @ts-ignore
+    if (window.require) {
+      // @ts-ignore
+      const { ipcRenderer } = window.require('electron');
+      ipcRenderer.invoke('open-login-window', provider);
+    } else {
+      // Browser mode fallback
+      const url = provider === 'claude' ? 'https://claude.ai/login' : 'https://chatgpt.com/auth/login';
+      window.open(url, '_blank');
+      setAccounts((prev) => ({ ...prev, [provider]: true }));
+      addLog(`[BYOS] 已在浏览器中打开 ${provider} 官方登录页面。`, 'system');
+    }
   };
 
   // Human sends a message in War Room
@@ -307,7 +350,7 @@ export const App: React.FC = () => {
 
       {/* Main 3-Column Studio Layout with Resizable Dividers */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Left Column: Sidebar (Projects & Threads) */}
+        {/* Left Column: Sidebar */}
         <div style={{ width: isSidebarCollapsed ? 56 : sidebarWidth }} className="shrink-0 h-full overflow-hidden">
           <Sidebar
             activeThreadId={activeThreadId}
@@ -318,6 +361,8 @@ export const App: React.FC = () => {
             }}
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            onOpenAccountBridge={() => setIsAccountModalOpen(true)}
+            accounts={accounts}
             theme={theme}
           />
         </div>
@@ -329,11 +374,11 @@ export const App: React.FC = () => {
             className="w-1.5 hover:w-2 -ml-1 z-20 cursor-col-resize group flex items-center justify-center transition-all bg-transparent hover:bg-blue-400/30 active:bg-blue-500/60"
             title="按住左右拖拽调整左栏宽度"
           >
-            <div className="w-[1px] h-full bg-slate-200 dark:bg-slate-800 group-hover:bg-blue-500 transition-colors" />
+            <div className="w-[1px] h-full bg-[#e3e3e3] dark:bg-slate-800 group-hover:bg-blue-500 transition-colors" />
           </div>
         )}
 
-        {/* Middle Column: War Room (Conversational Flow) */}
+        {/* Middle Column: War Room */}
         <div style={{ width: warRoomWidth }} className="shrink-0 h-full overflow-hidden flex flex-col">
           <WarRoom
             messages={messages}
@@ -350,10 +395,10 @@ export const App: React.FC = () => {
           className="w-1.5 hover:w-2 -ml-1 z-20 cursor-col-resize group flex items-center justify-center transition-all bg-transparent hover:bg-blue-400/30 active:bg-blue-500/60"
           title="按住左右拖拽调整中栏和画布宽度"
         >
-          <div className="w-[1px] h-full bg-slate-200 dark:bg-slate-800 group-hover:bg-blue-500 transition-colors" />
+          <div className="w-[1px] h-full bg-[#e3e3e3] dark:bg-slate-800 group-hover:bg-blue-500 transition-colors" />
         </div>
 
-        {/* Right Column: Canvas (Detailed Document / Code / Plan Editor) - Takes remaining width */}
+        {/* Right Column: Canvas */}
         <div className="flex-1 h-full min-w-[320px] overflow-hidden flex flex-col">
           <Canvas
             documents={documents}
@@ -370,6 +415,15 @@ export const App: React.FC = () => {
         logs={consoleLogs}
         activeCommand={activeCommand}
         isExecuting={projectState === 'executing'}
+      />
+
+      {/* Account Bridge Modal (BYOS Login Center) */}
+      <AccountBridgeModal
+        isOpen={isAccountModalOpen}
+        onClose={() => setIsAccountModalOpen(false)}
+        accounts={accounts}
+        onConnect={handleConnectProvider}
+        theme={theme}
       />
     </div>
   );

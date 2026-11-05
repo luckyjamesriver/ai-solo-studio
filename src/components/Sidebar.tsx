@@ -7,7 +7,10 @@ import {
   PanelLeftClose, 
   PanelLeftOpen,
   MessageSquare,
-  Sparkles
+  Sparkles,
+  Link2,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 import { ThreadItem } from '../types';
 
@@ -17,6 +20,11 @@ interface SidebarProps {
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  onOpenAccountBridge: () => void;
+  accounts: {
+    claude: boolean;
+    chatgpt: boolean;
+  };
   theme: 'light' | 'dark';
 }
 
@@ -26,6 +34,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNewChat,
   isCollapsed,
   onToggleCollapse,
+  onOpenAccountBridge,
+  accounts,
   theme,
 }) => {
   const [pinnedThreads] = useState<ThreadItem[]>([
@@ -61,6 +71,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           title="新聊天"
         >
           <Plus className="w-4 h-4" />
+        </button>
+        <div className="flex-1" />
+        <button
+          onClick={onOpenAccountBridge}
+          className="p-2.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 transition-colors"
+          title="官方账号连接"
+        >
+          <Link2 className="w-4 h-4" />
         </button>
       </div>
     );
@@ -171,17 +189,52 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Footer Info */}
-      <div className={`p-3.5 border-t text-[11px] flex items-center justify-between ${
-        theme === 'light' ? 'border-[#e3e3e3] bg-[#f0f4f9] text-[#444746]' : 'border-slate-800 bg-[#070a10] text-slate-500'
-      }`}>
-        <span className="flex items-center gap-1.5 font-medium">
-          <Sparkles className="w-3.5 h-3.5 text-blue-500" />
-          <span>Claude 3.7 + GPT-4o</span>
-        </span>
-        <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 font-semibold">
-          协同在线
-        </span>
+      {/* Account Bridge Status Card (BYOS) */}
+      <div className="p-3 border-t border-[#e3e3e3] dark:border-slate-800">
+        <div 
+          onClick={onOpenAccountBridge}
+          className={`p-3 rounded-2xl border cursor-pointer transition-all ${
+            theme === 'light'
+              ? 'bg-white hover:bg-slate-50 border-[#e3e3e3] shadow-xs'
+              : 'bg-[#161f30] hover:bg-[#1e293b] border-slate-700'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-semibold text-[11px] flex items-center gap-1.5">
+              <Link2 className="w-3.5 h-3.5 text-blue-500" />
+              <span>官方订阅连接 (BYOS)</span>
+            </span>
+            <span className="text-[10px] text-blue-600 font-medium">配置</span>
+          </div>
+
+          <div className="space-y-1 text-[11px]">
+            <div className="flex items-center justify-between">
+              <span className="text-[#444746] dark:text-slate-400">Claude.ai (Pro)</span>
+              {accounts.claude ? (
+                <span className="text-emerald-600 font-semibold flex items-center gap-1 text-[10px]">
+                  <CheckCircle2 className="w-3 h-3" /> 已连接
+                </span>
+              ) : (
+                <span className="text-amber-600 flex items-center gap-1 text-[10px]">
+                  <AlertCircle className="w-3 h-3" /> 待连接
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-[#444746] dark:text-slate-400">ChatGPT (Plus)</span>
+              {accounts.chatgpt ? (
+                <span className="text-emerald-600 font-semibold flex items-center gap-1 text-[10px]">
+                  <CheckCircle2 className="w-3 h-3" /> 已连接
+                </span>
+              ) : (
+                <span className="text-amber-600 flex items-center gap-1 text-[10px]">
+                  <AlertCircle className="w-3 h-3" /> 待连接
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </aside>
   );

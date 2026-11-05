@@ -1,17 +1,22 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 let mainWindow = null;
+let loginWindow = null;
+
+// Persistent partitions for user subscriptions
+const CLAUDE_PARTITION = 'persist:ai_solo_claude';
+const CHATGPT_PARTITION = 'persist:ai_solo_chatgpt';
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1360,
-    height: 900,
+    width: 1380,
+    height: 920,
     minWidth: 1024,
     minHeight: 700,
     titleBarStyle: 'hiddenInset',
-    backgroundColor: '#0b0e14',
+    backgroundColor: '#f0f4f9',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -39,6 +44,96 @@ function createWindow() {
     return { action: 'deny' };
   });
 }
+
+// IPC: Open Login Window for Claude or ChatGPT using persistent partition
+ipcMain.handle('open-login-window', async (event, provider) => {
+  const isClaude = provider === 'claude';
+  const partitionName = isClaude ? CLAUDE_PARTITION : CHATGPT_PARTITION;
+  const userSession = session.fromPartition(partitionName);
+
+  const targetUrl = isClaude 
+    ? 'https://claude.ai/login' 
+    : 'https://chatgpt.com/auth/login';
+
+  if (loginWindow && !loginWindow.isDestroyed()) {
+    loginWindow.focus();
+    loginWindow.loadURL(targetUrl);
+    return;
+  }
+
+  loginWindow = new BrowserWindow({
+    width: 900,
+    height: 750,
+    title: isClaude ? '登录 Claude.ai 官方账号 (Pro 订阅)' : '登录 ChatGPT 官方账号 (Plus 订阅)',
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      session: userSession,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  loginWindow.loadURL(targetUrl);
+
+  // Monitor navigation to detect login success
+  loginWindow.webContents.on('did-navigate', async (e, url) => {
+    console.log(`[AccountBridge] Navigated to: ${url}`);
+    
+    // Detection logic
+    if (isClaude && url.includes('claude.ai') && !url.includes('/login')) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('account-status-change', { provider: 'claude', connected: true });
+      }
+    }
+
+    if (!isClaude && url.includes('chatgpt.com') && !url.includes('/auth') && !url.includes('/login')) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('account-status-change', { provider: 'chatgpt', connected: true });
+      }
+    }
+  });
+
+  loginWindow.on('closed', () => {
+    loginWindow = null;
+    // Re-check cookies upon window close
+    checkAccountStatus();
+  });
+});
+
+// IPC: Check current login status based on stored cookies
+async function checkAccountStatus() {
+  try {
+    const claudeSess = session.fromPartition(CLAUDE_PARTITION);
+    const chatgptSess = session.fromPartition(CHATGPT_PARTITION);
+
+    const claudeCookies = await claudeSess.cookies.get({ domain: 'claude.ai' });
+    const chatgptCookies = await chatgptSess.cookies.get({ domain: 'chatgpt.com' });
+
+    const isClaudeLoggedIn = claudeCookies.some(c => 
+      c.name.includes('sessionKey') || c.name.includes('token') || c.name.includes('routing')
+    );
+
+    const isChatGptLoggedIn = chatgptCookies.some(c => 
+      c.name.includes('session') || c.name.includes('auth') || c.name.includes('token')
+    );
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('initial-account-status', {
+        claude: isClaudeLoggedIn,
+        chatgpt: isChatGptLoggedIn,
+      });
+    }
+
+    return { claude: isClaudeLoggedIn, chatgpt: isChatGptLoggedIn };
+  } catch (err) {
+    console.error('[AccountBridge] Error checking cookies:', err);
+    return { claude: false, chatgpt: false };
+  }
+}
+
+ipcMain.handle('check-account-status', async () => {
+  return await checkAccountStatus();
+});
 
 app.whenReady().then(() => {
   createWindow();
