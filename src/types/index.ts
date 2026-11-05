@@ -1,5 +1,19 @@
 export type AgentRole = 'user' | 'claude' | 'chatgpt' | 'system' | 'worker';
 
+export interface CanvasDocument {
+  id: string;
+  title: string;
+  type: 'markdown' | 'code' | 'diff';
+  content: string;
+  sourceAgent?: string;
+  updatedAt: string;
+  meta?: {
+    sha?: string;
+    filesCount?: number;
+    testPassed?: boolean;
+  };
+}
+
 export interface ChatMessage {
   id: string;
   sender: AgentRole;
@@ -9,6 +23,9 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   isStreaming?: boolean;
+  forwardedFrom?: string; // e.g. "由 ChatGPT 从另一个聊天发送"
+  linkedDocId?: string;   // Reference to CanvasDocument
+  docPreviewTitle?: string;
 }
 
 export type WorkerType = 'cursor' | 'claude_code' | 'antigravity' | 'deepseek';
@@ -26,10 +43,10 @@ export interface TaskItem {
 
 export type ProjectState = 'idle' | 'discussing' | 'awaiting_approval' | 'executing' | 'paused' | 'completed';
 
-export interface MilestoneCheckpoint {
+export interface ThreadItem {
   id: string;
   title: string;
-  description: string;
-  deliverables: string[];
-  suggestedAction: string;
+  category: 'pinned' | 'project' | 'recent';
+  unreadCount?: number;
+  isActive?: boolean;
 }

@@ -1,10 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { WarRoom } from './components/WarRoom';
-import { TaskBoard } from './components/TaskBoard';
+import { Canvas } from './components/Canvas';
 import { ExecutionConsole } from './components/ExecutionConsole';
-import { ChatMessage, TaskItem, MilestoneCheckpoint, ProjectState } from './types';
-import { INITIAL_MESSAGES, createMessage } from './coordinator/workflow';
+import { 
+  ChatMessage, 
+  TaskItem, 
+  ProjectState, 
+  CanvasDocument 
+} from './types';
+import { createMessage } from './coordinator/workflow';
 
 interface ConsoleLog {
   id: string;
@@ -14,23 +20,111 @@ interface ConsoleLog {
 }
 
 export const App: React.FC = () => {
+  // Theme state: defaults to 'light' per user's preference!
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [activeThreadId, setActiveThreadId] = useState('t-2');
   const [projectState, setProjectState] = useState<ProjectState>('idle');
-  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [checkpoint, setCheckpoint] = useState<MilestoneCheckpoint | null>(null);
+  const [activeCommand, setActiveCommand] = useState<string>('');
+
+  // Initial Documents in Right Canvas (Matching user's screenshot)
+  const [documents, setDocuments] = useState<CanvasDocument[]>([
+    {
+      id: 'doc-spec',
+      title: 'SPEC-CLIPBOARD-V1.md',
+      type: 'markdown',
+      sourceAgent: 'Claude 3.7 架构师',
+      updatedAt: '今天 19:15',
+      content: `# 【桌面极简多剪贴板工具】详细需求与架构规范书
+
+## 1. 项目定位与目标
+- **目标用户**：日常有高频文本、链接复制需求的独立创作者与普通办公人员。
+- **核心原则**：纯本地运行、零多余进程、无隐私上传、轻量低功耗。
+
+## 2. 核心模块与功能点
+- **剪贴板监听器 (Watcher)**：
+  - 后台轮询或系统剪贴板事件监听，自动捕获最新文本内容；
+  - 自动去重过滤与长度保护（单条上限 100KB，避免超大文本卡顿）。
+- **历史记录存储 (Local Store)**：
+  - 默认保留最新 50 条历史记录；
+  - 采用本地轻量 JSON 或 SQLite 持久化存储。
+- **极简弹窗界面 (Popup UI)**：
+  - 全局快捷键唤起（如 Option + V 或 Ctrl + Shift + V）；
+  - 单击任意历史项即可重新复制或直接回车粘贴；
+  - 模糊搜索框快速检索过往内容。
+
+## 3. 技术风控与边界安全 (ChatGPT 审查建议)
+- **密码敏感数据排除**：若剪贴板内容符合密码管理器格式（如含特定前缀或来自 1Password/Bitwarden），提供一键忽略选项；
+- **纯本地沙箱**：网络权限默认关闭，杜绝任何外部数据泄露风险。`,
+    },
+    {
+      id: 'doc-observe',
+      title: 'OBSERVE-RUNNER.md',
+      type: 'markdown',
+      sourceAgent: '总管理员 | 观察简报',
+      updatedAt: '19:10',
+      content: `【HOME-UI-PRESENCE | 已就绪】 19:10 首轮运行环境检查
+
+- **当前运行节点**：独立 Electron / Web 渲染沙箱
+- **底层执行体探测**：
+  - Claude Code CLI (v2.1.318) 已挂载就绪
+  - Codex CLI (v0.166.0) 已挂载就绪
+  - Cursor IDE 适配器就绪
+- **状态**：双脑通信总线就绪，待命接收新工单。`,
+    },
+  ]);
+
+  const [activeDocId, setActiveDocId] = useState<string>('doc-spec');
+
+  // Initial Messages in War Room
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: 'msg-init-1',
+      sender: 'claude',
+      senderName: 'Claude 3.7',
+      avatarColor: 'bg-amber-600',
+      roleBadge: '首席架构师',
+      content: '收到老板的需求！已为你规划了【桌面极简多剪贴板工具】的核心设计蓝图。\n\n我已将完整的技术规范和架构细则自动同步至右侧画布，你可以点击下方卡片或右侧标签页进行详细阅读。',
+      timestamp: '19:15',
+      linkedDocId: 'doc-spec',
+      docPreviewTitle: 'SPEC-CLIPBOARD-V1.md 详细架构规范书',
+    },
+    {
+      id: 'msg-init-2',
+      sender: 'chatgpt',
+      senderName: 'ChatGPT 4o',
+      avatarColor: 'bg-teal-600',
+      roleBadge: '技术评审 & 风控',
+      content: '我已核验 Claude 的架构书三项要点。补充提示：在数据持久化时应注意异常崩溃保护，并增加快捷键唤起逻辑。整体方案可行，建议立即派发工单！',
+      timestamp: '19:16',
+      forwardedFrom: '由 ChatGPT 从另一个聊天发送',
+    },
+  ]);
+
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([
     {
       id: 'log-1',
-      time: '00:00:01',
+      time: '19:10:00',
       type: 'system',
-      text: '[Runner] AI Solo Studio 本地执行环境初始化就绪。支持调用本地已登录的 CLI (Claude Code, Cursor, Antigravity)。',
+      text: '[Runner] AI Solo Studio 本地环境就绪。已切换为浅色工作台模式。',
     },
   ]);
-  const [activeCommand, setActiveCommand] = useState<string>('');
 
-  // Execution state references for pausing
-  const isPausedRef = useRef(false);
-  isPausedRef.current = projectState === 'paused';
+  // Keep html class in sync with theme state
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+      root.classList.remove('light');
+    } else {
+      root.classList.add('light');
+      root.classList.remove('dark');
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((t) => (t === 'light' ? 'dark' : 'light'));
+  };
 
   const addLog = (text: string, type: ConsoleLog['type'] = 'stdout') => {
     const time = new Date().toTimeString().split(' ')[0];
@@ -51,236 +145,141 @@ export const App: React.FC = () => {
     setMessages((prev) => [...prev, userMsg]);
 
     if (projectState === 'paused') {
-      // User is intervening
-      const systemAck = createMessage(
-        'system',
-        `已收到老板的干预指令：“${text}”。Claude 和 ChatGPT 正在重新调准方向并更新施工计划。`
-      );
-      setMessages((prev) => [...prev, systemAck]);
-      addLog(`[INTERVENE] 用户干预指令注入: ${text}`, 'system');
+      const ack = createMessage('system', `已收到老板的干预指令：“${text}”。双脑正在重新校准方案。`);
+      setMessages((prev) => [...prev, ack]);
+      addLog(`[INTERVENE] 收到老板干预调整指令: ${text}`, 'system');
       return;
     }
 
-    // Normal new Idea flow: Trigger Co-PM Consultation
     setProjectState('discussing');
-    addLog(`[ORCHESTRATOR] 接收到新想法: "${text}"。正在唤醒 Claude 与 ChatGPT 展开跨模型磋商...`, 'system');
+    addLog(`[ORCHESTRATOR] 接收新任务：“${text}”。触发 Claude 与 ChatGPT 跨模型磋商...`, 'system');
 
-    // Step 1: Claude Architect responds
+    // Claude responds & generates an updated doc in Right Canvas
     setTimeout(() => {
-      const claudeMsg = createMessage(
-        'claude',
-        `收到老板的需求！这个方向非常实用。我从系统架构层面做初步规划：\n\n1. **技术选型**：建议采用轻量模块化方案，保持零多余依赖，确保一次性跑通；\n2. **核心模块划分**：\n   - 模块 A：基础框架与数据持久化逻辑；\n   - 模块 B：交互界面与操作入口；\n   - 模块 C：本地自测与结果格式化输出。\n\n请 ChatGPT 进行审查，指出可能的边缘用例或潜在漏洞。`
-      );
+      const newDocId = `doc-${Date.now()}`;
+      const docTitle = `PLAN-${new Date().toISOString().slice(0, 10)}.md`;
+
+      const newDoc: CanvasDocument = {
+        id: newDocId,
+        title: docTitle,
+        type: 'markdown',
+        sourceAgent: 'Claude 3.7 架构师',
+        updatedAt: '刚刚',
+        content: `# 【${text}】新一轮执行计划书\n\n## 1. 目标概述\n针对老板指令：“${text}”，已由 Claude 架构师梳理出实施路线图。\n\n## 2. 实施方案步骤\n1. 模块设计与边界隔离；\n2. 核心逻辑编码 (调度 Cursor / Claude Code)；\n3. 自动化测试用例验证。\n\n## 3. 验收标准\n- 退出码为 0，本地编译无报错；\n- 产物写入本地 workspace 目录。`,
+      };
+
+      setDocuments((prev) => [newDoc, ...prev]);
+      setActiveDocId(newDocId);
+
+      const claudeMsg: ChatMessage = {
+        ...createMessage(
+          'claude',
+          `根据老板提出的新想法：“${text}”，我已制定新的实施方案，并生成了文档 **${docTitle}** 同步到了右侧画布！\n请 ChatGPT 审查并提出修订。`
+        ),
+        linkedDocId: newDocId,
+        docPreviewTitle: `${docTitle} 执行计划书`,
+      };
       setMessages((prev) => [...prev, claudeMsg]);
-      addLog('[Co-PM] Claude 架构师方案起草完毕，转交 ChatGPT 审查...', 'stdout');
 
-      // Step 2: ChatGPT Risk Reviewer responds
+      // ChatGPT reviews
       setTimeout(() => {
-        const gptMsg = createMessage(
-          'chatgpt',
-          `完全赞同 Claude 的模块划分。我补充两点关键风控考量：\n\n1. **防崩溃与容错**：在数据持久化时必须处理空值和权限异常；\n2. **小白友好度**：避免引入复杂环境，尽量生成单一入口文件，让用户双击或一键就能看效果。\n\n**共识达成**：我建议拆解为 3 个执行阶段，交由 Cursor 和 Claude Code 分别执行。`
-        );
+        const gptMsg: ChatMessage = {
+          ...createMessage(
+            'chatgpt',
+            `已核对 Claude 的最新实施计划书。经风险评估，边界清晰，逻辑稳健。本轮 Owner 明确按此计划实施！`
+          ),
+          forwardedFrom: '由 ChatGPT 从另一个聊天发送',
+        };
         setMessages((prev) => [...prev, gptMsg]);
-        addLog('[Co-PM] ChatGPT 审查通过，达成一致共识。开始自动生成任务工单...', 'stdout');
-
-        // Step 3: Generate Task Matrix
-        setTimeout(() => {
-          const generatedTasks: TaskItem[] = [
-            {
-              id: 'task-1',
-              title: '阶段一：初始化工程骨架与配置',
-              description: '搭建项目根目录结构，配置基础运行环境与轻量依赖。',
-              assignedTo: 'cursor',
-              workerName: 'Cursor Agent',
-              status: 'pending',
-              progress: 0,
-            },
-            {
-              id: 'task-2',
-              title: '阶段二：编写核心功能与主逻辑',
-              description: '实现具体业务逻辑、数据存取与错误捕获机制。',
-              assignedTo: 'claude_code',
-              workerName: 'Claude Code CLI',
-              status: 'pending',
-              progress: 0,
-            },
-            {
-              id: 'task-3',
-              title: '阶段三：本地自动化构建测试与交付',
-              description: '执行自动化语法校验、运行功能冒烟测试并生成应用产物。',
-              assignedTo: 'antigravity',
-              workerName: 'Antigravity Runner',
-              status: 'pending',
-              progress: 0,
-            },
-          ];
-
-          setTasks(generatedTasks);
-
-          const cp: MilestoneCheckpoint = {
-            id: 'cp-1',
-            title: '里程碑 1：施工蓝图确认',
-            description: 'Claude 与 ChatGPT 已完成需求细化与风控推演，制定了以上 3 个工单。',
-            deliverables: ['工程基础骨架代码', '完整业务逻辑模块', '自测通过的发布版本'],
-            suggestedAction: '请老板拍板批准，点击后将自动调度底层施工队敲代码。',
-          };
-          setCheckpoint(cp);
-          setProjectState('awaiting_approval');
-
-          const sysPrompt = createMessage(
-            'system',
-            '📋 **工单已制定完成！**\n请在右侧看板检阅任务，点击【批准开工】即可启动全自动流水线。如需调整，可直接在下方输入修改意见。'
-          );
-          setMessages((prev) => [...prev, sysPrompt]);
-          addLog('[CHECKPOINT] 等待老板审批开工权限...', 'system');
-        }, 1000);
-      }, 1400);
+        setProjectState('awaiting_approval');
+        addLog('[CHECKPOINT] 双脑方案一致，在右侧画布更新就绪，等待老板批准！', 'system');
+      }, 1200);
     }, 1000);
   };
 
-  // Boss clicks "Approve" on Checkpoint
-  const handleApproveCheckpoint = () => {
-    setProjectState('executing');
-    addLog('[DISPATCH] 老板已批准！正在向底层施工队下发指令...', 'system');
-
-    const approveMsg = createMessage('user', '✅ 批准开工！立即执行。');
-    const startMsg = createMessage(
-      'system',
-      '🚀 **施工流水线启动！** 底层执行体正在工作区进行代码构建。可在底部展开控制台查看实时日志。'
-    );
-    setMessages((prev) => [...prev, approveMsg, startMsg]);
-
-    runTaskPipeline(0);
+  const handleOpenDoc = (docId: string) => {
+    setActiveDocId(docId);
   };
 
-  // Sequential Execution Pipeline with Human Pause support
-  const runTaskPipeline = (taskIndex: number) => {
-    setTasks((prev) => {
-      if (taskIndex >= prev.length) {
-        // All tasks completed
-        setProjectState('completed');
-        setActiveCommand('');
-        addLog('[COMPLETE] 所有工单施工完毕，测试全部通过！', 'system');
-        const doneMsg = createMessage(
-          'worker',
-          '🎉 **报告老板：所有规划任务已 100% 施工完毕！**\n\n已成功生成代码文件并在本地工作区通过所有构建测试。你可以检阅项目成果，或继续输入新的需求想法！'
-        );
-        setMessages((m) => [...m, doneMsg]);
-        return prev;
+  const handleCloseDoc = (docId: string) => {
+    setDocuments((prev) => {
+      const filtered = prev.filter((d) => d.id !== docId);
+      if (activeDocId === docId && filtered.length > 0) {
+        setActiveDocId(filtered[0].id);
       }
-
-      const updated = [...prev];
-      updated[taskIndex] = { ...updated[taskIndex], status: 'in_progress', progress: 10 };
-      return updated;
+      return filtered;
     });
-
-    const currentTask = tasks[taskIndex] || {
-      title: '执行任务',
-      assignedTo: 'cursor',
-      workerName: 'Worker',
-    };
-    setActiveCommand(`${currentTask.workerName} execute --job ${taskIndex + 1}`);
-    addLog(`[TASK-${taskIndex + 1} START] 调度 ${currentTask.workerName} 执行: ${currentTask.title}`, 'system');
-
-    // Simulate real execution progression with log streams
-    let currentProgress = 10;
-    const interval = setInterval(() => {
-      if (isPausedRef.current) {
-        addLog(`[PAUSED] 任务 ${taskIndex + 1} 已响应全局紧急暂停，进程挂起中...`, 'stderr');
-        return;
-      }
-
-      currentProgress += 30;
-      if (currentProgress < 100) {
-        setTasks((prev) => {
-          const next = [...prev];
-          if (next[taskIndex]) next[taskIndex].progress = currentProgress;
-          return next;
-        });
-        addLog(`[${currentTask.workerName}] 写入文件 src/module_${taskIndex + 1}.ts (+48 lines)`, 'diff');
-      } else {
-        clearInterval(interval);
-        setTasks((prev) => {
-          const next = [...prev];
-          if (next[taskIndex]) {
-            next[taskIndex].progress = 100;
-            next[taskIndex].status = 'completed';
-          }
-          return next;
-        });
-
-        addLog(`[TASK-${taskIndex + 1} DONE] ${currentTask.title} 执行成功，退出码 0。`, 'system');
-
-        // De-noised report sent back to War Room
-        const report = createMessage(
-          'worker',
-          `📌 **工头简报 [阶段 ${taskIndex + 1}] 完成**\n由 **${currentTask.workerName}** 施工完毕：\n- 状态：成功通过校验 (ExitCode: 0)\n- 变更：已更新工作区源码，无语法错误。\n\n▶ 正在自动推进下一步...`
-        );
-        setMessages((m) => [...m, report]);
-
-        // Proceed to next task after brief delay
-        setTimeout(() => {
-          runTaskPipeline(taskIndex + 1);
-        }, 1200);
-      }
-    }, 900);
   };
 
-  // Pause Button
   const handlePause = () => {
     setProjectState('paused');
-    addLog('[EMERGENCY PAUSE] 🔴 用户触发了紧急暂停！所有执行流与命令已就地冻结。', 'stderr');
-    const pauseMsg = createMessage(
-      'system',
-      '⏸️ **紧急暂停已生效！**\n所有后台 AI 执行体已停止操作。你可以在左下方输入任何调整意见，或点击顶部的【继续推进】恢复流转。'
-    );
-    setMessages((prev) => [...prev, pauseMsg]);
+    addLog('[EMERGENCY PAUSE] 🔴 用户触发了紧急暂停！所有后台流转已就地冻结。', 'stderr');
+    setMessages((prev) => [
+      ...prev,
+      createMessage('system', '⏸️ **紧急暂停已生效！**\n所有后台操作已就地冻结。你可以在左下方输入调整意见，或点击顶部的【继续推进】。'),
+    ]);
   };
 
-  // Resume Button
   const handleResume = () => {
     setProjectState('executing');
-    addLog('[RESUME] 🟢 紧急暂停已解除，恢复自动化施工流水线。', 'system');
-    const resumeMsg = createMessage('system', '▶️ **已恢复执行！** 施工队继续作业。');
-    setMessages((prev) => [...prev, resumeMsg]);
+    addLog('[RESUME] 🟢 紧急暂停已解除，继续推进。', 'system');
+    setMessages((prev) => [
+      ...prev,
+      createMessage('system', '▶️ **已恢复执行！** 任务流水线继续作业。'),
+    ]);
   };
 
-  // Reset Board
   const handleReset = () => {
     setProjectState('idle');
-    setTasks([]);
-    setCheckpoint(null);
-    setMessages(INITIAL_MESSAGES);
-    setActiveCommand('');
-    addLog('[RESET] 看板与状态机已重置为初始待命状态。', 'system');
+    addLog('[RESET] 看板与状态机已重置。', 'system');
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#0b0e14] text-slate-100 overflow-hidden font-sans">
+    <div className={`flex flex-col h-screen w-screen overflow-hidden font-sans transition-colors ${
+      theme === 'light' ? 'bg-[#f8fafc] text-slate-800' : 'bg-[#0b0f17] text-slate-100'
+    }`}>
       {/* Top Header */}
       <Header
         projectState={projectState}
+        activeTitle="X5 | 首页需求推演与方案 (接续待命)"
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onPause={handlePause}
         onResume={handleResume}
         onReset={handleReset}
       />
 
-      {/* Main Studio Area */}
+      {/* Main 3-Column Studio Layout (Matching user's screenshot!) */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: War Room (Claude & ChatGPT co-op chat) */}
+        {/* Left Column: Sidebar (Projects & Threads) */}
+        <Sidebar
+          activeThreadId={activeThreadId}
+          onSelectThread={(id) => setActiveThreadId(id)}
+          onNewChat={() => {
+            const newMsg = createMessage('system', '已创建全新议题，请输入你的新 Idea！');
+            setMessages([newMsg]);
+          }}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          theme={theme}
+        />
+
+        {/* Middle Column: War Room (Conversational Flow) */}
         <WarRoom
           messages={messages}
           projectState={projectState}
           onSendMessage={handleSendMessage}
+          onOpenDoc={handleOpenDoc}
+          theme={theme}
         />
 
-        {/* Right: Task Matrix & Milestone Checkpoints */}
-        <TaskBoard
-          tasks={tasks}
-          checkpoint={checkpoint}
-          projectState={projectState}
-          onApproveCheckpoint={handleApproveCheckpoint}
-          onRequestChange={() => handleSendMessage('请重新审视方案，我需要一些修改。')}
+        {/* Right Column: Canvas (Detailed Document / Code / Plan Editor) */}
+        <Canvas
+          documents={documents}
+          activeDocId={activeDocId}
+          onSelectDoc={(id) => setActiveDocId(id)}
+          onCloseDoc={handleCloseDoc}
+          theme={theme}
         />
       </div>
 
