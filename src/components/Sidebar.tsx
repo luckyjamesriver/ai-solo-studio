@@ -10,7 +10,8 @@ import {
   Sparkles,
   Link2,
   CheckCircle2,
-  AlertCircle
+  Cpu,
+  Terminal
 } from 'lucide-react';
 import { ThreadItem } from '../types';
 
@@ -75,10 +76,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex-1" />
         <button
           onClick={onOpenAccountBridge}
-          className="p-2.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 transition-colors"
-          title="官方账号连接"
+          className="p-2.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-blue-600 transition-colors"
+          title="多 AI 舰队状态"
         >
-          <Link2 className="w-4 h-4" />
+          <Cpu className="w-4 h-4" />
         </button>
       </div>
     );
@@ -189,7 +190,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Account Bridge Status Card (BYOS) */}
+      {/* Multi-AI Full Fleet Status Card */}
       <div className="p-3 border-t border-[#e3e3e3] dark:border-slate-800">
         <div 
           onClick={onOpenAccountBridge}
@@ -201,37 +202,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <div className="flex items-center justify-between mb-2">
             <span className="font-semibold text-[11px] flex items-center gap-1.5">
-              <Link2 className="w-3.5 h-3.5 text-blue-500" />
-              <span>官方订阅连接 (BYOS)</span>
+              <Cpu className="w-3.5 h-3.5 text-blue-600" />
+              <span>多 AI 协同舰队 (已接入)</span>
             </span>
-            <span className="text-[10px] text-blue-600 font-medium">配置</span>
+            <span className="text-[10px] text-blue-600 font-medium">详情</span>
           </div>
 
-          <div className="space-y-1 text-[11px]">
-            <div className="flex items-center justify-between">
-              <span className="text-[#444746] dark:text-slate-400">Claude.ai (Pro)</span>
-              {accounts.claude ? (
-                <span className="text-emerald-600 font-semibold flex items-center gap-1 text-[10px]">
-                  <CheckCircle2 className="w-3 h-3" /> 已连接
-                </span>
-              ) : (
-                <span className="text-amber-600 flex items-center gap-1 text-[10px]">
-                  <AlertCircle className="w-3 h-3" /> 待连接
-                </span>
-              )}
+          <div className="space-y-1 text-[10px]">
+            {/* PM Layer */}
+            <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+              <span>🧠 架构师: Claude 3.7</span>
+              <span className="text-emerald-600 font-semibold flex items-center gap-0.5">
+                <CheckCircle2 className="w-3 h-3" /> 就绪
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+              <span>🛡️ 评审员: ChatGPT 4o</span>
+              <span className="text-emerald-600 font-semibold flex items-center gap-0.5">
+                <CheckCircle2 className="w-3 h-3" /> 就绪
+              </span>
             </div>
 
-            <div className="flex items-center justify-between">
-              <span className="text-[#444746] dark:text-slate-400">ChatGPT (Plus)</span>
-              {accounts.chatgpt ? (
-                <span className="text-emerald-600 font-semibold flex items-center gap-1 text-[10px]">
-                  <CheckCircle2 className="w-3 h-3" /> 已连接
+            {/* Worker Layer */}
+            <div className="pt-1 border-t border-slate-100 dark:border-slate-800 space-y-1">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                <span>🚀 编码主力: Cursor Agent</span>
+                <span className="text-blue-600 font-semibold flex items-center gap-0.5">
+                  <CheckCircle2 className="w-3 h-3" /> 本地就绪
                 </span>
-              ) : (
-                <span className="text-amber-600 flex items-center gap-1 text-[10px]">
-                  <AlertCircle className="w-3 h-3" /> 待连接
+              </div>
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                <span>🪐 质量总监: Antigravity (我)</span>
+                <span className="text-indigo-600 font-semibold flex items-center gap-0.5">
+                  <CheckCircle2 className="w-3 h-3" /> 本地就绪
                 </span>
-              )}
+              </div>
             </div>
           </div>
         </div>
