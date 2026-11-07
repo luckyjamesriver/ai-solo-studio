@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Channel } from '../channel.js';
 import { run } from '../../proc/run.js';
 import type { DeniedOperation, DetectResult, Decision, Executor, ExecutorEvent, ExecutorRun, ExitOutcome, PermissionRequest, StartOptions } from '../types.js';
@@ -58,6 +60,29 @@ export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServer
       'include_apps_instructions=false',
       // 逐个关闭用户配置的 MCP 服务器（官方键 mcp_servers.<名称>.enabled；没有“全部关闭”的总开关）
       ...(opts.mcpServers ?? []).flatMap((name) => ['-c', `mcp_servers.${tomlKey(name)}.enabled=false`]),
+      // ---- 其他会执行用户程序、带入用户数据或联网的扩展（M2.5 第 3 项；清单与验证见 ADR 0001）----
+      '-c',
+      'notify=[]', // 回合结束时运行用户指定的程序
+      '--disable',
+      'hooks', // 用户/项目配置的 hooks（会运行任意命令）
+      '--disable',
+      'memories', // 把用户历史记忆带入会话，并把本任务内容写进用户的全局记忆
+      '-c',
+      'memories.use_memories=false',
+      '-c',
+      'memories.generate_memories=false',
+      '--disable',
+      'multi_agent', // 子代理不在我们的审批与核验范围内
+      '--disable',
+      'remote_plugin',
+      '--disable',
+      'shell_snapshot', // 快照用户的 shell 环境（含 rc 文件）
+      '-c',
+      'allow_login_shell=false', // 命令不经登录 shell，不加载用户的 .zprofile / .zshrc
+      '-c',
+      'shell_environment_policy.inherit="core"', // 命令只继承核心环境变量，不带入宿主进程里的密钥类变量
+      '-c',
+      'web_search="disabled"', // 模型侧联网搜索（外部网络）
       '--disable',
       'plugins',
       // 关闭 ChatGPT 连接器（apps）：否则会话里会出现数百个来自用户账号的连接器工具
@@ -186,6 +211,19 @@ export class CodexExecutor implements Executor {
     });
   }
 
+  /** 官方方式关不掉的用户级扩展：只检查文件/目录是否存在，绝不读取内容。 */
+  private unisolatable(): string[] {
+    const home = this.options.env?.CODEX_HOME ?? process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
+    const notes: string[] = [];
+    if (fs.existsSync(path.join(home, 'AGENTS.override.md')) || fs.existsSync(path.join(home, 'AGENTS.md'))) {
+      notes.push('检测到用户级 AGENTS.md：Codex 没有官方方式在会话中关闭它，它可能影响 AI 的行为。');
+    }
+    if (fs.existsSync(path.join(home, 'skills'))) {
+      notes.push('检测到用户级技能（skills）：Codex 没有官方的单次会话关闭方式，AI 可能按需读取它们。');
+    }
+    return notes;
+  }
+
   async detect(): Promise<DetectResult> {
     const cwd = process.cwd();
     const env = { ...process.env, ...this.options.env };
@@ -201,7 +239,7 @@ export class CodexExecutor implements Executor {
     else if (s.outcome.kind === 'exited' && /not logged in/i.test(text)) loggedIn = 'no';
     const verified = !version || version.includes(VERIFIED_CODEX_VERSION);
     const notes = [text ? text.split('\n').at(-1)! : '', verified ? '' : `未经验证的 Codex 版本（本应用验证过的是 ${VERIFIED_CODEX_VERSION}），可能不兼容。`].filter(Boolean);
-    return { installed: true, loggedIn, ...(version ? { version } : {}), verified, ...(notes.length ? { note: notes.join(' ') } : {}) };
+    return { installed: true, loggedIn, ...(version ? { version } : {}), verified, ...(this.unisolatable().length ? { isolationNotes: this.unisolatable() } : {}), ...(notes.length ? { note: notes.join(' ') } : {}) };
   }
 
   start(opts: StartOptions): ExecutorRun {

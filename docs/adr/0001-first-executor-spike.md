@@ -108,6 +108,25 @@
 - 带 `-c mcp_servers.sentinel.enabled=false` 再 thread/start：标记文件不存在。
 结论：保留现状（临时 app-server 不创建线程，因此不会拉起扩展）。该进程**不得**调用 thread/start、`mcpServerStatus/list`（后者会真实启动服务器并列出工具）等会触发扩展的接口。回归测试：tests/integration/sentinel.real.test.ts（STUDIO_REAL_CODEX=1，含正控）。正式会话启动后的核验（bebcf5a：监听 startupStatus，仍有服务启动即中止）与本项是两道独立的检查，均保留。
 
+**其他扩展清单（M2.5 第 3 项，Codex 0.166.0；依据：`codex features list`、app-server schema 的 hooks/skills/config 部分、`config/read`/`hooks/list`/`skills/list` 实测，验证用临时 CODEX_HOME，不碰 ~/.codex）**
+
+| 名称 | 会执行用户程序/带入用户数据/联网？ | 能否会话内关闭 | 关闭方式 | 验证结果 |
+|---|---|---|---|---|
+| MCP 服务器（用户配置） | 执行程序、可带令牌与外部访问 | 能（逐个） | `-c mcp_servers.<名>.enabled=false` | 哨兵：关闭后不启动；正控启动；启动后另有 startupStatus 核验（bebcf5a） |
+| hooks | 执行任意命令（未经用户信任的 hook 不运行：`trustStatus=untrusted`） | 能 | `--disable hooks` | `hooks/list`：基线列出用户层 hook，关闭后为空；hook 的执行正控做不了（授予信任需写用户配置） |
+| notify | 回合结束时执行用户指定程序 | 能 | `-c notify=[]` | 正控：真实回合触发了 notify 哨兵；用户层哨兵 + 我们的参数 → `config/read` 的 notify 为 `[]`，哨兵未执行 |
+| memories | 带入用户历史记忆；把本任务内容写进用户全局记忆 | 能 | `--disable memories`、`memories.use_memories=false`、`memories.generate_memories=false` | `config/read` 生效值均为 false |
+| 登录 shell（rc 文件） | 命令经 `zsh -lc` 会加载用户 .zprofile/.zshrc | 能 | `-c allow_login_shell=false`、`--disable shell_snapshot` | `config/read` 生效值为 false；代价：命令不再继承用户 rc 里设置的 PATH |
+| 命令环境变量 | 宿主进程的环境变量（可能含密钥）传给命令 | 能（收窄） | `-c shell_environment_policy.inherit="core"` | `config/read` 生效值为 core |
+| web_search | 模型侧联网搜索 | 能 | `-c web_search="disabled"` | `config/read` 生效值为 disabled |
+| multi_agent（子代理） | 子代理不在我们的审批与核验范围 | 能 | `--disable multi_agent` | `config/read` 生效值为 false |
+| 连接器 apps / 插件 / remote_plugin | 联网、账号数据、插件自带 MCP | 能 | `--disable apps`、`plugins`、`remote_plugin` | 关闭后 `mcpServerStatus/list` 无工具 |
+| 自定义指令（config.toml） | 带入用户文本 | 能 | `instructions=""`、`developer_instructions=""` | `config/read` 为空串 |
+| 用户级 AGENTS.md | 带入用户文本 | **不能（已知限制）** | 无官方开关；改 CODEX_HOME 需拷贝认证文件，禁止 | `detect()` 只报告文件是否存在（`isolationNotes`），不读内容 |
+| 用户级 skills | 带入用户文本，可按需读取 | **不能（已知限制）** | 仅有 `skills/config/write`（会写用户配置，禁止） | 实测 `skills/list` 在临时 home 下仍列出用户/系统技能；`detect()` 报告 skills 目录是否存在 |
+| model_provider / openai_base_url（用户自定义服务商） | 数据发往用户配置的端点 | 未处理（信息） | — | 由 M2.5 之后的能力门禁与环境体检另行处理 |
+| analytics / feedback | 遥测 | app-server 默认关闭 | — | 官方 `--help`：analytics 默认关闭，需用户在 config.toml 显式开启 |
+
 令牌刷新：`account/chatgptAuthTokens/refresh` 的响应必须包含 `accessToken` 与 `chatgptAccountId`，schema 说明该模式是“令牌由外部宿主应用提供并只存于内存、刷新由宿主负责”，且标注 FOR OPENAI INTERNAL USE ONLY。这要求我们接触并转发凭证，因此**保持拒绝**。使用 `codex login` 的托管登录时，Codex 自行刷新，不会向客户端发出该请求（实测整个任务期间未出现）。
 
 版本：适配器声明经过验证的版本 0.166.0（`VERIFIED_CODEX_VERSION`）；`detect()` 在版本不同时返回 `verified: false` 与提示，不阻止使用。

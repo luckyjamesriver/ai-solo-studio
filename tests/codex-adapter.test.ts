@@ -190,6 +190,17 @@ describe('Codex 适配器：配置隔离与沙箱参数', () => {
       '-c', 'instructions=""',
       '-c', 'developer_instructions=""',
       '-c', 'include_apps_instructions=false',
+      '-c', 'notify=[]',
+      '--disable', 'hooks',
+      '--disable', 'memories',
+      '-c', 'memories.use_memories=false',
+      '-c', 'memories.generate_memories=false',
+      '--disable', 'multi_agent',
+      '--disable', 'remote_plugin',
+      '--disable', 'shell_snapshot',
+      '-c', 'allow_login_shell=false',
+      '-c', 'shell_environment_policy.inherit="core"',
+      '-c', 'web_search="disabled"',
       '--disable', 'plugins',
       '--disable', 'apps',
     ]);
@@ -283,6 +294,16 @@ describe('Codex 适配器：detect()', () => {
     expect(r).toMatchObject({ installed: true, verified: false });
     expect(r.note).toMatch(new RegExp(`未经验证.*${VERIFIED_CODEX_VERSION}`));
     expect(VERIFIED_CODEX_VERSION).toBe('0.166.0');
+  });
+  it('提示无法关闭的用户级扩展：只报告是否存在（AGENTS.md、skills），不读取内容', async () => {
+    const home = await tmpDir('codex-home-');
+    const make = () => new CodexExecutor({ command: process.execPath, prefixArgs: [FAKE_CLI], env: { FAKE_LOGIN: 'yes', CODEX_HOME: home } });
+    expect((await make().detect()).isolationNotes).toBeUndefined();
+    fs.writeFileSync(path.join(home, 'AGENTS.md'), 'SECRET-CONTENT-NEVER-REPORTED');
+    fs.mkdirSync(path.join(home, 'skills'));
+    const r = await make().detect();
+    expect(r.isolationNotes).toHaveLength(2);
+    expect(JSON.stringify(r)).not.toMatch(/SECRET-CONTENT/);
   });
   it('已安装但未登录', async () => {
     expect(await ex('no').detect()).toMatchObject({ installed: true, loggedIn: 'no' });

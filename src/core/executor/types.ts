@@ -60,6 +60,8 @@ export interface DetectResult {
   version?: string;
   /** 版本是否为经过验证的版本（未知版本不阻止使用，仅提示） */
   verified?: boolean;
+  /** 无法在会话中关闭、但本机存在的用户级扩展（只报告是否存在，不读取内容） */
+  isolationNotes?: string[];
   note?: string;
 }
 
