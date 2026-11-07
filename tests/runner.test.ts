@@ -68,8 +68,16 @@ describe('任务闭环（模拟执行体 + 真实 Git）', () => {
 
   it('停止：真实中断执行并记为 stopped', async () => {
     const { runner, id } = await setup([{ do: 'say', text: '工作中' }, { do: 'hang' }]);
+    // 确定性等待：执行体已经启动并发出第一条消息（此时 run 已登记、下一步就是挂起）才停止。
+    // 不能用固定毫秒数：创建 worktree 等准备工作在机器繁忙时可能超过它，stop() 会落空导致测试挂起。
+    const working = new Promise<void>((resolve) => {
+      runner.on('update', (task) => {
+        if (task.timeline.some((e: { kind: string; text: string }) => e.kind === 'message' && e.text === '工作中')) resolve();
+      });
+    });
     const p = runner.start(id);
-    setTimeout(() => runner.stop(id), 100);
+    await working;
+    await runner.stop(id);
     const t = await p;
     expect(t.exit).toEqual({ kind: 'stopped' });
     expect(t.card?.readyToSave).toBe(false);
