@@ -68,7 +68,11 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   try { m = JSON.parse(line); } catch { return; }
   record({ kind: 'recv', msg: m });
   if (m.method === 'initialize') send({ id: m.id, result: { userAgent: 'fake-app-server/0.0.0' } });
-  else if (m.method === 'thread/start') send({ id: m.id, result: { thread: { id: 'thread-1' } } });
+  else if (m.method === 'thread/start') {
+    send({ id: m.id, result: { thread: { id: 'thread-1' } } });
+    // 模拟隔离失败：FAKE_MCP_LEAK 指定的服务器仍然启动
+    if (process.env.FAKE_MCP_LEAK) notify('mcpServer/startupStatus/updated', { name: process.env.FAKE_MCP_LEAK, status: 'ready', threadId: 'thread-1' });
+  }
   else if (m.method === 'turn/start') {
     send({ id: m.id, result: { turn: { id: turnId, status: 'inProgress', items: [] } } });
     notify('turn/started', { threadId: 'thread-1', turn: { id: turnId, status: 'inProgress', items: [] } });

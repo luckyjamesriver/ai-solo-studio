@@ -97,6 +97,8 @@ export interface CodexOptions {
   killGraceMs?: number;
   /** 列出用户配置的 MCP 服务器名称（默认通过官方 app-server 的 config/read，只取名称）。测试中可注入。 */
   discoverMcpServers?: (cwd: string) => Promise<string[]>;
+  /** thread/start 之后、开始回合之前，等待 MCP 启动通知的时间（毫秒）。默认 1500。 */
+  mcpSettleMs?: number;
 }
 
 type RpcId = number | string;
@@ -222,6 +224,7 @@ export class CodexExecutor implements Executor {
     let seq = 0;
     let threadId: string | undefined;
     let turnId: string | undefined;
+    let abortedForIsolation = false;
     let stopRequested = false;
     let timedOut = false;
     let finished = false;
@@ -336,11 +339,25 @@ export class CodexExecutor implements Executor {
       return parsed.inner || String(item.command ?? '');
     };
 
+    const leaked = new Set<string>();
+    const mcpBreach = (name: string) => {
+      if (leaked.has(name) || finished) return;
+      leaked.add(name);
+      abortedForIsolation = true;
+      declineAllPending();
+      finish({ kind: 'exited', code: 1 }, `隔离失败：MCP 服务器“${name}”仍然启动了（应当全部关闭）。为避免外部工具进入任务，已中止。`);
+      terminate();
+    };
+
     const onNotification = (m: RpcMessage) => {
       const p = m.params ?? {};
       switch (m.method) {
         case 'turn/started':
           turnId = p.turn?.id ?? turnId;
+          break;
+        case 'mcpServer/startupStatus/updated':
+          // 我们已逐个关闭了用户的 MCP 服务器；只要仍有服务器进入启动流程，就说明隔离没有生效，必须中止（不得静默继续）。
+          if (p.status === 'starting' || p.status === 'ready') mcpBreach(String(p.name ?? '?'));
           break;
         case 'item/started': {
           const item = p.item ?? {};
@@ -448,6 +465,9 @@ export class CodexExecutor implements Executor {
         threadId = t?.thread?.id;
         if (!threadId) throw new Error('app-server 没有返回线程 ID');
         if (stopRequested || timedOut) return;
+        // 等待 MCP 启动通知：此时仍有服务器启动则 mcpBreach 会中止任务
+        await new Promise((r) => timers.push(setTimeout(r, this.options.mcpSettleMs ?? 1500)));
+        if (abortedForIsolation || finished || stopRequested || timedOut) return;
         const r = await request('turn/start', { threadId, input: [{ type: 'text', text: opts.prompt }], ...cfg.turnOverrides });
         turnId = r?.turn?.id ?? turnId;
         if (stopRequested || timedOut) interrupt();
