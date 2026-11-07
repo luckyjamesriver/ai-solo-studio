@@ -1,0 +1,16 @@
+:root { --bg: #fbfbf8; --ink: #1d2327; --muted: #67707a; --ok: #2f7d4f; --warn: #a06a00; --bad: #b3261e; --line: #dde1e4; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --bg: #15181b; --ink: #e8eaec; --muted: #9aa3ab; --line: #2c3237; color-scheme: dark; } }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 -apple-system, "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
+.shell { max-width: 46rem; margin: 0 auto; padding: 3rem 1.5rem; }
+h1 { font-size: 1.75rem; margin: 0 0 .25rem; }
+.lede, .muted { color: var(--muted); }
+section { margin-top: 2.5rem; }
+.env { list-style: none; padding: 0; }
+.env li { display: grid; grid-template-columns: 7rem 1fr auto; gap: 1rem; padding: .6rem 0 .6rem .9rem; border-left: 4px solid var(--line); margin-bottom: .4rem; }
+.env li[data-light="green"] { border-color: var(--ok); }
+.env li[data-light="yellow"] { border-color: var(--warn); }
+.env li[data-light="red"] { border-color: var(--bad); }
+button { font: inherit; padding: .55rem 1rem; border-radius: 6px; border: 1px solid var(--ink); background: var(--ink); color: var(--bg); cursor: pointer; }
+button:focus-visible, a:focus-visible { outline: 3px solid var(--warn); outline-offset: 2px; }
+.error { color: var(--bad); }
+.consent { border: 1px solid var(--line); padding: 1rem; border-radius: 8px; }

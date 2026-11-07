@@ -1,0 +1,157 @@
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { TaskRunner, type PendingPermission } from '../src/core/task/runner.js';
+import { FakeExecutor, type FakeStep } from '../src/core/executor/adapters/fake.js';
+import * as G from '../src/core/git/git.js';
+import { makeRepo } from './helpers.js';
+
+const plan = {
+  goal: '加入深色模式',
+  inScope: ['首页支持深色'],
+  outOfScope: ['其他页面'],
+  criteria: ['首页可以切换深色'],
+  risks: [],
+  irreversible: [],
+};
+
+async function setup(script: FakeStep[], extra: Partial<ConstructorParameters<typeof TaskRunner>[0]> = {}, files?: Record<string, string>) {
+  const repo = await makeRepo(files);
+  const runner = new TaskRunner({ repo, executor: new FakeExecutor(script), runChecks: false, ...extra });
+  const t = await runner.create('给首页加深色模式');
+  await runner.setPlan(t.id, plan);
+  await runner.approve(t.id);
+  return { repo, runner, id: t.id };
+}
+
+describe('任务闭环（模拟执行体 + 真实 Git）', () => {
+  it('快乐路径：施工 → 验收 → 确认 → 保存到主线', async () => {
+    const { repo, runner, id } = await setup([
+      { do: 'say', text: '开始修改' },
+      { do: 'write', path: 'index.html', content: '<h1 class="dark">hello</h1>\n' },
+      { do: 'exit', code: 0 },
+    ]);
+    const t = await runner.start(id);
+    expect(t.state).toBe('reviewing');
+    expect(t.card?.readyToSave).toBe(false); // 用户还没确认
+    expect(await fs.readFile(path.join(repo, 'index.html'), 'utf8')).toBe('<h1>hello</h1>\n'); // 主线未动
+
+    expect((await runner.save(id)).ok).toBe(false); // 未确认不能保存
+    await runner.confirm(id, { criterion: 0, decision: 'confirmed' });
+    const r = await runner.save(id);
+    expect(r.ok).toBe(true);
+    expect(await fs.readFile(path.join(repo, 'index.html'), 'utf8')).toContain('dark');
+    expect((await runner.store.get(id))?.state).toBe('saved');
+  });
+
+  it('未批准不能开工', async () => {
+    const repo = await makeRepo();
+    const runner = new TaskRunner({ repo, executor: new FakeExecutor([]), runChecks: false });
+    const t = await runner.create('x');
+    await expect(runner.start(t.id)).rejects.toThrow(/批准/);
+  });
+
+  it('执行体非零退出：如实记录失败，不可保存，可撤销且主线不变', async () => {
+    const { repo, runner, id } = await setup([
+      { do: 'write', path: 'index.html', content: 'half\n' },
+      { do: 'exit', code: 2 },
+    ]);
+    const head = await G.headSha(repo);
+    const t = await runner.start(id);
+    expect(t.exit).toEqual({ kind: 'exited', code: 2 });
+    expect(t.card?.items[0]?.status).toBe('failed');
+    await runner.confirm(id, { criterion: 0, decision: 'confirmed' });
+    expect((await runner.save(id)).ok).toBe(false);
+    await runner.discard(id);
+    expect(await G.headSha(repo)).toBe(head);
+  });
+
+  it('停止：真实中断执行并记为 stopped', async () => {
+    const { runner, id } = await setup([{ do: 'say', text: '工作中' }, { do: 'hang' }]);
+    const p = runner.start(id);
+    setTimeout(() => runner.stop(id), 100);
+    const t = await p;
+    expect(t.exit).toEqual({ kind: 'stopped' });
+    expect(t.card?.readyToSave).toBe(false);
+  });
+
+  it('超时记为 timed_out', async () => {
+    const { runner, id } = await setup([{ do: 'hang' }], { timeoutMs: 150 });
+    const t = await runner.start(id);
+    expect(t.exit).toEqual({ kind: 'timed_out' });
+  });
+
+  it('权限请求：低风险可自动批准；默认需要用户决定', async () => {
+    const script: FakeStep[] = [{ do: 'write', path: 'a.txt', content: 'a', ask: true }, { do: 'exit', code: 0 }];
+    const auto = await setup(script, { autoApprove: { autoLow: true } });
+    expect((await auto.runner.start(auto.id)).card?.changes.length).toBe(1);
+
+    const manual = await setup(script);
+    const seen: PendingPermission[] = [];
+    manual.runner.on('permission', (p: PendingPermission) => {
+      seen.push(p);
+      void manual.runner.respond(p.taskId, p.request.id, 'deny');
+    });
+    const t = await manual.runner.start(manual.id);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.risk.level).toBe('low');
+    expect(t.card?.changes.length).toBe(0); // 被拒绝，没有写入
+  });
+
+  it('越界路径永远需要用户决定，即使开启了自动批准', async () => {
+    const { runner, id } = await setup(
+      [{ do: 'ask', request: { kind: 'write_file', paths: ['../../outside.txt'], description: '写外部文件' }, onDeny: 'fail' }],
+      { autoApprove: { autoLow: true } },
+    );
+    const seen: PendingPermission[] = [];
+    runner.on('permission', (p: PendingPermission) => {
+      seen.push(p);
+      void runner.respond(p.taskId, p.request.id, 'deny');
+    });
+    const t = await runner.start(id);
+    expect(seen[0]?.risk).toMatchObject({ level: 'high', reversible: false });
+    expect(t.exit).toEqual({ kind: 'exited', code: 1 });
+  });
+
+  it('修复：在同一隔离副本上继续，并重新要求确认', async () => {
+    let round = 0;
+    const repo = await makeRepo();
+    const runner = new TaskRunner({
+      repo,
+      runChecks: false,
+      executor: new FakeExecutor(() => {
+        round++;
+        return [{ do: 'write', path: 'index.html', content: `v${round}\n` }, { do: 'exit', code: 0 }];
+      }),
+    });
+    const t0 = await runner.create('x');
+    await runner.setPlan(t0.id, plan);
+    await runner.approve(t0.id);
+    await runner.start(t0.id);
+    await runner.confirm(t0.id, { criterion: 0, decision: 'rejected' });
+    const t = await runner.requestFix(t0.id, '颜色太暗');
+    expect(t.state).toBe('reviewing');
+    expect(t.criteria[0]?.decision).toBeUndefined();
+    expect(await fs.readFile(path.join(t.worktree!.path, 'index.html'), 'utf8')).toBe('v2\n');
+  });
+
+  it('真实运行项目的 build / test 脚本，失败时如实标记', async () => {
+    const files = {
+      'package.json': JSON.stringify({
+        scripts: { build: 'node -e "process.exit(0)"', test: 'node check.js' },
+      }),
+      'check.js': 'const s=require("fs").readFileSync("index.html","utf8"); process.exit(s.includes("dark")?0:1);\n',
+      'index.html': 'light\n',
+    };
+    const good = await setup([{ do: 'write', path: 'index.html', content: 'dark\n' }, { do: 'exit', code: 0 }], { runChecks: true }, files);
+    const tg = await good.runner.start(good.id);
+    expect(tg.card?.items.find((i) => i.key === 'build')?.status).toBe('verified');
+    expect(tg.card?.items.find((i) => i.key === 'test')?.status).toBe('verified');
+
+    const bad = await setup([{ do: 'write', path: 'index.html', content: 'still light\n' }, { do: 'exit', code: 0 }], { runChecks: true }, files);
+    const tb = await bad.runner.start(bad.id);
+    expect(tb.card?.items.find((i) => i.key === 'test')?.status).toBe('failed');
+    await bad.runner.confirm(bad.id, { criterion: 0, decision: 'confirmed' });
+    expect((await bad.runner.save(bad.id)).ok).toBe(false);
+  });
+});

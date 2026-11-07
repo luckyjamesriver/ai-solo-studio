@@ -1,0 +1,33 @@
+{
+  "name": "ai-solo-studio",
+  "version": "0.3.0-rebuild",
+  "private": true,
+  "description": "AI 软件开发与验收工作台：你决定做什么，AI 负责实现，工作台负责证明结果、控制风险、随时可撤销。",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist-electron/main/index.js",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:core": "tsc -p tsconfig.build.json",
+    "build:renderer": "vite build",
+    "build": "npm run build:core && npm run build:renderer",
+    "dev:renderer": "vite",
+    "start": "npm run build && electron ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
