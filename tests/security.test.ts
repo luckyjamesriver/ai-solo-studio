@@ -65,5 +65,21 @@ describe('安全基线（防回归）', () => {
     expect((await new ClaudeCliThinker({ env: {}, isPackaged: () => false }).detect()).available).toBe(false);
     expect(claudeCliArgs()).toEqual(expect.arrayContaining(['--safe-mode', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence']));
     expect(read('src/core/thinking/claude-cli.ts')).toMatch(/delete e\.ANTHROPIC_API_KEY/);
+    // isPackaged 可传布尔值或函数；布尔 true 同样不可用
+    expect((await new ClaudeCliThinker({ env: { [DEV_PERSONAL_ENV]: '1' }, isPackaged: true }).detect()).available).toBe(false);
+  });
+
+  it('M3-A1 遗留：src/main 中每个 ClaudeCliThinker 构造点都必须显式传入 isPackaged', () => {
+    for (const f of walk('src/main').filter((x) => /\.(c?ts|tsx)$/.test(x))) {
+      const s = read(f);
+      for (const m of s.matchAll(/new\s+ClaudeCliThinker\s*\(([\s\S]*?)\)\s*[;,)\n]/g)) {
+        expect(m[1], `${f}: new ClaudeCliThinker(...) 缺少 isPackaged`).toMatch(/\bisPackaged\b/);
+      }
+    }
+    // 断言自身有效：对一个缺参的构造点样例，匹配结果确实不含 isPackaged
+    const sample = 'const t = new ClaudeCliThinker({ model: "x" });';
+    const m = [...sample.matchAll(/new\s+ClaudeCliThinker\s*\(([\s\S]*?)\)\s*[;,)\n]/g)];
+    expect(m).toHaveLength(1);
+    expect(m[0]![1]).not.toMatch(/\bisPackaged\b/);
   });
 });

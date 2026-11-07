@@ -31,8 +31,11 @@ export interface ClaudeCliOptions {
   /** 放在 claude 参数之前的参数（测试中用来传脚本路径） */
   prefixArgs?: string[];
   env?: NodeJS.ProcessEnv;
-  /** 是否为打包后的应用。默认：在 Electron 内且不是 `electron .` 开发启动即视为已打包。主进程可传入 app.isPackaged。 */
-  isPackaged?: () => boolean;
+  /**
+   * 是否为打包后的应用。src/main 中的任何构造点必须显式传入（可直接传 app.isPackaged；tests/security.test.ts 扫描 src/main 强制）。
+   * 仅在未传入时才回退到启发式：在 Electron 内且不是 `electron .` 开发启动即视为已打包。
+   */
+  isPackaged?: boolean | (() => boolean);
   model?: string;
   timeoutMs?: number;
 }
@@ -79,7 +82,8 @@ export class ClaudeCliThinker implements Thinker {
   /** 开关逻辑：返回不可用的原因；可用返回 undefined。 */
   private disabledReason(): string | undefined {
     const flag = (this.options.env ?? process.env)[DEV_PERSONAL_ENV];
-    if ((this.options.isPackaged ?? defaultIsPackaged)()) return '打包后的应用中不可用：本机登录自用模式只用于开发者自己开发，面向其他用户的版本只支持 API Key。';
+    const p = this.options.isPackaged;
+    if ((typeof p === 'boolean' ? p : (p ?? defaultIsPackaged)()) === true) return '打包后的应用中不可用：本机登录自用模式只用于开发者自己开发，面向其他用户的版本只支持 API Key。';
     if (flag !== '1') return `未开启：这是开发者自用模式，需要设置环境变量 ${DEV_PERSONAL_ENV}=1（默认关闭，没有界面开关）。`;
     return undefined;
   }
