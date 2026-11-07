@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CodexExecutor, codexLaunchConfig, tomlKey, VERIFIED_CODEX_VERSION } from '../src/core/executor/adapters/codex.js';
+import { CodexExecutor, codexLaunchConfig, selfCheckLaunch, tomlKey, VERIFIED_CODEX_VERSION } from '../src/core/executor/adapters/codex.js';
 import { parseCommand } from '../src/core/executor/adapters/codex-command.js';
 import { assess, canAutoApprove } from '../src/core/policy/risk.js';
+import type { Capabilities } from '../src/core/capabilities/model.js';
 import type { DeniedOperation, Decision, ExecutorEvent, PermissionRequest } from '../src/core/executor/types.js';
 import { tmpDir } from './helpers.js';
 
@@ -25,14 +26,14 @@ interface Drive {
 
 async function drive(
   script: Step[],
-  o: { leak?: string; mcp?: string[] | Error; decide?: (r: PermissionRequest) => Decision; timeoutMs?: number; stopWhen?: (e: ExecutorEvent) => boolean } = {},
+  o: { ignore?: string[]; caps?: Capabilities; fakeEnv?: Record<string, string>; leak?: string; mcp?: string[] | Error; decide?: (r: PermissionRequest) => Decision; timeoutMs?: number; stopWhen?: (e: ExecutorEvent) => boolean } = {},
 ): Promise<Drive> {
   const cwd = await tmpDir('codex-fake-');
   const rec = path.join(cwd, '..', `rec-${path.basename(cwd)}.jsonl`);
   const ex = new CodexExecutor({
     command: process.execPath,
     prefixArgs: [FAKE_SERVER],
-    env: { FAKE_APP_SCRIPT: JSON.stringify(script), FAKE_RECORD: rec, ...(o.leak ? { FAKE_MCP_LEAK: o.leak } : {}) },
+    env: { FAKE_APP_SCRIPT: JSON.stringify(script), FAKE_RECORD: rec, FAKE_MCP_CONFIGURED: JSON.stringify(o.mcp instanceof Error ? [] : (o.mcp ?? ['context7', 'my server'])), FAKE_IGNORE: (o.ignore ?? []).join(','), ...(o.leak ? { FAKE_MCP_LEAK: o.leak } : {}), ...(o.fakeEnv ?? {}) },
     mcpSettleMs: 100,
     discoverMcpServers: async () => {
       if (o.mcp instanceof Error) throw o.mcp;
@@ -41,7 +42,7 @@ async function drive(
     interruptGraceMs: 400,
     killGraceMs: 300,
   });
-  const run = ex.start({ cwd, prompt: '做点事', ...(o.timeoutMs ? { timeoutMs: o.timeoutMs } : {}) });
+  const run = ex.start({ cwd, prompt: '做点事', ...(o.timeoutMs ? { timeoutMs: o.timeoutMs } : {}), ...(o.caps ? { capabilities: o.caps } : {}) });
   const events: ExecutorEvent[] = [];
   const t0 = Date.now();
   let stopped = false;
@@ -204,10 +205,10 @@ describe('Codex 适配器：配置隔离与沙箱参数', () => {
       '--disable', 'plugins',
       '--disable', 'apps',
     ]);
-    expect(cfg.threadStart).toEqual({ cwd: '/work/tree', approvalPolicy: 'on-request', sandbox: 'workspace-write', ephemeral: true, model: 'm1' });
+    expect(cfg.threadStart).toEqual({ cwd: '/work/tree', approvalPolicy: 'untrusted', sandbox: 'workspace-write', ephemeral: true, model: 'm1' });
     expect(cfg.turnOverrides).toEqual({
       cwd: '/work/tree',
-      approvalPolicy: 'on-request',
+      approvalPolicy: 'untrusted',
       sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/work/tree'], excludeSlashTmp: true, excludeTmpdirEnvVar: true, networkAccess: false },
     });
     expect(JSON.stringify(cfg)).not.toMatch(FORBIDDEN);
@@ -269,10 +270,10 @@ describe('Codex 适配器：配置隔离与沙箱参数', () => {
     const argv = d.record.find((r) => r.kind === 'argv')!.argv as string[];
     expect(argv).toEqual(expect.arrayContaining(['app-server', '-c', 'sandbox_mode="workspace-write"', 'approval_policy="on-request"', '--disable', 'plugins']));
     const msg = (m: string) => d.record.find((r) => r.kind === 'recv' && r.msg.method === m)!.msg.params;
-    expect(msg('thread/start')).toMatchObject({ cwd: d.cwd, approvalPolicy: 'on-request', sandbox: 'workspace-write', ephemeral: true });
+    expect(msg('thread/start')).toMatchObject({ cwd: d.cwd, approvalPolicy: 'untrusted', sandbox: 'workspace-write', ephemeral: true });
     expect(msg('turn/start')).toMatchObject({
       cwd: d.cwd,
-      approvalPolicy: 'on-request',
+      approvalPolicy: 'untrusted',
       sandboxPolicy: { type: 'workspaceWrite', writableRoots: [d.cwd], excludeSlashTmp: true, excludeTmpdirEnvVar: true, networkAccess: false },
     });
     expect(JSON.stringify([argv, d.record.filter((r) => r.kind === 'recv').map((r) => r.msg.params)])).not.toMatch(FORBIDDEN);
@@ -280,6 +281,89 @@ describe('Codex 适配器：配置隔离与沙箱参数', () => {
 
   it('能力声明：支持权限询问；不支持停止后继续', () => {
     expect(new CodexExecutor().capabilities).toEqual({ permissionPrompts: true, resumeAfterStop: false });
+  });
+});
+
+describe('Codex 适配器：能力映射与启动门禁', () => {
+  const caps = (o: Partial<Capabilities> = {}): Capabilities => ({ fileAccess: 'worktree_write', commandExecution: 'ask_each', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [], ...o });
+  const recv = (d: Drive, m: string) => d.record.find((r) => r.kind === 'recv' && r.msg.method === m);
+
+  it('能力 → 参数：每条命令询问=untrusted；沙箱内自动=on-request；只读；开网络', () => {
+    expect(codexLaunchConfig('/w', { capabilities: caps() }).threadStart).toMatchObject({ approvalPolicy: 'untrusted', sandbox: 'workspace-write' });
+    expect(codexLaunchConfig('/w', { capabilities: caps({ commandExecution: 'sandbox_auto' }) }).turnOverrides).toMatchObject({ approvalPolicy: 'on-request' });
+    const ro = codexLaunchConfig('/w', { capabilities: caps({ fileAccess: 'worktree_read_only' }) });
+    expect(ro.args).toContain('sandbox_mode="read-only"');
+    expect(ro.turnOverrides).toMatchObject({ sandboxPolicy: { type: 'readOnly' } });
+    const net = codexLaunchConfig('/w', { capabilities: caps({ externalNetwork: 'on' }) });
+    expect(net.turnOverrides).toMatchObject({ sandboxPolicy: { networkAccess: true } });
+    expect(net.args).toContain('web_search="live"');
+    expect(codexLaunchConfig('/w').args).toContain('web_search="disabled"');
+    expect(codexLaunchConfig('/w').turnOverrides).toMatchObject({ sandboxPolicy: { networkAccess: false } });
+  });
+
+  it('启动前自检：构造出来的参数通过；任何一项被拿掉都会被发现', () => {
+    const c = caps();
+    const ok = codexLaunchConfig('/w', { mcpServers: ['m1'], capabilities: c });
+    expect(selfCheckLaunch(ok, c, ['m1'])).toEqual([]);
+    const without = (pred: (a: string[], i: number) => boolean) => ({ ...ok, args: ok.args.filter((_, i) => !pred(ok.args, i)) });
+    expect(selfCheckLaunch(without((a, i) => a[i] === 'hooks' || a[i + 1] === 'hooks'), c, ['m1']).join()).toMatch(/hooks/);
+    expect(selfCheckLaunch(without((a, i) => a[i] === 'notify=[]' || a[i + 1] === 'notify=[]'), c, ['m1']).join()).toMatch(/notify/);
+    expect(selfCheckLaunch(without((a, i) => /mcp_servers\.m1/.test(a[i] ?? '') || /mcp_servers\.m1/.test(a[i + 1] ?? '')), c, ['m1']).join()).toMatch(/MCP「m1」/);
+    expect(selfCheckLaunch({ ...ok, threadStart: { ...ok.threadStart, approvalPolicy: 'on-request' } }, c, ['m1']).join()).toMatch(/审批/);
+    expect(selfCheckLaunch({ ...ok, turnOverrides: { ...ok.turnOverrides, sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/other'], networkAccess: false } } }, c, ['m1']).join()).toMatch(/可写根/);
+    expect(selfCheckLaunch({ ...ok, turnOverrides: { ...ok.turnOverrides, sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/w'], networkAccess: true } } }, c, ['m1']).join()).toMatch(/网络/);
+  });
+
+  it('正常情况：核验通过 → 放行，开始回合，并报告实际生效的审批/沙箱/模型/指令来源', async () => {
+    const d = await drive([{ complete: { status: 'completed' } }]);
+    expect(d.exit).toEqual({ kind: 'exited', code: 0 });
+    expect(recv(d, 'turn/start')).toBeDefined();
+    const iso = d.events.find((e) => e.type === 'isolation');
+    expect(iso).toMatchObject({ info: { approvalPolicy: 'untrusted', sandbox: 'workspaceWrite', model: 'fake-model', grantedMcp: [] } });
+    expect(JSON.stringify(iso)).toMatch(/AGENTS\.md/);
+  });
+
+  it.each([
+    ['approval', /命令审批策略/],
+    ['sandbox', /沙箱类型/],
+    ['network', /外部网络未关闭/],
+    ['notify', /notify 未关闭/],
+    ['hooks', /hooks 未关闭/],
+    ['memories', /memories 未关闭/],
+    ['login_shell', /登录 shell 未关闭/],
+    ['mcp', /MCP「context7」未关闭/],
+    ['hooks_list', /仍有 1 个 hook 生效/],
+  ])('启动后核验：%s 实际未生效 → 不开始回合，任务失败并报告“隔离无法确认”', async (key, re) => {
+    const d = await drive([{ complete: { status: 'completed' } }], { ignore: [key] });
+    expect(d.exit).toEqual({ kind: 'exited', code: 1 });
+    const msg = messages(d).join('\n');
+    expect(msg).toMatch(/隔离无法确认/);
+    expect(msg).toMatch(re);
+    expect(recv(d, 'turn/start')).toBeUndefined();
+  });
+
+  it('启动后核验：读不到实际生效的配置 → 视为无法确认，不开始回合', async () => {
+    const d = await drive([{ complete: { status: 'completed' } }], { fakeEnv: { FAKE_CONFIG_ERROR: '1' } });
+    expect(d.exit).toEqual({ kind: 'exited', code: 1 });
+    expect(messages(d).join('\n')).toMatch(/隔离无法确认.*无法读取实际生效的配置/s);
+    expect(recv(d, 'turn/start')).toBeUndefined();
+  });
+
+  it('授予的 MCP 不关闭、且不算违规；未授予的仍被关闭', async () => {
+    const d = await drive([{ complete: { status: 'completed' } }], { caps: caps({ grantedMcp: ['context7'] }), leak: 'context7' });
+    expect(d.exit).toEqual({ kind: 'exited', code: 0 });
+    const argv = d.record.find((r) => r.kind === 'argv')!.argv as string[];
+    expect(argv).not.toContain('mcp_servers.context7.enabled=false');
+    expect(argv).toContain('mcp_servers."my server".enabled=false');
+    const bad = await drive([{ complete: { status: 'completed' } }], { caps: caps({ grantedMcp: ['context7'] }), leak: 'my server' });
+    expect(messages(bad).join('\n')).toMatch(/隔离失败.*my server/s);
+  });
+
+  it('授予的 MCP 不在用户配置里 → 启动前就拒绝（app-server 未启动）', async () => {
+    const d = await drive([{ complete: { status: 'completed' } }], { caps: caps({ grantedMcp: ['nope'] }) });
+    expect(d.exit).toEqual({ kind: 'exited', code: 1 });
+    expect(messages(d).join('\n')).toMatch(/隔离无法确认.*授予的 MCP「nope」不在用户配置中/s);
+    expect(d.record.some((r) => r.kind === 'argv')).toBe(false);
   });
 });
 

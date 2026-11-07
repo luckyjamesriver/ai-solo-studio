@@ -46,6 +46,9 @@ describe('安全基线（防回归）', () => {
     expect(JSON.stringify(cfg)).not.toMatch(forbidden);
     expect(cfg.args).toContain('sandbox_mode="workspace-write"');
     expect(cfg.args).toContain('approval_policy="on-request"');
-    expect(cfg.threadStart).toMatchObject({ sandbox: 'workspace-write', approvalPolicy: 'on-request' });
+    // M2.5：默认“每条命令都询问”（untrusted，比 on-request 更严格），只能经 thread/start 与 turn/start 参数声明
+    expect(cfg.threadStart).toMatchObject({ sandbox: 'workspace-write', approvalPolicy: 'untrusted' });
+    expect(cfg.turnOverrides).toMatchObject({ approvalPolicy: 'untrusted' });
+    expect(codexLaunchConfig('/work/tree', { capabilities: { fileAccess: 'worktree_write', commandExecution: 'sandbox_auto', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [] } }).threadStart).toMatchObject({ approvalPolicy: 'on-request' });
   });
 });

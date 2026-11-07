@@ -30,10 +30,21 @@ export interface DeniedOperation {
   risk: 'low' | 'medium' | 'high';
 }
 
+/** 启动后核验通过时报告的实际生效情况（供时间线/验收卡记录） */
+export interface IsolationInfo {
+  model?: string | undefined;
+  /** 实际生效的指令来源（如用户级 AGENTS.md 的路径）：只是路径，不含内容 */
+  instructionSources: string[];
+  approvalPolicy: string;
+  sandbox: string;
+  grantedMcp: string[];
+}
+
 export type ExecutorEvent =
   | { type: 'message'; text: string }
   | { type: 'tool'; name: string; summary: string }
   | { type: 'permission_request'; request: PermissionRequest }
+  | { type: 'isolation'; info: IsolationInfo }
   | { type: 'log'; stream: 'stdout' | 'stderr'; text: string }
   | { type: 'exit'; outcome: ExitOutcome; /** 本次执行中被拒绝、因此没有执行的操作 */ denied?: DeniedOperation[] };
 
@@ -65,12 +76,16 @@ export interface DetectResult {
   note?: string;
 }
 
+import type { Capabilities } from '../capabilities/model.js';
+
 export interface StartOptions {
   /** 任务 worktree 的绝对路径；执行体只能在此目录内工作 */
   cwd: string;
   prompt: string;
   model?: string;
   timeoutMs?: number;
+  /** 授予的能力；缺省为最小权限 */
+  capabilities?: Capabilities;
 }
 
 export interface Executor {

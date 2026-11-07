@@ -127,6 +127,20 @@
 | model_provider / openai_base_url（用户自定义服务商） | 数据发往用户配置的端点 | 未处理（信息） | — | 由 M2.5 之后的能力门禁与环境体检另行处理 |
 | analytics / feedback | 遥测 | app-server 默认关闭 | — | 官方 `--help`：analytics 默认关闭，需用户在 config.toml 显式开启 |
 
+**approval_policy 实测（M2.5 第 4 项，Codex 0.166.0，真实回合；沙箱 workspace-write、网络关闭，命令由模型自行决定是否执行）**
+
+| 选项 | 沙箱内写文件 | 沙箱内 `ls` | 需联网的命令 | 结论 |
+|---|---|---|---|---|
+| `untrusted`（经 thread/start、turn/start 参数） | 先询问 | **先询问** | 先询问 | 满足“每条命令都先询问” |
+| `on-request` | 不询问 | 不询问 | 询问（越出沙箱） | 沙箱内命令不询问，**不满足**“每次询问” |
+| `granular{…}` | 回合未完成（实测未能使用，原因未查） | 同左 | 同左 | 未采用 |
+| `never` | 未测（被安全测试禁止） | — | — | 禁止 |
+
+另：配置层 `-c approval_policy="untrusted"` 会使 app-server 拒绝启动（“no longer supported”），所以 untrusted 只能通过 thread/start 与 turn/start 的参数声明，配置层保持 on-request；启动后用 thread/start 响应里的实际 `approvalPolicy` 核验。
+**最终选择**：能力“命令执行=每次询问（默认）”映射为 `untrusted`；“沙箱内自动”（较弱，必须由计划显式选择）映射为 `on-request`。无差距。代价：每条命令都会询问，依赖 TaskRunner 的低风险自动批准规则减少打扰。回归测试：tests/integration/approval-policy.real.test.ts。
+
+**启动门禁（M2.5 第 4 项）**：启动前自检（`selfCheckLaunch`：参数含全部要求的保护；授予的 MCP 必须存在）+ 启动后核验（thread/start 实际的审批策略与沙箱类型/网络、`config/read` 的 notify/hooks/memories/登录 shell/MCP 开关、`hooks/list` 为空、启动通知中的 MCP 与授予列表一致）。任一项无法确认 → 不开始回合，任务失败并报告“隔离无法确认：<项>”。
+
 令牌刷新：`account/chatgptAuthTokens/refresh` 的响应必须包含 `accessToken` 与 `chatgptAccountId`，schema 说明该模式是“令牌由外部宿主应用提供并只存于内存、刷新由宿主负责”，且标注 FOR OPENAI INTERNAL USE ONLY。这要求我们接触并转发凭证，因此**保持拒绝**。使用 `codex login` 的托管登录时，Codex 自行刷新，不会向客户端发出该请求（实测整个任务期间未出现）。
 
 版本：适配器声明经过验证的版本 0.166.0（`VERIFIED_CODEX_VERSION`）；`detect()` 在版本不同时返回 `verified: false` 与提示，不阻止使用。

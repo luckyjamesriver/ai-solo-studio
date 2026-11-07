@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Channel } from '../channel.js';
 import { run } from '../../proc/run.js';
 import type { DeniedOperation, DetectResult, Decision, Executor, ExecutorEvent, ExecutorRun, ExitOutcome, PermissionRequest, StartOptions } from '../types.js';
+import { resolveCapabilities, type Capabilities } from '../../capabilities/model.js';
 import { assess } from '../../policy/risk.js';
 import { parseCommand } from './codex-command.js';
 
@@ -14,8 +15,12 @@ import { parseCommand } from './codex-command.js';
  * app-server 被官方标注为 experimental，协议可能变化。
  */
 
-const APPROVAL_POLICY = 'on-request';
-const SANDBOX_MODE = 'workspace-write';
+/**
+ * 配置层（-c）的 approval_policy 只接受 on-request（实测：`approval_policy="untrusted"` 会让 app-server 拒绝启动，
+ * 报 “no longer supported”）；“每条命令都询问”（untrusted）只能通过 thread/start 与 turn/start 的参数声明。
+ * 实测对比见 ADR 0001“approval_policy 实测”。启动后会用 thread/start 的响应核验实际生效值。
+ */
+const CONFIG_APPROVAL_POLICY = 'on-request';
 
 export interface CodexLaunchConfig {
   /** `codex app-server` 的命令行参数（不含可执行文件本身） */
@@ -24,6 +29,18 @@ export interface CodexLaunchConfig {
   threadStart: Record<string, unknown>;
   /** turn/start 中每个回合都再次显式声明的参数（不依赖线程或用户配置的默认值） */
   turnOverrides: Record<string, unknown>;
+  /** 期望在 thread/start 响应里看到的实际生效值（启动后核验用） */
+  expected: { approvalPolicy: string; sandboxType: 'workspaceWrite' | 'readOnly'; networkAccess: boolean };
+}
+
+/** 能力 → Codex 参数的映射（单点定义，便于测试） */
+export function mapCapabilities(c: Capabilities) {
+  return {
+    sandboxMode: c.fileAccess === 'worktree_write' ? 'workspace-write' : 'read-only',
+    sandboxType: (c.fileAccess === 'worktree_write' ? 'workspaceWrite' : 'readOnly') as 'workspaceWrite' | 'readOnly',
+    approvalPolicy: c.commandExecution === 'ask_each' ? 'untrusted' : 'on-request',
+    network: c.externalNetwork === 'on',
+  };
 }
 
 /** TOML 键：裸键只允许 A-Za-z0-9_-，其余加引号并转义 */
@@ -41,16 +58,19 @@ export const VERIFIED_CODEX_VERSION = '0.166.0';
  * - 审批：需要时询问（on-request）；
  * - 禁用插件。
  */
-export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServers?: string[] } = {}): CodexLaunchConfig {
+export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServers?: string[]; capabilities?: Capabilities } = {}): CodexLaunchConfig {
+  const caps = resolveCapabilities(opts.capabilities);
+  const m = mapCapabilities(caps);
   return {
+    expected: { approvalPolicy: m.approvalPolicy, sandboxType: m.sandboxType, networkAccess: m.network },
     args: [
       'app-server',
       '--listen',
       'stdio://',
       '-c',
-      `sandbox_mode="${SANDBOX_MODE}"`,
+      `sandbox_mode="${m.sandboxMode}"`,
       '-c',
-      `approval_policy="${APPROVAL_POLICY}"`,
+      `approval_policy="${CONFIG_APPROVAL_POLICY}"`,
       // 用户在 config.toml 里写的自定义指令不进入会话（官方配置键 instructions / developer_instructions）
       '-c',
       'instructions=""',
@@ -82,7 +102,7 @@ export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServer
       '-c',
       'shell_environment_policy.inherit="core"', // 命令只继承核心环境变量，不带入宿主进程里的密钥类变量
       '-c',
-      'web_search="disabled"', // 模型侧联网搜索（外部网络）
+      `web_search="${caps.externalNetwork === 'on' ? 'live' : 'disabled'}"`, // 模型侧联网搜索（外部网络）
       '--disable',
       'plugins',
       // 关闭 ChatGPT 连接器（apps）：否则会话里会出现数百个来自用户账号的连接器工具
@@ -91,23 +111,47 @@ export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServer
     ],
     threadStart: {
       cwd,
-      approvalPolicy: APPROVAL_POLICY,
-      sandbox: SANDBOX_MODE,
+      approvalPolicy: m.approvalPolicy,
+      sandbox: m.sandboxMode,
       ephemeral: true,
       ...(opts.model ? { model: opts.model } : {}),
     },
     turnOverrides: {
       cwd,
-      approvalPolicy: APPROVAL_POLICY,
-      sandboxPolicy: {
-        type: 'workspaceWrite',
-        writableRoots: [cwd],
-        excludeSlashTmp: true,
-        excludeTmpdirEnvVar: true,
-        networkAccess: false,
-      },
+      approvalPolicy: m.approvalPolicy,
+      sandboxPolicy:
+        m.sandboxType === 'workspaceWrite'
+          ? { type: 'workspaceWrite', writableRoots: [cwd], excludeSlashTmp: true, excludeTmpdirEnvVar: true, networkAccess: m.network }
+          : { type: 'readOnly' },
     },
   };
+}
+
+/**
+ * 启动前自检：独立于构造函数，逐项确认“要求的保护”确实都在参数里。任何一项缺失 → 返回问题清单，调用方不得启动。
+ */
+export function selfCheckLaunch(cfg: CodexLaunchConfig, caps: Capabilities, disabledMcp: string[]): string[] {
+  const problems: string[] = [];
+  const a = cfg.args;
+  const pair = (flag: string, value: string) => a.some((x, i) => x === flag && a[i + 1] === value);
+  const m = mapCapabilities(caps);
+  if (!pair('-c', `sandbox_mode="${m.sandboxMode}"`)) problems.push('沙箱模式');
+  if (!pair('-c', `approval_policy="${CONFIG_APPROVAL_POLICY}"`)) problems.push('配置层审批策略');
+  if (cfg.threadStart.approvalPolicy !== m.approvalPolicy || (cfg.turnOverrides as { approvalPolicy?: unknown }).approvalPolicy !== m.approvalPolicy) problems.push('命令审批策略');
+  if (cfg.threadStart.sandbox !== m.sandboxMode) problems.push('线程沙箱');
+  const sp = (cfg.turnOverrides as { sandboxPolicy?: { type?: string; writableRoots?: string[]; networkAccess?: boolean } }).sandboxPolicy;
+  if (sp?.type !== m.sandboxType) problems.push('回合沙箱类型');
+  if (m.sandboxType === 'workspaceWrite') {
+    if (!(sp?.writableRoots?.length === 1 && sp.writableRoots[0] === cfg.threadStart.cwd)) problems.push('可写根（只能是任务工作树）');
+    if (sp?.networkAccess !== m.network) problems.push('外部网络开关');
+  }
+  for (const f of ['hooks', 'memories', 'multi_agent', 'remote_plugin', 'shell_snapshot', 'plugins', 'apps']) if (!pair('--disable', f)) problems.push(`扩展 ${f} 未关闭`);
+  for (const kv of ['notify=[]', 'memories.use_memories=false', 'memories.generate_memories=false', 'allow_login_shell=false', 'shell_environment_policy.inherit="core"', 'instructions=""', 'developer_instructions=""']) {
+    if (!pair('-c', kv)) problems.push(`配置项 ${kv.split('=')[0]}`);
+  }
+  if (!pair('-c', `web_search="${caps.externalNetwork === 'on' ? 'live' : 'disabled'}"`)) problems.push('联网搜索开关');
+  for (const name of disabledMcp) if (!pair('-c', `mcp_servers.${tomlKey(name)}.enabled=false`)) problems.push(`MCP「${name}」未关闭`);
+  return problems;
 }
 
 export interface CodexOptions {
@@ -377,13 +421,15 @@ export class CodexExecutor implements Executor {
       return parsed.inner || String(item.command ?? '');
     };
 
+    const caps = resolveCapabilities(opts.capabilities);
+    const granted = new Set(caps.grantedMcp);
     const leaked = new Set<string>();
     const mcpBreach = (name: string) => {
-      if (leaked.has(name) || finished) return;
+      if (granted.has(name) || leaked.has(name) || finished) return;
       leaked.add(name);
       abortedForIsolation = true;
       declineAllPending();
-      finish({ kind: 'exited', code: 1 }, `隔离失败：MCP 服务器“${name}”仍然启动了（应当全部关闭）。为避免外部工具进入任务，已中止。`);
+      finish({ kind: 'exited', code: 1 }, `隔离失败：MCP 服务器“${name}”仍然启动了（未被授予，应当关闭）。为避免外部工具进入任务，已中止。`);
       terminate();
     };
 
@@ -448,8 +494,17 @@ export class CodexExecutor implements Executor {
     };
 
     // ---------- 启动 ----------
-    const launch = (mcpServers: string[]) => {
-    const cfg = codexLaunchConfig(cwd, { ...(opts.model ? { model: opts.model } : {}), mcpServers });
+    const launch = (configured: string[]) => {
+    // 启动前构建：未被授予的 MCP 全部关闭；授予的必须真的存在于用户配置里
+    const missing = caps.grantedMcp.filter((n) => !configured.includes(n));
+    const disabledMcp = configured.filter((n) => !granted.has(n));
+    const cfg = codexLaunchConfig(cwd, { ...(opts.model ? { model: opts.model } : {}), mcpServers: disabledMcp, capabilities: caps });
+    // 启动前自检：任何一项无法确认，就不启动进程
+    const problems = [...missing.map((n) => `授予的 MCP「${n}」不在用户配置中`), ...selfCheckLaunch(cfg, caps, disabledMcp)];
+    if (problems.length) {
+      finish({ kind: 'exited', code: 1 }, `隔离无法确认：${problems.join('；')}。任务未开始。`);
+      return;
+    }
     try {
       child = spawn(this.command, [...this.prefix, ...cfg.args], {
         cwd,
@@ -496,6 +551,47 @@ export class CodexExecutor implements Executor {
         );
       }
 
+      const verifyEffective = async (t: any): Promise<string[]> => {
+        const bad: string[] = [];
+        if (t?.approvalPolicy !== cfg.expected.approvalPolicy) bad.push(`命令审批策略（实际：${JSON.stringify(t?.approvalPolicy)}）`);
+        if (t?.sandbox?.type !== cfg.expected.sandboxType) bad.push(`沙箱类型（实际：${JSON.stringify(t?.sandbox?.type)}）`);
+        // 网络：只在“关闭”时核验（开启时线程级响应无法反映回合级的放行）
+        if (cfg.expected.sandboxType === 'workspaceWrite' && cfg.expected.networkAccess === false && t?.sandbox?.networkAccess !== false) bad.push('外部网络未关闭');
+        try {
+          const c = (await request('config/read', { includeLayers: false, cwd })) ?? {};
+          const conf = c.config ?? {};
+          if (!Array.isArray(conf.notify) || conf.notify.length !== 0) bad.push('notify 未关闭');
+          if (conf.features?.hooks !== false) bad.push('hooks 未关闭');
+          if (conf.features?.memories !== false || conf.memories?.use_memories !== false || conf.memories?.generate_memories !== false) bad.push('memories 未关闭');
+          if (conf.allow_login_shell !== false) bad.push('登录 shell 未关闭');
+          const servers = conf.mcp_servers ?? {};
+          for (const [name, v] of Object.entries<any>(servers)) if (!granted.has(name) && v?.enabled !== false) bad.push(`MCP「${name}」未关闭`);
+          for (const g of caps.grantedMcp) if (!(g in servers)) bad.push(`授予的 MCP「${g}」不在配置中`);
+        } catch (e) {
+          bad.push(`无法读取实际生效的配置（${(e as Error).message}）`);
+        }
+        try {
+          const h = await request('hooks/list', { cwds: [cwd] });
+          const n = ((h?.data ?? []) as { hooks?: unknown[] }[]).reduce((k, x) => k + (x.hooks?.length ?? 0), 0);
+          if (n > 0) bad.push(`仍有 ${n} 个 hook 生效`);
+        } catch (e) {
+          bad.push(`无法读取 hooks 列表（${(e as Error).message}）`);
+        }
+        if (!bad.length) {
+          ch.push({
+            type: 'isolation',
+            info: {
+              model: typeof t?.model === 'string' ? t.model : undefined,
+              instructionSources: Array.isArray(t?.instructionSources) ? t.instructionSources.map(String) : Object.values(t?.instructionSources ?? {}).map(String),
+              approvalPolicy: t.approvalPolicy,
+              sandbox: t.sandbox?.type,
+              grantedMcp: caps.grantedMcp,
+            },
+          });
+        }
+        return bad;
+      };
+
       (async () => {
         await request('initialize', { clientInfo: { name: 'ai_solo_studio', title: 'AI Solo Studio', version: '0.3.0' } });
         write({ method: 'initialized', params: {} });
@@ -503,6 +599,12 @@ export class CodexExecutor implements Executor {
         threadId = t?.thread?.id;
         if (!threadId) throw new Error('app-server 没有返回线程 ID');
         if (stopRequested || timedOut) return;
+        // 启动后核验：以 app-server 报告的实际生效值为准，任何一项无法确认都不开始回合
+        const unverified = await verifyEffective(t);
+        if (unverified.length) {
+          if (!finished) finish({ kind: 'exited', code: 1 }, `隔离无法确认：${unverified.join('；')}。任务未开始。`);
+          return;
+        }
         // 等待 MCP 启动通知：此时仍有服务器启动则 mcpBreach 会中止任务
         await new Promise((r) => timers.push(setTimeout(r, this.options.mcpSettleMs ?? 1500)));
         if (abortedForIsolation || finished || stopRequested || timedOut) return;

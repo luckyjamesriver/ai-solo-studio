@@ -1,0 +1,42 @@
+import { describe, it, expect } from 'vitest';
+import { DEFAULT_CAPABILITIES, resolveCapabilities } from '../src/core/capabilities/model.js';
+import { TaskRunner } from '../src/core/task/runner.js';
+import { FakeExecutor } from '../src/core/executor/adapters/fake.js';
+import { makeRepo } from './helpers.js';
+
+describe('能力模型', () => {
+  it('默认值 = 最小权限（v1.5 第 5.1 节）', () => {
+    expect(resolveCapabilities()).toEqual({ fileAccess: 'worktree_write', commandExecution: 'ask_each', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [] });
+    expect(DEFAULT_CAPABILITIES.grantedMcp).toEqual([]);
+  });
+  it('可以放宽个别项，其余仍为默认；MCP 授予列表去重', () => {
+    const c = resolveCapabilities({ externalNetwork: 'on', grantedMcp: ['a', 'a', 'b'] });
+    expect(c).toMatchObject({ externalNetwork: 'on', commandExecution: 'ask_each', fileAccess: 'worktree_write' });
+    expect(c.grantedMcp).toEqual(['a', 'b']);
+  });
+  it('永远不能授予凭证访问；非法取值被拒绝', () => {
+    expect(() => resolveCapabilities({ credentialAccess: 'all' as never })).toThrow(/凭证/);
+    expect(() => resolveCapabilities({ commandExecution: 'never' as never })).toThrow();
+    expect(() => resolveCapabilities({ fileAccess: 'anywhere' as never })).toThrow();
+    expect(() => resolveCapabilities({ grantedMcp: [''] })).toThrow();
+  });
+  it('计划默认带最小权限能力；执行体收到的就是计划里的能力', async () => {
+    const repo = await makeRepo();
+    let seen: unknown;
+    const inner = new FakeExecutor([{ do: 'exit', code: 0 }]);
+    const executor = Object.assign(Object.create(inner), {
+      start: (o: Parameters<FakeExecutor['start']>[0]) => {
+        seen = o.capabilities;
+        return inner.start(o);
+      },
+    }) as FakeExecutor;
+    const runner = new TaskRunner({ repo, executor, runChecks: false });
+    const t0 = await runner.create('x');
+    const t = await runner.setPlan(t0.id, { goal: 'g', inScope: [], outOfScope: [], criteria: [], risks: [], irreversible: [] });
+    expect(t.plan?.capabilities).toEqual(resolveCapabilities());
+    await runner.approve(t0.id);
+    await runner.start(t0.id);
+    expect(seen).toEqual(resolveCapabilities());
+    await expect(runner.setPlan(t0.id, { goal: 'g', inScope: [], outOfScope: [], criteria: [], risks: [], irreversible: [], capabilities: { credentialAccess: 'x' as never } })).rejects.toThrow();
+  });
+});

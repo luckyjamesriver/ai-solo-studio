@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import * as G from '../git/git.js';
 import { next, type TaskEvent } from './state.js';
 import { TaskStore } from './store.js';
+import { resolveCapabilities, type Capabilities } from '../capabilities/model.js';
 import type { Plan, Task, TimelineEntry } from './model.js';
 import type { Decision, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
@@ -86,8 +87,9 @@ export class TaskRunner extends EventEmitter {
     return task;
   }
 
-  async setPlan(id: string, plan: Plan): Promise<Task> {
+  async setPlan(id: string, input: Omit<Plan, 'capabilities'> & { capabilities?: Partial<Capabilities> }): Promise<Task> {
     const t = await this.load(id);
+    const plan: Plan = { ...input, capabilities: resolveCapabilities(input.capabilities) };
     t.plan = plan;
     t.criteria = plan.criteria.map((text) => ({ text }));
     await this.fire(t, t.state === 'draft' || t.state === 'clarifying' ? 'plan' : 'edit_plan');
@@ -133,6 +135,7 @@ export class TaskRunner extends EventEmitter {
       cwd: t.worktree.path,
       prompt: prompt ?? buildPrompt(t),
       timeoutMs: this.opts.timeoutMs ?? 20 * 60_000,
+      capabilities: t.plan?.capabilities ?? resolveCapabilities(),
     });
     this.runs.set(t.id, run);
     // 执行体启动期间（或启动的同一时刻）到来的停止请求：登记后立刻补发给执行体
@@ -141,6 +144,7 @@ export class TaskRunner extends EventEmitter {
 
     for await (const ev of run.events) {
       if (ev.type === 'message') this.log(t, 'message', ev.text);
+      else if (ev.type === 'isolation') this.log(t, 'isolation', `隔离已核验：审批=${ev.info.approvalPolicy}，沙箱=${ev.info.sandbox}，模型=${ev.info.model ?? '未知'}，授予的 MCP=${ev.info.grantedMcp.join('、') || '无'}，指令来源=${ev.info.instructionSources.join('、') || '无'}`);
       else if (ev.type === 'tool') this.log(t, 'tool', `${ev.name}: ${ev.summary}`);
       else if (ev.type === 'permission_request') {
         const risk = assess(ev.request, t.worktree.path);

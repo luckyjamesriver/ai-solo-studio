@@ -3,6 +3,8 @@ import type { Worktree } from '../git/git.js';
 import type { ExitOutcome, DeniedOperation } from '../executor/types.js';
 import type { AcceptanceCard, CriterionState } from '../acceptance/card.js';
 
+import type { Capabilities } from '../capabilities/model.js';
+
 export interface Plan {
   goal: string;
   inScope: string[];
@@ -11,11 +13,13 @@ export interface Plan {
   risks: string[];
   /** 本任务中可能无法通过撤销恢复的影响（执行前展示给用户） */
   irreversible: string[];
+  /** 授予执行体的能力；缺省为最小权限（需求 v1.5 第 5.1 节） */
+  capabilities: Capabilities;
 }
 
 export interface TimelineEntry {
   at: string;
-  kind: 'state' | 'message' | 'tool' | 'permission' | 'check' | 'error';
+  kind: 'state' | 'message' | 'tool' | 'permission' | 'check' | 'error' | 'isolation';
   text: string;
 }
 

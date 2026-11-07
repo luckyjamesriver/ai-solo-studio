@@ -11,6 +11,39 @@ const record = (o) => process.env.FAKE_RECORD && appendFileSync(process.env.FAKE
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 record({ kind: 'argv', argv: process.argv.slice(2) });
 
+// 假的“实际生效配置”：根据启动参数推导，模拟真实 app-server 的 config/read、hooks/list 与 thread/start 响应。
+// FAKE_IGNORE（逗号分隔）让指定项“不生效”，用来测试启动后核验：approval,sandbox,network,notify,hooks,memories,login_shell,mcp,hooks_list
+// FAKE_CONFIG_ERROR=1 让 config/read 报错；FAKE_MCP_CONFIGURED 为 JSON 数组，表示用户配置里的 MCP 服务名。
+const argv = process.argv.slice(2);
+const cflags = argv.flatMap((x, i) => (x === '-c' ? [argv[i + 1]] : []));
+const disabledFeatures = argv.flatMap((x, i) => (x === '--disable' ? [argv[i + 1]] : []));
+const ignore = (process.env.FAKE_IGNORE ?? '').split(',').filter(Boolean);
+const mcpConfigured = JSON.parse(process.env.FAKE_MCP_CONFIGURED ?? '[]');
+const flagIs = (kv) => cflags.includes(kv);
+function effectiveConfig() {
+  const off = (k) => !ignore.includes(k);
+  const mcp_servers = Object.fromEntries(
+    mcpConfigured.map((n) => [n, { enabled: !(off('mcp') && (flagIs(`mcp_servers.${n}.enabled=false`) || flagIs(`mcp_servers."${n}".enabled=false`))) }]),
+  );
+  return {
+    notify: off('notify') && flagIs('notify=[]') ? [] : ['/bin/sh', '-c', 'x'],
+    features: { hooks: !(off('hooks') && disabledFeatures.includes('hooks')), memories: !(off('memories') && disabledFeatures.includes('memories')) },
+    memories: { use_memories: !(off('memories') && flagIs('memories.use_memories=false')), generate_memories: !(off('memories') && flagIs('memories.generate_memories=false')) },
+    allow_login_shell: !(off('login_shell') && flagIs('allow_login_shell=false')),
+    mcp_servers,
+  };
+}
+function threadResult(p) {
+  const sb = p.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite';
+  return {
+    thread: { id: 'thread-1' },
+    model: 'fake-model',
+    approvalPolicy: ignore.includes('approval') ? 'on-request' : p.approvalPolicy,
+    sandbox: { type: ignore.includes('sandbox') ? 'dangerFullAccess' : sb, networkAccess: ignore.includes('network') },
+    instructionSources: ['/home/u/.codex/AGENTS.md'],
+  };
+}
+
 let turnId = 'turn-1';
 let nextServerId = 100;
 let interrupted = false;
@@ -69,11 +102,17 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   record({ kind: 'recv', msg: m });
   if (m.method === 'initialize') send({ id: m.id, result: { userAgent: 'fake-app-server/0.0.0' } });
   else if (m.method === 'thread/start') {
-    send({ id: m.id, result: { thread: { id: 'thread-1' } } });
+    send({ id: m.id, result: threadResult(m.params ?? {}) });
     // 模拟隔离失败：FAKE_MCP_LEAK 指定的服务器仍然启动
     if (process.env.FAKE_MCP_LEAK) notify('mcpServer/startupStatus/updated', { name: process.env.FAKE_MCP_LEAK, status: 'ready', threadId: 'thread-1' });
   }
-  else if (m.method === 'turn/start') {
+  else if (m.method === 'config/read') {
+    if (process.env.FAKE_CONFIG_ERROR) send({ id: m.id, error: { code: -32000, message: 'config unavailable' } });
+    else send({ id: m.id, result: { config: effectiveConfig() } });
+  } else if (m.method === 'hooks/list') {
+    const present = ignore.includes('hooks_list');
+    send({ id: m.id, result: { data: [{ cwd: process.cwd(), hooks: present ? [{ key: 'k' }] : [], warnings: [], errors: [] }] } });
+  } else if (m.method === 'turn/start') {
     send({ id: m.id, result: { turn: { id: turnId, status: 'inProgress', items: [] } } });
     notify('turn/started', { threadId: 'thread-1', turn: { id: turnId, status: 'inProgress', items: [] } });
     play();

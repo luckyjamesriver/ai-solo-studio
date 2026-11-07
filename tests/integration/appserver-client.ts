@@ -3,6 +3,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 /** 测试用的最小 app-server 客户端（JSON-RPC over stdio）。 */
 export class AppServerClient {
   readonly child: ChildProcess;
+  /** 收到的服务端请求（审批等），按方法名与参数记录 */
+  readonly serverRequests: { method: string; params: any }[] = [];
   readonly notifications: { method: string; params: any }[] = [];
   private buf = '';
   private id = 1;
@@ -20,8 +22,10 @@ export class AppServerClient {
         if (!line) continue;
         const m = JSON.parse(line);
         if (m.id !== undefined && m.method) {
-          // 服务端请求（审批等）：测试里一律拒绝
-          this.child.stdin!.write(`${JSON.stringify({ id: m.id, error: { code: -32601, message: 'test client' } })}\n`);
+          // 服务端请求（审批等）：记录并一律拒绝
+          this.serverRequests.push({ method: m.method, params: m.params });
+          const approval = /requestApproval$/.test(m.method);
+          this.child.stdin!.write(`${JSON.stringify(approval ? { id: m.id, result: { decision: 'decline' } } : { id: m.id, error: { code: -32601, message: 'test client' } })}\n`);
         } else if (m.id !== undefined) this.waiting.get(m.id)?.(m);
         else if (m.method) {
           const n = { method: m.method, params: m.params };
