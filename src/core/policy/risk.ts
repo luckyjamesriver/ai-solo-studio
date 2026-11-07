@@ -16,6 +16,8 @@ const DANGEROUS_CMDS = new Set(['rm', 'sudo', 'chmod', 'chown', 'dd', 'mkfs', 'k
 const PKG_INSTALL = /^(npm|pnpm|yarn|bun)$/;
 
 function insideWorktree(p: string, wt: string): boolean {
+  // `~` 与 `$VAR` 会被 shell 展开到我们无法判断的位置（主目录、临时目录等），一律按 worktree 之外处理。
+  if (p.startsWith('~') || p.includes('$')) return false;
   const abs = path.resolve(wt, p);
   return abs === wt || abs.startsWith(wt + path.sep);
 }

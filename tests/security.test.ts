@@ -35,4 +35,17 @@ describe('安全基线（防回归）', () => {
   it('不写死任何个人路径', () => {
     for (const [f, s] of sources) expect(s, f).not.toMatch(/\/Users\/[a-z]|\/home\/[a-z]/i);
   });
+
+  it('Codex 适配器：源码与生成的参数中不出现禁止的权限/沙箱参数', async () => {
+    const forbidden = /danger-full-access|dangerFullAccess|dangerously|--yolo|bypass|full-auto|["']never["']|=never/i;
+    for (const f of ['src/core/executor/adapters/codex.ts', 'src/core/executor/adapters/codex-command.ts']) {
+      expect(read(f), f).not.toMatch(forbidden);
+    }
+    const { codexLaunchConfig } = await import('../src/core/executor/adapters/codex.js');
+    const cfg = codexLaunchConfig('/work/tree', { model: 'm' });
+    expect(JSON.stringify(cfg)).not.toMatch(forbidden);
+    expect(cfg.args).toContain('sandbox_mode="workspace-write"');
+    expect(cfg.args).toContain('approval_policy="on-request"');
+    expect(cfg.threadStart).toMatchObject({ sandbox: 'workspace-write', approvalPolicy: 'on-request' });
+  });
 });
