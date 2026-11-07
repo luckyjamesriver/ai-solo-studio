@@ -51,4 +51,19 @@ describe('安全基线（防回归）', () => {
     expect(cfg.turnOverrides).toMatchObject({ approvalPolicy: 'untrusted' });
     expect(codexLaunchConfig('/work/tree', { capabilities: { fileAccess: 'worktree_write', commandExecution: 'sandbox_auto', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [] } }).threadStart).toMatchObject({ approvalPolicy: 'on-request' });
   });
+
+  it('思考者实现中不出现跳过权限/放开沙箱的参数，也不读取登录凭证文件', () => {
+    const forbidden = /dangerously|--yolo|bypassPermissions|skip-permissions|danger-full-access|dangerFullAccess|--bare\b|["']never["']|=never|auth\.json|\.credentials|keychain|security find-/i;
+    for (const f of walk('src/core/thinking').filter((x) => /\.ts$/.test(x))) expect(read(f), f).not.toMatch(forbidden);
+  });
+
+  it('ClaudeCliThinker：打包环境下不可用（即使设置了环境变量）；默认关闭；子进程不继承 ANTHROPIC_API_KEY', async () => {
+    const { ClaudeCliThinker, claudeCliArgs, DEV_PERSONAL_ENV } = await import('../src/core/thinking/claude-cli.js');
+    const packaged = new ClaudeCliThinker({ env: { [DEV_PERSONAL_ENV]: '1' }, isPackaged: () => true });
+    expect((await packaged.detect()).available).toBe(false);
+    expect((await packaged.think({ role: 'planner', system: 's', context: { required: [] }, task: 't', output: { type: 'object', properties: {}, required: [] } })).status).toBe('failed');
+    expect((await new ClaudeCliThinker({ env: {}, isPackaged: () => false }).detect()).available).toBe(false);
+    expect(claudeCliArgs()).toEqual(expect.arrayContaining(['--safe-mode', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence']));
+    expect(read('src/core/thinking/claude-cli.ts')).toMatch(/delete e\.ANTHROPIC_API_KEY/);
+  });
 });

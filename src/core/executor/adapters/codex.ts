@@ -357,8 +357,8 @@ export class CodexExecutor implements Executor {
       if (finished) return;
       finished = true;
       timers.forEach(clearTimeout);
-      if (note) ch.push({ type: 'message', text: note });
-      if (denied.length) ch.push({ type: 'message', text: `有 ${denied.length} 项操作被拒绝，没有执行：${denied.map((d) => d.description.split('\n').at(-1)).join('；')}` });
+      if (note) ch.push({ type: 'message', text: note, source: 'host' });
+      if (denied.length) ch.push({ type: 'message', source: 'host', text: `有 ${denied.length} 项操作被拒绝，没有执行：${denied.map((d) => d.description.split('\n').at(-1)).join('；')}` });
       ch.push({ type: 'exit', outcome, ...(denied.length ? { denied } : {}) });
       ch.close();
       // 回合结束后 app-server 仍在运行，需要主动收掉

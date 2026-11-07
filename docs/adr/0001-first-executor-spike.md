@@ -143,6 +143,11 @@
 
 **模型服务地址核验（M3-A1）**：启动后核验读取实际生效的提供方名称与地址（thread/start 的 `modelProvider`，config/read 的 `model_provider`、`model_providers.<名>.base_url`、`openai_base_url`、`chatgpt_base_url`、`experimental_thread_store_endpoint`），只取地址的“源”（协议+主机+端口），不读取密钥/请求头。官方默认源：api.openai.com、chatgpt.com。不是官方默认 → isolation 事件标注“数据将发往非官方地址：<地址>”，门禁默认拒绝开始；任务能力 `nonOfficialModelEndpoint='allow'` 才放行（仍带警告）。本机实测生效值：provider 为 openai、openai_base_url 为空、chatgpt_base_url=https://chatgpt.com/backend-api/，正常放行。
 
+**思考者（M3-A1，src/core/thinking/）与 ClaudeCliThinker 的隔离**（Claude Code 2.1.318，真实调用实测；官方文档 https://code.claude.com/docs/en/headless 、/cli-reference）：采用 `-p --output-format stream-json --verbose --safe-mode --tools "" --strict-mcp-config --disable-slash-commands --no-session-persistence --max-turns 1`，提示词走标准输入，工作目录为空临时目录，子进程环境移除 `ANTHROPIC_API_KEY`，不用任何跳过权限参数，不读取登录凭证。
+- 能确认：`init` 事件的 tools / mcp_servers / skills / slash_commands 均为空（每次调用后核验，非空即 failed）；`--settings` 注入的 SessionStart/UserPromptSubmit hook 在基线下会执行、加 `--safe-mode` 后不执行；工作目录里的 CLAUDE.md 在基线下生效、加 `--safe-mode` 后被忽略。
+- 不能确认（已知限制，`detect()` 提示）：`init.plugins` 仍列出已安装的插件，`--safe-mode` 文档称其禁用，但从输出无法确认未被加载；用户级 `~/.claude` 下记忆文件只确认了项目级 CLAUDE.md 被忽略；`--tools ""` 文档注明不影响 MCP 工具，MCP 靠 `--safe-mode` 与 `--strict-mcp-config` 关闭并由 init 核验；内置子代理名称（agents）仍出现在 init 里，但没有工具可供其使用。
+- 错误分类依据：文档列出的 `api_retry.error`（authentication_failed / billing_error / rate_limit …）与错误文案（`Not logged in`、`You've hit your … limit`、`Credit balance is too low`、`Request rejected (429)`）；文档未写明这些错误在 `-p` 下的退出码与 JSON subtype（只说“非零”），所以按文本与事件分类，未识别的归为 failed。
+
 **启动门禁（M2.5 第 4 项）**：启动前自检（`selfCheckLaunch`：参数含全部要求的保护；授予的 MCP 必须存在）+ 启动后核验（thread/start 实际的审批策略与沙箱类型/网络、`config/read` 的 notify/hooks/memories/登录 shell/MCP 开关、`hooks/list` 为空、启动通知中的 MCP 与授予列表一致）。任一项无法确认 → 不开始回合，任务失败并报告“隔离无法确认：<项>”。
 
 令牌刷新：`account/chatgptAuthTokens/refresh` 的响应必须包含 `accessToken` 与 `chatgptAccountId`，schema 说明该模式是“令牌由外部宿主应用提供并只存于内存、刷新由宿主负责”，且标注 FOR OPENAI INTERNAL USE ONLY。这要求我们接触并转发凭证，因此**保持拒绝**。使用 `codex login` 的托管登录时，Codex 自行刷新，不会向客户端发出该请求（实测整个任务期间未出现）。
