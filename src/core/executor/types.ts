@@ -19,12 +19,23 @@ export interface PermissionRequest {
   description: string;
 }
 
+/** 用户拒绝（或系统明确未执行）的操作，结构化记录，供验收卡使用。 */
+export interface DeniedOperation {
+  kind: PermissionKind;
+  /** 命令（参数数组形式），若有 */
+  command?: string[];
+  paths?: string[];
+  /** 展示用描述 */
+  description: string;
+  risk: 'low' | 'medium' | 'high';
+}
+
 export type ExecutorEvent =
   | { type: 'message'; text: string }
   | { type: 'tool'; name: string; summary: string }
   | { type: 'permission_request'; request: PermissionRequest }
   | { type: 'log'; stream: 'stdout' | 'stderr'; text: string }
-  | { type: 'exit'; outcome: ExitOutcome };
+  | { type: 'exit'; outcome: ExitOutcome; /** 本次执行中被拒绝、因此没有执行的操作 */ denied?: DeniedOperation[] };
 
 /** 与 proc 的结果对齐：成功只有一种形态。 */
 export type ExitOutcome =

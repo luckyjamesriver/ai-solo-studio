@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { CodexExecutor, codexLaunchConfig } from '../src/core/executor/adapters/codex.js';
 import { parseCommand } from '../src/core/executor/adapters/codex-command.js';
 import { assess, canAutoApprove } from '../src/core/policy/risk.js';
-import type { Decision, ExecutorEvent, PermissionRequest } from '../src/core/executor/types.js';
+import type { DeniedOperation, Decision, ExecutorEvent, PermissionRequest } from '../src/core/executor/types.js';
 import { tmpDir } from './helpers.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -20,6 +20,7 @@ interface Drive {
   exit: Extract<ExecutorEvent, { type: 'exit' }>['outcome'];
   cwd: string;
   ms: number;
+  denied: DeniedOperation[];
 }
 
 async function drive(
@@ -50,7 +51,7 @@ async function drive(
   const exitEv = events.at(-1);
   if (exitEv?.type !== 'exit') throw new Error('事件流没有以 exit 结束');
   const record = fs.existsSync(rec) ? fs.readFileSync(rec, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
-  return { events, record, exit: exitEv.outcome, cwd: fs.realpathSync(cwd), ms: Date.now() - t0 };
+  return { events, record, exit: exitEv.outcome, cwd: fs.realpathSync(cwd), ms: Date.now() - t0, denied: exitEv.denied ?? [] };
 }
 
 const messages = (d: Drive) => d.events.filter((e): e is Extract<ExecutorEvent, { type: 'message' }> => e.type === 'message').map((e) => e.text);
@@ -82,6 +83,18 @@ describe('Codex 适配器（假 app-server）', () => {
     const d = await drive([{ askCommand: { command: '/bin/zsh -lc "npm install"', cwd: '/x' } }], { decide: () => 'deny' });
     expect(decisions(d)).toEqual([{ decision: 'decline' }]);
     expect(messages(d).join('\n')).toMatch(/被拒绝.*npm install/s);
+  });
+
+  it('被拒绝的操作以结构化记录随 exit 事件给出（种类、命令/路径、风险）', async () => {
+    const d = await drive(
+      [{ askCommand: { command: '/bin/zsh -lc "npm install"', cwd: '/x' } }, { fileStart: { id: 'f9', changes: [{ path: 'a.txt', kind: 'update' }] } }, { askFile: { itemId: 'f9' } }],
+      { decide: (r) => (r.kind === 'run_command' ? 'deny' : 'allow') },
+    );
+    expect(d.denied).toHaveLength(1);
+    expect(d.denied[0]).toMatchObject({ kind: 'run_command', command: ['npm', 'install'] });
+    expect(['low', 'medium', 'high']).toContain(d.denied[0]?.risk);
+    const none = await drive([{ askCommand: { command: '/bin/zsh -lc "ls"', cwd: '/x' } }], { decide: () => 'allow' });
+    expect(none.denied).toEqual([]);
   });
 
   it('文件修改审批：路径来自 fileChange 项；拒绝 → decline', async () => {

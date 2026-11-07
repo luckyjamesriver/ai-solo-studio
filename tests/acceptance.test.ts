@@ -31,4 +31,22 @@ describe('验收卡', () => {
     expect(buildCard({ ...base, criteria: [{ text: 'a', decision: 'rejected' }] }).readyToSave).toBe(false);
     expect(buildCard({ ...base, criteria: [{ text: 'a', decision: 'confirmed' }] }).readyToSave).toBe(true);
   });
+
+  it('被拒绝的操作：无 → verified；有 → 需要用户关注（不是 failed/verified），逐项确认后才可保存', () => {
+    const base = { exit: ok, changes, checks: [], previewed: true, criteria: [{ text: 'a', decision: 'confirmed' as const }] };
+    const none = buildCard(base);
+    expect(none.items.find((i) => i.key === 'denied')?.status).toBe('verified');
+    expect(none.readyToSave).toBe(true);
+
+    const denied = [{ kind: 'run_command' as const, command: ['npm', 'install'], description: '安装依赖', risk: 'medium' as const }];
+    const pending = buildCard({ ...base, denied, deniedAcks: [false] });
+    const item = pending.items.find((i) => i.key === 'denied')!;
+    expect(item.status).toBe('pending_user');
+    expect(item.evidence).toMatch(/有 1 项操作被你拒绝，任务可能不完整.*npm install/);
+    expect(pending.readyToSave).toBe(false);
+
+    const acked = buildCard({ ...base, denied, deniedAcks: [true] });
+    expect(acked.items.find((i) => i.key === 'denied')?.status).toBe('user_confirmed');
+    expect(acked.readyToSave).toBe(true);
+  });
 });

@@ -1,6 +1,6 @@
 import type { TaskState } from './state.js';
 import type { Worktree } from '../git/git.js';
-import type { ExitOutcome } from '../executor/types.js';
+import type { ExitOutcome, DeniedOperation } from '../executor/types.js';
 import type { AcceptanceCard, CriterionState } from '../acceptance/card.js';
 
 export interface Plan {
@@ -27,6 +27,10 @@ export interface Task {
   executorId?: string;
   worktree?: Worktree;
   exit?: ExitOutcome;
+  /** AI 请求过、但被拒绝而没有执行的操作 */
+  denied: DeniedOperation[];
+  /** 与 denied 一一对应：用户是否已确认知晓 */
+  deniedAcks: boolean[];
   criteria: CriterionState[];
   previewed: boolean;
   card?: AcceptanceCard;

@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Channel } from '../channel.js';
-import type { Decision, Executor, ExecutorEvent, ExecutorRun, PermissionRequest, StartOptions } from '../types.js';
+import { assess } from '../../policy/risk.js';
+import type { DeniedOperation, Decision, Executor, ExecutorEvent, ExecutorRun, PermissionRequest, StartOptions } from '../types.js';
 
 /**
  * 可脚本化的模拟执行体，用于自动化测试与无订阅演示。
@@ -31,6 +32,7 @@ export class FakeExecutor implements Executor {
     let stopped = false;
     const waker: { fn?: () => void } = {};
     let seq = 0;
+    const denied: DeniedOperation[] = [];
     const steps = typeof this.script === 'function' ? this.script(opts.prompt) : this.script;
 
     const safe = (p: string) => {
@@ -41,7 +43,18 @@ export class FakeExecutor implements Executor {
     const ask = (req: Omit<PermissionRequest, 'id'>) =>
       new Promise<Decision>((resolve) => {
         const id = `p${++seq}`;
-        pending.set(id, resolve);
+        pending.set(id, (d) => {
+          if (d === 'deny' && !stopped) {
+            denied.push({
+              kind: req.kind,
+              ...(req.command ? { command: req.command } : {}),
+              ...(req.paths ? { paths: req.paths } : {}),
+              description: req.description,
+              risk: assess({ ...req, id }, opts.cwd).level,
+            });
+          }
+          resolve(d);
+        });
         ch.push({ type: 'permission_request', request: { ...req, id } });
       });
 
@@ -95,9 +108,9 @@ export class FakeExecutor implements Executor {
       if (r === 'timeout') {
         stopped = true;
         waker.fn?.();
-        finish({ type: 'exit', outcome: { kind: 'timed_out' } });
-      } else if (stopped) finish({ type: 'exit', outcome: { kind: 'stopped' } });
-      else finish({ type: 'exit', outcome: { kind: 'exited', code: r ?? 0 } });
+        finish({ type: 'exit', outcome: { kind: 'timed_out' }, denied });
+      } else if (stopped) finish({ type: 'exit', outcome: { kind: 'stopped' }, denied });
+      else finish({ type: 'exit', outcome: { kind: 'exited', code: r ?? 0 }, denied });
     })().catch((e) => finish({ type: 'exit', outcome: { kind: 'spawn_error', message: String(e?.message ?? e) } }));
 
     return {

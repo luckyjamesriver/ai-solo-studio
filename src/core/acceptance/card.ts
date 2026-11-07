@@ -1,4 +1,4 @@
-import type { ExitOutcome } from '../executor/types.js';
+import type { ExitOutcome, DeniedOperation } from '../executor/types.js';
 import type { CheckResult } from '../checks/scripts.js';
 import type { FileChange } from '../git/git.js';
 
@@ -64,6 +64,8 @@ export function buildCard(input: {
   criteria: CriterionState[];
   previewed: boolean;
   aiSummary?: string;
+  denied?: DeniedOperation[];
+  deniedAcks?: boolean[];
 }): AcceptanceCard {
   const items: AcceptanceItem[] = [exitItem(input.exit)];
   items.push(
@@ -72,6 +74,20 @@ export function buildCard(input: {
       : { key: 'changes', label: '有实际文件改动', status: 'failed', evidence: '没有任何文件被修改' },
   );
   for (const c of input.checks) items.push(checkItem(c));
+  const denied = input.denied ?? [];
+  const acks = input.deniedAcks ?? [];
+  const deniedAllAcked = denied.every((_, i) => acks[i] === true);
+  if (denied.length === 0) {
+    items.push({ key: 'denied', label: 'AI 请求的操作是否都已执行', status: 'verified', evidence: '没有被拒绝的操作' });
+  } else {
+    const list = denied.map((d) => `${d.command?.join(' ') ?? d.paths?.join('、') ?? d.description}（${d.kind}，风险：${d.risk}）`).join('；');
+    items.push({
+      key: 'denied',
+      label: 'AI 请求的操作是否都已执行',
+      status: deniedAllAcked ? 'user_confirmed' : 'pending_user',
+      evidence: `有 ${denied.length} 项操作被你拒绝，任务可能不完整：${list}`,
+    });
+  }
   items.push({
     key: 'preview',
     label: '你已经试用过效果',
@@ -89,11 +105,13 @@ export function buildCard(input: {
 
   const anyFailed = items.some((i) => i.status === 'failed' || i.status === 'user_rejected');
   const criteriaDone = input.criteria.every((c) => c.decision === 'confirmed');
-  const readyToSave = !anyFailed && criteriaDone && input.changes.length > 0;
+  const readyToSave = !anyFailed && criteriaDone && deniedAllAcked && input.changes.length > 0;
 
   const headline = anyFailed
     ? '有检查未通过，建议修复或撤销。'
-    : !criteriaDone
+    : !deniedAllAcked
+      ? `有 ${denied.length} 项操作被你拒绝，任务可能不完整，请逐项确认你知晓。`
+      : !criteriaDone
       ? '自动检查没有发现问题，请你逐条确认验收标准。'
       : items.some((i) => i.status === 'not_checked')
         ? '可以保存。注意：部分项目未能自动检查。'

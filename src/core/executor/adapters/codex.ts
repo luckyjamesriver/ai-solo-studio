@@ -2,7 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import { Channel } from '../channel.js';
 import { run } from '../../proc/run.js';
-import type { DetectResult, Decision, Executor, ExecutorEvent, ExecutorRun, ExitOutcome, PermissionRequest, StartOptions } from '../types.js';
+import type { DeniedOperation, DetectResult, Decision, Executor, ExecutorEvent, ExecutorRun, ExitOutcome, PermissionRequest, StartOptions } from '../types.js';
+import { assess } from '../../policy/risk.js';
 import { parseCommand } from './codex-command.js';
 
 /**
@@ -132,8 +133,8 @@ export class CodexExecutor implements Executor {
     const pendingRpc = new Map<RpcId, { resolve: (v: any) => void; reject: (e: Error) => void }>();
     const pendingApprovals = new Map<string, RpcId>(); // 我们的请求 id → app-server 的 JSON-RPC id
     const fileItems = new Map<string, { path: string; kind: string }[]>();
-    const denied: string[] = [];
-    const descriptions = new Map<string, string>();
+    const denied: DeniedOperation[] = [];
+    const requests = new Map<string, PermissionRequest>();
     let seq = 0;
     let threadId: string | undefined;
     let turnId: string | undefined;
@@ -161,8 +162,8 @@ export class CodexExecutor implements Executor {
       finished = true;
       timers.forEach(clearTimeout);
       if (note) ch.push({ type: 'message', text: note });
-      if (denied.length) ch.push({ type: 'message', text: `有 ${denied.length} 项操作被拒绝，没有执行：${denied.join('；')}` });
-      ch.push({ type: 'exit', outcome });
+      if (denied.length) ch.push({ type: 'message', text: `有 ${denied.length} 项操作被拒绝，没有执行：${denied.map((d) => d.description.split('\n').at(-1)).join('；')}` });
+      ch.push({ type: 'exit', outcome, ...(denied.length ? { denied } : {}) });
       ch.close();
       // 回合结束后 app-server 仍在运行，需要主动收掉
       terminate();
@@ -202,8 +203,9 @@ export class CodexExecutor implements Executor {
     const permission = (req: Omit<PermissionRequest, 'id'>, rpcId: RpcId) => {
       const id = `c${++seq}`;
       pendingApprovals.set(id, rpcId);
-      descriptions.set(id, req.description.split('\n').at(-1) ?? req.description);
-      ch.push({ type: 'permission_request', request: { ...req, id } });
+      const full: PermissionRequest = { ...req, id };
+      requests.set(id, full);
+      ch.push({ type: 'permission_request', request: full });
     };
 
     const onServerRequest = (m: RpcMessage) => {
@@ -369,7 +371,18 @@ export class CodexExecutor implements Executor {
         const rpcId = pendingApprovals.get(requestId);
         if (rpcId === undefined) throw new Error(`未知的权限请求：${requestId}`);
         pendingApprovals.delete(requestId);
-        if (decision === 'deny') denied.push(descriptions.get(requestId) ?? requestId);
+        if (decision === 'deny') {
+          const req = requests.get(requestId);
+          if (req) {
+            denied.push({
+              kind: req.kind,
+              ...(req.command ? { command: req.command } : {}),
+              ...(req.paths ? { paths: req.paths } : {}),
+              description: req.description,
+              risk: assess(req, cwd).level,
+            });
+          }
+        }
         write({ id: rpcId, result: { decision: decision === 'allow' ? 'accept' : 'decline' } });
       },
       async stop() {

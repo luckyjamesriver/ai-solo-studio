@@ -155,6 +155,24 @@ describe('任务闭环（模拟执行体 + 真实 Git）', () => {
     expect(t.card?.changes.length).toBe(0); // 被拒绝，没有写入
   });
 
+  it('被拒绝的操作进入验收卡：需逐项确认知晓后才能保存', async () => {
+    const { runner, id } = await setup([
+      { do: 'write', path: 'a.txt', content: 'a' },
+      { do: 'write', path: 'b.txt', content: 'b', ask: true },
+      { do: 'exit', code: 0 },
+    ]);
+    runner.on('permission', (p: PendingPermission) => void runner.respond(p.taskId, p.request.id, 'deny'));
+    const t = await runner.start(id);
+    expect(t.denied).toHaveLength(1);
+    expect(t.denied[0]).toMatchObject({ kind: 'write_file', paths: ['b.txt'] });
+    expect(t.card?.items.find((i) => i.key === 'denied')?.status).toBe('pending_user');
+    await runner.confirm(id, { criterion: 0, decision: 'confirmed' });
+    expect((await runner.save(id)).ok).toBe(false); // 还没确认知晓被拒绝的操作
+    const t2 = await runner.confirm(id, { deniedAck: 0 });
+    expect(t2.card?.items.find((i) => i.key === 'denied')?.status).toBe('user_confirmed');
+    expect((await runner.save(id)).ok).toBe(true);
+  });
+
   it('越界路径永远需要用户决定，即使开启了自动批准', async () => {
     const { runner, id } = await setup(
       [{ do: 'ask', request: { kind: 'write_file', paths: ['../../outside.txt'], description: '写外部文件' }, onDeny: 'fail' }],

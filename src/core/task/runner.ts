@@ -60,6 +60,9 @@ export class TaskRunner extends EventEmitter {
   private async load(id: string): Promise<Task> {
     const t = await this.store.get(id);
     if (!t) throw new Error(`找不到任务 ${id}`);
+    // 兼容旧版本保存的任务
+    t.denied ??= [];
+    t.deniedAcks ??= t.denied.map(() => false);
     return t;
   }
 
@@ -71,6 +74,8 @@ export class TaskRunner extends EventEmitter {
       request,
       state: 'draft',
       criteria: [],
+      denied: [],
+      deniedAcks: [],
       previewed: false,
       timeline: [],
       createdAt: now,
@@ -148,6 +153,8 @@ export class TaskRunner extends EventEmitter {
         }
       } else if (ev.type === 'exit') {
         t.exit = ev.outcome;
+        t.denied = ev.denied ?? [];
+        t.deniedAcks = t.denied.map(() => false);
       }
       await this.persist(t);
     }
@@ -184,13 +191,13 @@ export class TaskRunner extends EventEmitter {
         checks.push(c);
       }
     }
-    t.card = buildCard({ exit: t.exit!, changes, checks, criteria: t.criteria, previewed: t.previewed });
+    t.card = buildCard({ exit: t.exit!, changes, checks, criteria: t.criteria, previewed: t.previewed, denied: t.denied, deniedAcks: t.deniedAcks });
     await this.fire(t, 'review');
     return t;
   }
 
   /** 用户对验收标准逐条确认/否决，或标记已试用。只改用户输入，不改自动检查结果。 */
-  async confirm(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean }) {
+  async confirm(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean; deniedAck?: number }) {
     const t = await this.load(id);
     if (t.state !== 'reviewing' || !t.card) throw new Error('任务不在验收阶段。');
     if (update.criterion !== undefined) {
@@ -199,6 +206,10 @@ export class TaskRunner extends EventEmitter {
       c.decision = update.decision;
     }
     if (update.previewed !== undefined) t.previewed = update.previewed;
+    if (update.deniedAck !== undefined) {
+      if (!t.denied[update.deniedAck]) throw new Error('无效的被拒绝操作。');
+      t.deniedAcks[update.deniedAck] = true;
+    }
     const prev = t.card;
     const auto = prev.items.filter((i) => ['build', 'test'].includes(i.key));
     const checks: CheckResult[] = auto.map((i) =>
@@ -206,7 +217,7 @@ export class TaskRunner extends EventEmitter {
         ? { name: i.key as 'build' | 'test', status: 'not_available', reason: i.evidence }
         : { name: i.key as 'build' | 'test', status: i.status === 'verified' ? 'passed' : 'failed', outcome: { kind: 'exited', code: i.status === 'verified' ? 0 : 1 }, output: '', durationMs: 0 },
     );
-    t.card = buildCard({ exit: t.exit!, changes: prev.changes, checks, criteria: t.criteria, previewed: t.previewed });
+    t.card = buildCard({ exit: t.exit!, changes: prev.changes, checks, criteria: t.criteria, previewed: t.previewed, denied: t.denied, deniedAcks: t.deniedAcks });
     // 保留原始检查的证据文字
     for (const item of t.card.items) {
       const old = prev.items.find((i) => i.key === item.key);
@@ -222,6 +233,8 @@ export class TaskRunner extends EventEmitter {
     t.previewed = false;
     delete t.card;
     delete t.exit;
+    t.denied = [];
+    t.deniedAcks = [];
     this.log(t, 'message', `你要求修改：${instruction}`);
     await this.fire(t, 'request_fix'); // fire 会持久化，必须在清空之后
     return this.start(id, `${buildPrompt(t)}\n\n上一次结果需要修改：${instruction}`);
