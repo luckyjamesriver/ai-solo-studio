@@ -1,6 +1,6 @@
 # AI Solo Studio — 架构设计 v1.4
 
-配套文档：`REQUIREMENTS_REPORT.md` v1.4
+配套文档：`REQUIREMENTS_REPORT.md`（索引：v1.4 + v1.5）
 
 ## 1. 总体结构
 
