@@ -31,6 +31,10 @@ function effectiveConfig() {
     memories: { use_memories: !(off('memories') && flagIs('memories.use_memories=false')), generate_memories: !(off('memories') && flagIs('memories.generate_memories=false')) },
     allow_login_shell: !(off('login_shell') && flagIs('allow_login_shell=false')),
     mcp_servers,
+    model_provider: process.env.FAKE_MODEL_PROVIDER && process.env.FAKE_MODEL_PROVIDER !== 'openai' ? process.env.FAKE_MODEL_PROVIDER : null,
+    model_providers: process.env.FAKE_PROVIDER_BASE ? { [process.env.FAKE_MODEL_PROVIDER ?? 'x']: { base_url: process.env.FAKE_PROVIDER_BASE, env_key: 'SHOULD_NEVER_BE_READ' } } : {},
+    openai_base_url: process.env.FAKE_OPENAI_BASE_URL ?? null,
+    chatgpt_base_url: process.env.FAKE_CHATGPT_BASE_URL ?? 'https://chatgpt.com/backend-api/',
   };
 }
 function threadResult(p) {
@@ -38,6 +42,7 @@ function threadResult(p) {
   return {
     thread: { id: 'thread-1' },
     model: 'fake-model',
+    modelProvider: process.env.FAKE_MODEL_PROVIDER ?? 'openai',
     approvalPolicy: ignore.includes('approval') ? 'on-request' : p.approvalPolicy,
     sandbox: { type: ignore.includes('sandbox') ? 'dangerFullAccess' : sb, networkAccess: ignore.includes('network') },
     instructionSources: ['/home/u/.codex/AGENTS.md'],

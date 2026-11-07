@@ -285,7 +285,7 @@ describe('Codex 适配器：配置隔离与沙箱参数', () => {
 });
 
 describe('Codex 适配器：能力映射与启动门禁', () => {
-  const caps = (o: Partial<Capabilities> = {}): Capabilities => ({ fileAccess: 'worktree_write', commandExecution: 'ask_each', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [], ...o });
+  const caps = (o: Partial<Capabilities> = {}): Capabilities => ({ fileAccess: 'worktree_write', commandExecution: 'ask_each', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [], nonOfficialModelEndpoint: 'deny', ...o });
   const recv = (d: Drive, m: string) => d.record.find((r) => r.kind === 'recv' && r.msg.method === m);
 
   it('能力 → 参数：每条命令询问=untrusted；沙箱内自动=on-request；只读；开网络', () => {
@@ -347,6 +347,30 @@ describe('Codex 适配器：能力映射与启动门禁', () => {
     expect(d.exit).toEqual({ kind: 'exited', code: 1 });
     expect(messages(d).join('\n')).toMatch(/隔离无法确认.*无法读取实际生效的配置/s);
     expect(recv(d, 'turn/start')).toBeUndefined();
+  });
+
+  it('模型服务地址核验：官方默认放行；非官方地址默认拒绝开始，并如实报告（只含地址的源，不含路径/密钥）', async () => {
+    const ok = await drive([{ complete: { status: 'completed' } }]);
+    expect(ok.events.find((e) => e.type === 'isolation')).toMatchObject({ info: { modelProvider: 'openai', warnings: [] } });
+
+    const custom = { FAKE_MODEL_PROVIDER: 'acme', FAKE_PROVIDER_BASE: 'https://user:pw@llm.example.com:8443/v1/secret-path?key=1' };
+    const d = await drive([{ complete: { status: 'completed' } }], { fakeEnv: custom });
+    expect(d.exit).toEqual({ kind: 'exited', code: 1 });
+    const msg = messages(d).join('\n');
+    expect(msg).toMatch(/隔离无法确认.*数据将发往非官方地址：提供方「acme」（https:\/\/llm\.example\.com:8443）/s);
+    expect(msg).not.toMatch(/secret-path|user:pw|SHOULD_NEVER_BE_READ|key=1/);
+    expect(recv(d, 'turn/start')).toBeUndefined();
+
+    const url = await drive([{ complete: { status: 'completed' } }], { fakeEnv: { FAKE_OPENAI_BASE_URL: 'https://proxy.example.net/v1' } });
+    expect(messages(url).join('\n')).toMatch(/openai_base_url=https:\/\/proxy\.example\.net/);
+    expect(url.exit).toEqual({ kind: 'exited', code: 1 });
+  });
+
+  it('模型服务地址：任务能力显式允许时放行，但 isolation 事件带“数据将发往非官方地址”警告', async () => {
+    const d = await drive([{ complete: { status: 'completed' } }], { caps: caps({ nonOfficialModelEndpoint: 'allow' }), fakeEnv: { FAKE_MODEL_PROVIDER: 'acme', FAKE_PROVIDER_BASE: 'https://llm.example.com/v1' } });
+    expect(d.exit).toEqual({ kind: 'exited', code: 0 });
+    const iso = d.events.find((e) => e.type === 'isolation') as Extract<ExecutorEvent, { type: 'isolation' }>;
+    expect(iso.info.warnings).toEqual(['数据将发往非官方地址：提供方「acme」（https://llm.example.com）']);
   });
 
   it('授予的 MCP 不关闭、且不算违规；未授予的仍被关闭', async () => {

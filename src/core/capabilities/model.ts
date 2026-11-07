@@ -19,6 +19,11 @@ export interface Capabilities {
   credentialAccess: 'none';
   /** 授予的 MCP 服务器名称（默认空；每一项都属于上述某类能力，计划卡须逐个说明风险） */
   grantedMcp: string[];
+  /**
+   * 模型服务地址不是官方默认（api.openai.com / chatgpt.com）时是否仍允许开始：
+   * 数据会发往用户配置的其他地址。默认 deny；只能由任务能力显式允许。
+   */
+  nonOfficialModelEndpoint: 'deny' | 'allow';
 }
 
 export const DEFAULT_CAPABILITIES: Readonly<Capabilities> = Object.freeze({
@@ -27,6 +32,7 @@ export const DEFAULT_CAPABILITIES: Readonly<Capabilities> = Object.freeze({
   externalNetwork: 'off',
   credentialAccess: 'none',
   grantedMcp: [],
+  nonOfficialModelEndpoint: 'deny',
 });
 
 /** 用默认值补全，并拒绝任何试图授予凭证访问的输入。 */
@@ -36,6 +42,7 @@ export function resolveCapabilities(input?: Partial<Capabilities> | null): Capab
   if (!['worktree_write', 'worktree_read_only'].includes(c.fileAccess)) throw new Error(`无效的文件权限：${String(c.fileAccess)}`);
   if (!['ask_each', 'sandbox_auto'].includes(c.commandExecution)) throw new Error(`无效的命令权限：${String(c.commandExecution)}`);
   if (!['off', 'on'].includes(c.externalNetwork)) throw new Error(`无效的网络权限：${String(c.externalNetwork)}`);
+  if (!['deny', 'allow'].includes(c.nonOfficialModelEndpoint)) throw new Error('无效的模型服务地址策略。');
   if (!Array.isArray(c.grantedMcp) || c.grantedMcp.some((n) => typeof n !== 'string' || !n)) throw new Error('无效的 MCP 授予列表。');
   return { ...c, grantedMcp: [...new Set(c.grantedMcp)] };
 }

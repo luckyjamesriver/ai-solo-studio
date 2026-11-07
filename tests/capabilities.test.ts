@@ -6,7 +6,7 @@ import { makeRepo } from './helpers.js';
 
 describe('能力模型', () => {
   it('默认值 = 最小权限（v1.5 第 5.1 节）', () => {
-    expect(resolveCapabilities()).toEqual({ fileAccess: 'worktree_write', commandExecution: 'ask_each', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [] });
+    expect(resolveCapabilities()).toEqual({ fileAccess: 'worktree_write', commandExecution: 'ask_each', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [], nonOfficialModelEndpoint: 'deny' });
     expect(DEFAULT_CAPABILITIES.grantedMcp).toEqual([]);
   });
   it('可以放宽个别项，其余仍为默认；MCP 授予列表去重', () => {

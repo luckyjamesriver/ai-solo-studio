@@ -139,6 +139,10 @@
 另：配置层 `-c approval_policy="untrusted"` 会使 app-server 拒绝启动（“no longer supported”），所以 untrusted 只能通过 thread/start 与 turn/start 的参数声明，配置层保持 on-request；启动后用 thread/start 响应里的实际 `approvalPolicy` 核验。
 **最终选择**：能力“命令执行=每次询问（默认）”映射为 `untrusted`；“沙箱内自动”（较弱，必须由计划显式选择）映射为 `on-request`。无差距。代价：每条命令都会询问，依赖 TaskRunner 的低风险自动批准规则减少打扰。回归测试：tests/integration/approval-policy.real.test.ts。
 
+**关闭登录 shell 后的 PATH 实测（M3-A1，真实回合）**：命令被执行为 `/bin/zsh -c 'node --version'`（不经登录 shell），本机 Node 由 Homebrew 安装（/opt/homebrew/bin/node，`node --version`=v26.13.0），`node --version` 与 `npm --version`（11.20.0）退出码均为 0，可用。原因：`shell_environment_policy.inherit="core"` 保留 PATH，而宿主进程的 PATH 已含 /opt/homebrew/bin。**未验证**：nvm/volta/asdf 等依赖用户 rc 才能进入 PATH 的安装方式，或从图形界面启动（PATH 极简）的 Electron；若遇到“找不到 node/npm”，方案是由宿主把已解析出的 node 所在目录显式加入命令环境的 PATH（本机未触发，未实现）。回归测试：tests/integration/path.real.test.ts。
+
+**模型服务地址核验（M3-A1）**：启动后核验读取实际生效的提供方名称与地址（thread/start 的 `modelProvider`，config/read 的 `model_provider`、`model_providers.<名>.base_url`、`openai_base_url`、`chatgpt_base_url`、`experimental_thread_store_endpoint`），只取地址的“源”（协议+主机+端口），不读取密钥/请求头。官方默认源：api.openai.com、chatgpt.com。不是官方默认 → isolation 事件标注“数据将发往非官方地址：<地址>”，门禁默认拒绝开始；任务能力 `nonOfficialModelEndpoint='allow'` 才放行（仍带警告）。本机实测生效值：provider 为 openai、openai_base_url 为空、chatgpt_base_url=https://chatgpt.com/backend-api/，正常放行。
+
 **启动门禁（M2.5 第 4 项）**：启动前自检（`selfCheckLaunch`：参数含全部要求的保护；授予的 MCP 必须存在）+ 启动后核验（thread/start 实际的审批策略与沙箱类型/网络、`config/read` 的 notify/hooks/memories/登录 shell/MCP 开关、`hooks/list` 为空、启动通知中的 MCP 与授予列表一致）。任一项无法确认 → 不开始回合，任务失败并报告“隔离无法确认：<项>”。
 
 令牌刷新：`account/chatgptAuthTokens/refresh` 的响应必须包含 `accessToken` 与 `chatgptAccountId`，schema 说明该模式是“令牌由外部宿主应用提供并只存于内存、刷新由宿主负责”，且标注 FOR OPENAI INTERNAL USE ONLY。这要求我们接触并转发凭证，因此**保持拒绝**。使用 `codex login` 的托管登录时，Codex 自行刷新，不会向客户端发出该请求（实测整个任务期间未出现）。

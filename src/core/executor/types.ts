@@ -38,6 +38,9 @@ export interface IsolationInfo {
   approvalPolicy: string;
   sandbox: string;
   grantedMcp: string[];
+  modelProvider?: string | undefined;
+  /** 需要提醒的事项，例如“数据将发往非官方地址：<地址>” */
+  warnings: string[];
 }
 
 export type ExecutorEvent =

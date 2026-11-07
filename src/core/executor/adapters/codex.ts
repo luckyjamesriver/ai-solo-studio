@@ -58,7 +58,7 @@ export const VERIFIED_CODEX_VERSION = '0.166.0';
  * - 审批：需要时询问（on-request）；
  * - 禁用插件。
  */
-export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServers?: string[]; capabilities?: Capabilities } = {}): CodexLaunchConfig {
+export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServers?: string[]; capabilities?: Partial<Capabilities> } = {}): CodexLaunchConfig {
   const caps = resolveCapabilities(opts.capabilities);
   const m = mapCapabilities(caps);
   return {
@@ -125,6 +125,33 @@ export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServer
           : { type: 'readOnly' },
     },
   };
+}
+
+const OFFICIAL_ORIGINS = new Set(['https://api.openai.com', 'https://chatgpt.com']);
+const originOf = (u: unknown): string => {
+  try {
+    return new URL(String(u)).origin;
+  } catch {
+    return '（地址无法解析）';
+  }
+};
+
+/**
+ * 实际生效的模型服务提供方与地址里，哪些不是官方默认。只看提供方名称与地址的“源”（协议+主机+端口），
+ * 不读取任何密钥、请求头或令牌字段。
+ */
+export function nonOfficialEndpoints(thread: { modelProvider?: unknown } | undefined, conf: Record<string, any>): string[] {
+  const out: string[] = [];
+  const provider = String(thread?.modelProvider ?? conf.model_provider ?? 'openai');
+  if (provider !== 'openai') {
+    const base = conf.model_providers?.[provider]?.base_url;
+    out.push(`提供方「${provider}」${base ? `（${originOf(base)}）` : '（地址未知）'}`);
+  }
+  for (const key of ['openai_base_url', 'chatgpt_base_url', 'experimental_thread_store_endpoint'] as const) {
+    const v = conf[key];
+    if (typeof v === 'string' && v && !OFFICIAL_ORIGINS.has(originOf(v))) out.push(`${key}=${originOf(v)}`);
+  }
+  return out;
 }
 
 /**
@@ -553,6 +580,7 @@ export class CodexExecutor implements Executor {
 
       const verifyEffective = async (t: any): Promise<string[]> => {
         const bad: string[] = [];
+        let nonOfficial: string[] = [];
         if (t?.approvalPolicy !== cfg.expected.approvalPolicy) bad.push(`命令审批策略（实际：${JSON.stringify(t?.approvalPolicy)}）`);
         if (t?.sandbox?.type !== cfg.expected.sandboxType) bad.push(`沙箱类型（实际：${JSON.stringify(t?.sandbox?.type)}）`);
         // 网络：只在“关闭”时核验（开启时线程级响应无法反映回合级的放行）
@@ -567,6 +595,8 @@ export class CodexExecutor implements Executor {
           const servers = conf.mcp_servers ?? {};
           for (const [name, v] of Object.entries<any>(servers)) if (!granted.has(name) && v?.enabled !== false) bad.push(`MCP「${name}」未关闭`);
           for (const g of caps.grantedMcp) if (!(g in servers)) bad.push(`授予的 MCP「${g}」不在配置中`);
+          // 模型服务地址：只读提供方名称与地址（取到“源”，丢弃路径与用户信息），绝不读取密钥
+          nonOfficial = nonOfficialEndpoints(t, conf);
         } catch (e) {
           bad.push(`无法读取实际生效的配置（${(e as Error).message}）`);
         }
@@ -577,6 +607,12 @@ export class CodexExecutor implements Executor {
         } catch (e) {
           bad.push(`无法读取 hooks 列表（${(e as Error).message}）`);
         }
+        const warnings: string[] = [];
+        if (nonOfficial.length) {
+          const w = `数据将发往非官方地址：${nonOfficial.join('、')}`;
+          if (caps.nonOfficialModelEndpoint === 'allow') warnings.push(w);
+          else bad.push(`${w}（默认拒绝；需要在任务能力中显式允许）`);
+        }
         if (!bad.length) {
           ch.push({
             type: 'isolation',
@@ -586,6 +622,8 @@ export class CodexExecutor implements Executor {
               approvalPolicy: t.approvalPolicy,
               sandbox: t.sandbox?.type,
               grantedMcp: caps.grantedMcp,
+              modelProvider: typeof t?.modelProvider === 'string' ? t.modelProvider : undefined,
+              warnings,
             },
           });
         }

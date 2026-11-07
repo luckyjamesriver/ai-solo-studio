@@ -151,7 +151,7 @@ export class TaskRunner extends EventEmitter {
 
     for await (const ev of run.events) {
       if (ev.type === 'message') this.log(t, 'message', ev.text);
-      else if (ev.type === 'isolation') this.log(t, 'isolation', `隔离已核验：审批=${ev.info.approvalPolicy}，沙箱=${ev.info.sandbox}，模型=${ev.info.model ?? '未知'}，授予的 MCP=${ev.info.grantedMcp.join('、') || '无'}，指令来源=${ev.info.instructionSources.join('、') || '无'}`);
+      else if (ev.type === 'isolation') this.log(t, 'isolation', `隔离已核验：审批=${ev.info.approvalPolicy}，沙箱=${ev.info.sandbox}，模型=${ev.info.model ?? '未知'}，授予的 MCP=${ev.info.grantedMcp.join('、') || '无'}，指令来源=${ev.info.instructionSources.join('、') || '无'}${ev.info.warnings.length ? `；警告：${ev.info.warnings.join('；')}` : ''}`);
       else if (ev.type === 'tool') this.log(t, 'tool', `${ev.name}: ${ev.summary}`);
       else if (ev.type === 'permission_request') {
         const risk = assess(ev.request, t.worktree.path);

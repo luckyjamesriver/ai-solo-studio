@@ -11,6 +11,9 @@ export class AppServerClient {
   private waiting = new Map<number, (m: any) => void>();
   private listeners: ((n: { method: string; params: any }) => void)[] = [];
 
+  /** 为 true 时批准命令审批（仅测试里需要真实执行命令时使用） */
+  approve = false;
+
   constructor(args: string[], opts: { cwd: string; env?: NodeJS.ProcessEnv }) {
     this.child = spawn('codex', args, { cwd: opts.cwd, env: { ...process.env, ...opts.env }, stdio: ['pipe', 'pipe', 'ignore'] });
     this.child.stdout!.setEncoding('utf8').on('data', (d: string) => {
@@ -25,7 +28,7 @@ export class AppServerClient {
           // 服务端请求（审批等）：记录并一律拒绝
           this.serverRequests.push({ method: m.method, params: m.params });
           const approval = /requestApproval$/.test(m.method);
-          this.child.stdin!.write(`${JSON.stringify(approval ? { id: m.id, result: { decision: 'decline' } } : { id: m.id, error: { code: -32601, message: 'test client' } })}\n`);
+          this.child.stdin!.write(`${JSON.stringify(approval ? { id: m.id, result: { decision: this.approve ? 'accept' : 'decline' } } : { id: m.id, error: { code: -32601, message: 'test client' } })}\n`);
         } else if (m.id !== undefined) this.waiting.get(m.id)?.(m);
         else if (m.method) {
           const n = { method: m.method, params: m.params };
