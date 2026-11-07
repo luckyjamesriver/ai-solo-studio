@@ -38,7 +38,11 @@ npm start         # 构建并启动桌面应用
 
 ## 关于 AI 服务
 
-本项目计划按各厂商官方允许的方式，调用你本机已安装的 AI 编码工具。是否可以使用你已有的订阅，取决于各厂商的现行条款，我们会在支持每个执行体前核查并在此说明。本项目不会嵌入或自动操作任何 AI 网站。
+本项目按各厂商官方允许的方式，调用你本机已安装的 AI 编码工具，不会嵌入或自动操作任何 AI 网站。
+
+- **Codex**（第一个支持的执行体）：Codex 用户可按 OpenAI 官方方式使用自己的 ChatGPT 计划。开发阶段使用你本机 `codex login` 的登录状态；面向用户发布前会接入官方的 “Sign in with ChatGPT”。
+- **Claude Code**（计划中的第二个执行体）：Claude 用户需自备 API Key；Anthropic 不允许第三方应用代用户使用 Claude 订阅登录。
+- 其他工具（Cursor、Antigravity、DeepSeek 等）的调查结论见 [ADR 0001](docs/adr/0001-first-executor-spike.md)。我们会在支持每个执行体前核查其现行条款，并在此说明。
 
 ## 许可
 
