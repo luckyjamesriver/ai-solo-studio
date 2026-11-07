@@ -34,7 +34,7 @@ npm start         # 构建并启动桌面应用
 - Node.js 26 下 Electron 的安装脚本（`extract-zip`）会在解压中途无报错退出，导致缺少 `node_modules/electron/path.txt`。请用 Node 22 LTS 安装：删除 `node_modules/electron` 后重新 `npm install`，再运行 `ELECTRON_MIRROR=... npx -y node@22 node_modules/electron/install.js`；安装完成后 `npm start` 可用任意版本的 Node。
 - 若 `npm install` 没有执行 Electron 的 postinstall，检查 `~/.npmrc` 是否设置了 `allow-scripts`（npm 11 的安装脚本白名单），把 `electron` 加入允许列表，或按上一条手动运行 `install.js`。
 
-文档：[需求规格（索引）](docs/REQUIREMENTS_REPORT.md) · [架构](docs/ARCHITECTURE.md) · [执行体技术验证](docs/adr/0001-first-executor-spike.md)
+文档：[思考流程与外部执行交接](docs/THINKING_FLOW.md) · [需求规格（索引）](docs/REQUIREMENTS_REPORT.md) · [架构](docs/ARCHITECTURE.md) · [执行体技术验证](docs/adr/0001-first-executor-spike.md)
 
 ## 关于 AI 服务
 
