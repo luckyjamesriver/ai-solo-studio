@@ -83,6 +83,55 @@ describe('任务闭环（模拟执行体 + 真实 Git）', () => {
     expect(t.card?.readyToSave).toBe(false);
   });
 
+  it('准备阶段收到停止：不启动执行体，任务进入 stopped 并照常验收', async () => {
+    const repo = await makeRepo();
+    const inner = new FakeExecutor([{ do: 'write', path: 'index.html', content: 'SHOULD NOT EXIST\n' }, { do: 'exit', code: 0 }]);
+    let started = 0;
+    const executor = Object.assign(Object.create(inner), {
+      start: (o: Parameters<FakeExecutor['start']>[0]) => {
+        started++;
+        return inner.start(o);
+      },
+    }) as FakeExecutor;
+    const runner = new TaskRunner({ repo, executor, runChecks: false });
+    const t0 = await runner.create('x');
+    await runner.setPlan(t0.id, plan);
+    await runner.approve(t0.id);
+    const p = runner.start(t0.id); // 同步进入准备阶段（读取任务、创建 worktree 都还没完成）
+    await runner.stop(t0.id);
+    const t = await p;
+    expect(started).toBe(0);
+    expect(t.exit).toEqual({ kind: 'stopped' });
+    expect(t.state).toBe('reviewing');
+    expect(t.card?.readyToSave).toBe(false);
+    expect(await fs.readFile(path.join(t.worktree!.path, 'index.html'), 'utf8')).toBe('<h1>hello</h1>\n');
+    await runner.discard(t0.id); // 照常进入验收，可以撤销
+  });
+
+  it('执行体刚启动的瞬间收到停止：同样生效，没有任何文件被写入', async () => {
+    const repo = await makeRepo();
+    const inner = new FakeExecutor([{ do: 'write', path: 'new.txt', content: 'x' }, { do: 'write', path: 'index.html', content: 'CHANGED\n' }, { do: 'exit', code: 0 }]);
+    let runner!: TaskRunner;
+    let id = '';
+    const executor = Object.assign(Object.create(inner), {
+      // 在 start() 内部发出停止：此时执行体已被创建，但 runner 还没拿到 run 句柄
+      start: (o: Parameters<FakeExecutor['start']>[0]) => {
+        void runner.stop(id);
+        return inner.start(o);
+      },
+    }) as FakeExecutor;
+    runner = new TaskRunner({ repo, executor, runChecks: false });
+    const t0 = await runner.create('x');
+    id = t0.id;
+    await runner.setPlan(id, plan);
+    await runner.approve(id);
+    const t = await runner.start(id);
+    expect(t.exit).toEqual({ kind: 'stopped' });
+    expect(t.card?.changes).toEqual([]);
+    await expect(fs.access(path.join(t.worktree!.path, 'new.txt'))).rejects.toThrow();
+    expect(await fs.readFile(path.join(t.worktree!.path, 'index.html'), 'utf8')).toBe('<h1>hello</h1>\n');
+  });
+
   it('超时记为 timed_out', async () => {
     const { runner, id } = await setup([{ do: 'hang' }], { timeoutMs: 150 });
     const t = await runner.start(id);

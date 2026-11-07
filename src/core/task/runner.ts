@@ -31,6 +31,10 @@ export interface RunnerOptions {
 export class TaskRunner extends EventEmitter {
   readonly store: TaskStore;
   private runs = new Map<string, ExecutorRun>();
+  /** start() 已进入、尚未结束的任务；停止请求只要落在这个窗口内就必须生效。 */
+  private starting = new Set<string>();
+  /** 在执行体登记之前收到的停止请求 */
+  private stopRequested = new Set<string>();
 
   constructor(private readonly opts: RunnerOptions) {
     super();
@@ -94,11 +98,31 @@ export class TaskRunner extends EventEmitter {
 
   /** 开工（或在验收后发起修复）。返回时执行已结束并生成验收卡。 */
   async start(id: string, prompt?: string): Promise<Task> {
+    // 必须同步登记：之后任何 await 的间隙里到来的 stop() 都能被看到
+    this.starting.add(id);
+    this.stopRequested.delete(id);
+    try {
+      return await this.runTask(id, prompt);
+    } finally {
+      this.starting.delete(id);
+      this.stopRequested.delete(id);
+    }
+  }
+
+  private async runTask(id: string, prompt?: string): Promise<Task> {
     const t = await this.load(id);
     if (t.state !== 'approved') throw new Error('任务必须先经你批准才能开工。');
     if (!t.worktree) t.worktree = await G.createWorktree(this.opts.repo, t.id);
     t.executorId = this.opts.executor.id;
     await this.fire(t, 'start');
+
+    // 准备阶段收到停止：不启动执行体，直接进入 stopped 并照常验收
+    if (this.stopRequested.has(id)) {
+      this.log(t, 'message', '准备阶段收到停止请求，未启动 AI。');
+      t.exit = { kind: 'stopped' };
+      await this.fire(t, 'stop');
+      return this.review(t);
+    }
 
     const run = this.opts.executor.start({
       cwd: t.worktree.path,
@@ -106,6 +130,8 @@ export class TaskRunner extends EventEmitter {
       timeoutMs: this.opts.timeoutMs ?? 20 * 60_000,
     });
     this.runs.set(t.id, run);
+    // 执行体启动期间（或启动的同一时刻）到来的停止请求：登记后立刻补发给执行体
+    if (this.stopRequested.has(id)) await run.stop();
     const rule = this.opts.autoApprove ?? { autoLow: false };
 
     for await (const ev of run.events) {
@@ -142,7 +168,9 @@ export class TaskRunner extends EventEmitter {
   }
 
   async stop(id: string): Promise<void> {
-    await this.runs.get(id)?.stop();
+    const run = this.runs.get(id);
+    if (run) await run.stop();
+    else if (this.starting.has(id)) this.stopRequested.add(id);
   }
 
   private async review(t: Task): Promise<Task> {

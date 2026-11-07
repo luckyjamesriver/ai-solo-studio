@@ -75,6 +75,7 @@ export class FakeExecutor implements Executor {
             const abs = safe(s.path);
             if (s.do === 'write') {
               await fs.mkdir(path.dirname(abs), { recursive: true });
+              if (stopped) return;
               await fs.writeFile(abs, s.content);
             } else await fs.rm(abs, { force: true });
             ch.push({ type: 'tool', name: s.do, summary: s.path });
