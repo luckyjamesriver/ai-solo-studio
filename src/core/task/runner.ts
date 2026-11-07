@@ -121,6 +121,13 @@ export class TaskRunner extends EventEmitter {
     if (t.state !== 'approved') throw new Error('任务必须先经你批准才能开工。');
     if (!t.worktree) t.worktree = await G.createWorktree(this.opts.repo, t.id);
     t.executorId = this.opts.executor.id;
+    // 报告绑定 Git 状态：记录开始时的主线 HEAD、工作树路径与其 HEAD
+    t.gitStart = {
+      mainHeadAtStart: await G.headSha(this.opts.repo),
+      worktreeHeadAtStart: await G.headSha(t.worktree.path),
+      worktreePath: t.worktree.path,
+    };
+    delete t.gitBinding;
     await this.fire(t, 'start');
 
     // 准备阶段收到停止：不启动执行体，直接进入 stopped 并照常验收
@@ -187,6 +194,9 @@ export class TaskRunner extends EventEmitter {
   private async review(t: Task): Promise<Task> {
     const wt = t.worktree!;
     const changes = await G.diffSummary(wt);
+    const start = t.gitStart ?? { mainHeadAtStart: await G.headSha(this.opts.repo), worktreeHeadAtStart: await G.headSha(wt.path), worktreePath: wt.path };
+    t.gitBinding = { ...start, mainHeadAtEnd: await G.headSha(this.opts.repo), worktreeHeadAtEnd: await G.headSha(wt.path) };
+    this.log(t, 'state', `Git：主线 ${t.gitBinding.mainHeadAtStart.slice(0, 8)}→${t.gitBinding.mainHeadAtEnd.slice(0, 8)}，工作树 ${t.gitBinding.worktreeHeadAtStart.slice(0, 8)}→${t.gitBinding.worktreeHeadAtEnd.slice(0, 8)}`);
     const checks: CheckResult[] = [];
     if (this.opts.runChecks !== false) {
       for (const name of ['build', 'test'] as const) {
@@ -195,7 +205,7 @@ export class TaskRunner extends EventEmitter {
         checks.push(c);
       }
     }
-    t.card = buildCard({ exit: t.exit!, changes, checks, criteria: t.criteria, previewed: t.previewed, denied: t.denied, deniedAcks: t.deniedAcks });
+    t.card = buildCard({ exit: t.exit!, changes, checks, criteria: t.criteria, previewed: t.previewed, denied: t.denied, deniedAcks: t.deniedAcks, git: t.gitBinding });
     await this.fire(t, 'review');
     return t;
   }
@@ -221,7 +231,7 @@ export class TaskRunner extends EventEmitter {
         ? { name: i.key as 'build' | 'test', status: 'not_available', reason: i.evidence }
         : { name: i.key as 'build' | 'test', status: i.status === 'verified' ? 'passed' : 'failed', outcome: { kind: 'exited', code: i.status === 'verified' ? 0 : 1 }, output: '', durationMs: 0 },
     );
-    t.card = buildCard({ exit: t.exit!, changes: prev.changes, checks, criteria: t.criteria, previewed: t.previewed, denied: t.denied, deniedAcks: t.deniedAcks });
+    t.card = buildCard({ exit: t.exit!, changes: prev.changes, checks, criteria: t.criteria, previewed: t.previewed, denied: t.denied, deniedAcks: t.deniedAcks, ...(t.gitBinding ? { git: t.gitBinding } : {}) });
     // 保留原始检查的证据文字
     for (const item of t.card.items) {
       const old = prev.items.find((i) => i.key === item.key);

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TaskRunner, type PendingPermission } from '../src/core/task/runner.js';
+import { Channel } from '../src/core/executor/channel.js';
+import type { Executor, ExecutorEvent } from '../src/core/executor/types.js';
 import { FakeExecutor, type FakeStep } from '../src/core/executor/adapters/fake.js';
 import * as G from '../src/core/git/git.js';
 import { makeRepo } from './helpers.js';
@@ -130,6 +132,44 @@ describe('任务闭环（模拟执行体 + 真实 Git）', () => {
     expect(t.card?.changes).toEqual([]);
     await expect(fs.access(path.join(t.worktree!.path, 'new.txt'))).rejects.toThrow();
     expect(await fs.readFile(path.join(t.worktree!.path, 'index.html'), 'utf8')).toBe('<h1>hello</h1>\n');
+  });
+
+  it('报告绑定 Git 状态：开始与结束时的主线 HEAD、工作树路径与 HEAD 记录在任务与验收卡里', async () => {
+    const repo = await makeRepo();
+    const executor: Executor = {
+      id: 'committer',
+      displayName: 'committer',
+      capabilities: { permissionPrompts: false, resumeAfterStop: false },
+      detect: async () => ({ installed: true, loggedIn: 'yes' }),
+      start(o) {
+        const ch = new Channel<ExecutorEvent>();
+        void (async () => {
+          await fs.writeFile(path.join(o.cwd, 'new.txt'), 'x');
+          await G.commitWorktree({ path: o.cwd, branch: '', baseSha: '' }, 'executor commit'); // 执行体在工作树里提交了一次
+          ch.push({ type: 'exit', outcome: { kind: 'exited', code: 0 } });
+          ch.close();
+        })();
+        return { events: ch, respond: async () => {}, stop: async () => {} };
+      },
+    };
+    const runner = new TaskRunner({ repo, executor, runChecks: false });
+    const t0 = await runner.create('x');
+    await runner.setPlan(t0.id, plan);
+    await runner.approve(t0.id);
+    const mainBefore = await G.headSha(repo);
+    const t = await runner.start(t0.id);
+    const g = t.card?.git;
+    expect(g).toBeDefined();
+    expect(g).toEqual(t.gitBinding);
+    expect(g?.mainHeadAtStart).toBe(mainBefore);
+    expect(g?.mainHeadAtEnd).toBe(mainBefore); // 主线没动
+    expect(g?.worktreePath).toBe(t.worktree!.path);
+    expect(g?.worktreeHeadAtStart).toBe(t.worktree!.baseSha);
+    expect(g?.worktreeHeadAtEnd).toBe(await G.headSha(t.worktree!.path));
+    expect(g?.worktreeHeadAtEnd).not.toBe(g?.worktreeHeadAtStart); // 执行体提交后，工作树 HEAD 变了
+    // 验收阶段确认后，验收卡仍带着同一份绑定
+    const c = await runner.confirm(t0.id, { criterion: 0, decision: 'confirmed' });
+    expect(c.card?.git).toEqual(g);
   });
 
   it('超时记为 timed_out', async () => {

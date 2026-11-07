@@ -1,7 +1,7 @@
 import type { TaskState } from './state.js';
 import type { Worktree } from '../git/git.js';
 import type { ExitOutcome, DeniedOperation } from '../executor/types.js';
-import type { AcceptanceCard, CriterionState } from '../acceptance/card.js';
+import type { AcceptanceCard, CriterionState, GitBinding } from '../acceptance/card.js';
 
 import type { Capabilities } from '../capabilities/model.js';
 
@@ -38,6 +38,9 @@ export interface Task {
   criteria: CriterionState[];
   previewed: boolean;
   card?: AcceptanceCard;
+  /** 最近一次执行的 Git 绑定：开始时记录“开始”部分，验收时补全“结束”部分 */
+  gitStart?: Pick<GitBinding, 'mainHeadAtStart' | 'worktreeHeadAtStart' | 'worktreePath'>;
+  gitBinding?: GitBinding;
   timeline: TimelineEntry[];
   createdAt: string;
   updatedAt: string;

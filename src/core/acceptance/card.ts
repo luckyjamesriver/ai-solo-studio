@@ -5,6 +5,15 @@ import type { FileChange } from '../git/git.js';
 /** 每个检查项的状态都必须来自真实信号。 */
 export type ItemStatus = 'verified' | 'failed' | 'not_checked' | 'user_confirmed' | 'user_rejected' | 'pending_user';
 
+/** 报告绑定的 Git 状态：任务开始与结束时的主线 HEAD、工作树路径与其 HEAD（需求 v1.5 第 7 节） */
+export interface GitBinding {
+  mainHeadAtStart: string;
+  mainHeadAtEnd: string;
+  worktreePath: string;
+  worktreeHeadAtStart: string;
+  worktreeHeadAtEnd: string;
+}
+
 export interface AcceptanceItem {
   key: string;
   label: string;
@@ -19,6 +28,8 @@ export interface AcceptanceCard {
   aiSummary?: string;
   /** 只有全部自动检查通过或未提供、且所有验收标准都由用户确认后才为 true */
   readyToSave: boolean;
+  /** 本次验收对应的 Git 状态 */
+  git?: GitBinding;
   /** 给用户的一句话总结 */
   headline: string;
 }
@@ -66,6 +77,7 @@ export function buildCard(input: {
   aiSummary?: string;
   denied?: DeniedOperation[];
   deniedAcks?: boolean[];
+  git?: GitBinding;
 }): AcceptanceCard {
   const items: AcceptanceItem[] = [exitItem(input.exit)];
   items.push(
@@ -119,5 +131,6 @@ export function buildCard(input: {
 
   const card: AcceptanceCard = { items, changes: input.changes, readyToSave, headline };
   if (input.aiSummary) card.aiSummary = input.aiSummary;
+  if (input.git) card.git = input.git;
   return card;
 }
