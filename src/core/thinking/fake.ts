@@ -8,15 +8,19 @@ export type FakeThinkStep =
 
 /** 按剧本返回各种结果的思考者，用于测试。每次 think() 取剧本的下一步（用完后重复最后一步）。 */
 export class FakeThinker implements Thinker {
-  readonly id = 'fake';
+  readonly id: string;
   readonly displayName = '模拟思考者（测试用）';
-  readonly service = 'fake-service';
+  readonly service: string;
   readonly requests: ThinkRequest[] = [];
   private i = 0;
   constructor(
     private readonly script: FakeThinkStep[] | ((req: ThinkRequest) => FakeThinkStep),
     private readonly detectResult: ThinkerDetect = { available: true },
-  ) {}
+    identity: { id?: string; service?: string } = {},
+  ) {
+    this.id = identity.id ?? 'fake';
+    this.service = identity.service ?? 'fake-service';
+  }
 
   async detect(): Promise<ThinkerDetect> {
     return this.detectResult;
