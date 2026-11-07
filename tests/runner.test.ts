@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { TaskRunner, type PendingPermission } from '../src/core/task/runner.js';
+import { TaskRunner, buildPrompt, type PendingPermission } from '../src/core/task/runner.js';
 import { Channel } from '../src/core/executor/channel.js';
 import type { Executor, ExecutorEvent } from '../src/core/executor/types.js';
 import { FakeExecutor, type FakeStep } from '../src/core/executor/adapters/fake.js';
@@ -170,6 +170,15 @@ describe('任务闭环（模拟执行体 + 真实 Git）', () => {
     // 验收阶段确认后，验收卡仍带着同一份绑定
     const c = await runner.confirm(t0.id, { criterion: 0, decision: 'confirmed' });
     expect(c.card?.git).toEqual(g);
+  });
+
+  it('任务提示词包含全部约束：目录内修改、不提交不推送、不读取或列出目录之外的内容', async () => {
+    const { runner, id } = await setup([{ do: 'exit', code: 0 }]);
+    const t = (await runner.store.get(id))!;
+    const p = buildPrompt(t);
+    expect(p).toContain('只在当前目录内修改文件');
+    expect(p).toContain('不要提交 Git、不要推送、不要修改当前目录以外的任何文件');
+    expect(p).toContain('不要读取或列出当前目录以外的任何文件或目录');
   });
 
   it('超时记为 timed_out', async () => {

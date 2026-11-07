@@ -287,6 +287,6 @@ export function buildPrompt(t: Task): string {
     list('要做', p.inScope),
     list('不要做', p.outOfScope),
     list('验收标准', p.criteria),
-    '\n只在当前目录内修改文件。不要提交 Git、不要推送、不要修改当前目录以外的任何文件。',
+    '\n只在当前目录内修改文件。不要提交 Git、不要推送、不要修改当前目录以外的任何文件。不要读取或列出当前目录以外的任何文件或目录。',
   ].join('\n');
 }
