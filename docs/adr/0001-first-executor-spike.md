@@ -102,6 +102,12 @@
 | AGENTS.md（用户目录 `~/.codex/AGENTS.md` 与项目内 AGENTS.md） | **不能关闭（已知限制）** | 官方文档只描述加载规则，没有关闭开关；`project_doc_max_bytes=0` 未见文档保证，不依赖。唯一的办法是改 `CODEX_HOME`，但那需要复制或重建认证文件，被明确禁止。风险：用户全局的 AGENTS.md 可能影响执行体行为。后续：按任务分配工具/规则时再设计；在此之前验收卡与审批仍是兜底。 |
 | hooks、notify、memories 等其他用户配置项 | **未逐项验证（已知限制）** | 本轮未发现对应的官方“单次会话关闭”方式；沙箱与审批参数已显式传入，不受其影响。 |
 
+**读取 MCP 名单本身会不会启动 MCP（M2.5 第 2 项，哨兵实测）**：不会。用临时 CODEX_HOME 配置一个“哨兵 MCP”（被启动就写标记文件），结果：
+- 正控：不关闭哨兵、发出 `thread/start` 后，标记文件出现，并收到 `mcpServer/startupStatus/updated`（status=starting）——说明 MCP 在 **thread/start 时才启动**，且该方法能观察到启动；
+- 现行名单流程（临时 app-server 只做 `initialize` + `config/read`，随即关闭）：拿到名字 `sentinel`，等待 3～4 秒后标记文件不存在、无任何启动通知；
+- 带 `-c mcp_servers.sentinel.enabled=false` 再 thread/start：标记文件不存在。
+结论：保留现状（临时 app-server 不创建线程，因此不会拉起扩展）。该进程**不得**调用 thread/start、`mcpServerStatus/list`（后者会真实启动服务器并列出工具）等会触发扩展的接口。回归测试：tests/integration/sentinel.real.test.ts（STUDIO_REAL_CODEX=1，含正控）。正式会话启动后的核验（bebcf5a：监听 startupStatus，仍有服务启动即中止）与本项是两道独立的检查，均保留。
+
 令牌刷新：`account/chatgptAuthTokens/refresh` 的响应必须包含 `accessToken` 与 `chatgptAccountId`，schema 说明该模式是“令牌由外部宿主应用提供并只存于内存、刷新由宿主负责”，且标注 FOR OPENAI INTERNAL USE ONLY。这要求我们接触并转发凭证，因此**保持拒绝**。使用 `codex login` 的托管登录时，Codex 自行刷新，不会向客户端发出该请求（实测整个任务期间未出现）。
 
 版本：适配器声明经过验证的版本 0.166.0（`VERIFIED_CODEX_VERSION`）；`detect()` 在版本不同时返回 `verified: false` 与提示，不阻止使用。
