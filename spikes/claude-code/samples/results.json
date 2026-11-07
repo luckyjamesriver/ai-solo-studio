@@ -1,0 +1,354 @@
+{
+  "tool": "claude",
+  "version": "2.1.318 (Claude Code)",
+  "model": "haiku",
+  "results": {
+    "e2_allow": {
+      "exit": 0,
+      "ms": 11875,
+      "permRequests": [
+        {
+          "tool": "Edit",
+          "inputKeys": [
+            "file_path",
+            "old_string",
+            "new_string",
+            "replace_all"
+          ],
+          "hasToolUseId": true
+        }
+      ],
+      "fileChanged": true,
+      "hasH1Hello": true,
+      "types": [
+        "system/init",
+        "assistant",
+        "rate_limit_event",
+        "system/task_summary",
+        "user",
+        "system/post_turn_summary",
+        "result/success"
+      ],
+      "toolUses": [
+        {
+          "name": "Bash",
+          "input": [
+            "command",
+            "description"
+          ]
+        },
+        {
+          "name": "Edit",
+          "input": [
+            "replace_all",
+            "file_path",
+            "old_string",
+            "new_string"
+          ]
+        }
+      ],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "num_turns": 3,
+        "denials": [],
+        "result": "我在 `index.html` 的 `<body>` 中、`<p>spike</p>` 之前加入了 `<h1>Hello</h1>`。文件现在的内容是:\n\n```html\n<!doctype html>\n<html><body>\n<h1>Hello</h1>\n<p>spike</p>\n</body></html>\n``"
+      }
+    },
+    "e1_events": {
+      "types": [
+        "system/init",
+        "assistant",
+        "rate_limit_event",
+        "system/task_summary",
+        "user",
+        "system/post_turn_summary",
+        "result/success"
+      ],
+      "toolUses": [
+        {
+          "name": "Bash",
+          "input": [
+            "command",
+            "description"
+          ]
+        },
+        {
+          "name": "Edit",
+          "input": [
+            "replace_all",
+            "file_path",
+            "old_string",
+            "new_string"
+          ]
+        }
+      ],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "num_turns": 3,
+        "denials": [],
+        "result": "我在 `index.html` 的 `<body>` 中、`<p>spike</p>` 之前加入了 `<h1>Hello</h1>`。文件现在的内容是:\n\n```html\n<!doctype html>\n<html><body>\n<h1>Hello</h1>\n<p>spike</p>\n</body></html>\n``"
+      }
+    },
+    "e2_deny": {
+      "exit": 0,
+      "ms": 12346,
+      "permRequests": [
+        {
+          "tool": "Edit",
+          "inputKeys": [
+            "file_path",
+            "old_string",
+            "new_string",
+            "replace_all"
+          ],
+          "hasToolUseId": true
+        }
+      ],
+      "fileChanged": false,
+      "hasH1Hello": false,
+      "types": [
+        "system/init",
+        "assistant",
+        "rate_limit_event",
+        "system/task_summary",
+        "user",
+        "system/thinking_tokens",
+        "system/post_turn_summary",
+        "result/success"
+      ],
+      "toolUses": [
+        {
+          "name": "Bash",
+          "input": [
+            "command",
+            "description"
+          ]
+        },
+        {
+          "name": "Edit",
+          "input": [
+            "replace_all",
+            "file_path",
+            "old_string",
+            "new_string"
+          ]
+        }
+      ],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "num_turns": 3,
+        "denials": [
+          "Edit"
+        ],
+        "result": "我没能修改 `index.html`：编辑操作被拒绝了，所以文件没有变化。我没有重试，也没有换用其他方式写入。\n\n我要做的改动是在 `<body>` 里、`<p>spike</p>` 前面加一行 `<h1>Hello</h1>`。如果你是想让我执行这个修改，请确认一下，或者告诉我被拒绝的原因（例如想换一种写法、放在别的"
+      }
+    },
+    "e3_interrupt": {
+      "signal": "SIGTERM",
+      "sentAfterFirstToolUse": true,
+      "exitCode": 143,
+      "exitSignal": null,
+      "msToExit": 829,
+      "filesAtExit": "index.html",
+      "filesAfter4s": "index.html",
+      "modifiedAfterExit": false,
+      "permRequests": 0
+    },
+    "e4_write_outside": {
+      "exit": 0,
+      "permRequests": [
+        {
+          "tool": "Bash",
+          "path": "{\"command\":\"ls -la ../outside.txt 2>/dev/null; cat ../outside.txt 2>/dev/null; echo \\\"---\\\"; realpath -m ../outside.txt\",\"description\":\"Check whether ../outside.txt exists and resolve its path\"}"
+        },
+        {
+          "tool": "Read",
+          "path": "{\"file_path\":\"/tmp/spike-XXXX/outside.txt\"}"
+        }
+      ],
+      "outsideChanged": false,
+      "types": [
+        "system/init",
+        "system/thinking_tokens",
+        "assistant",
+        "user",
+        "rate_limit_event",
+        "system/task_summary",
+        "system/post_turn_summary",
+        "result/success"
+      ],
+      "toolUses": [
+        {
+          "name": "Bash",
+          "input": [
+            "command",
+            "description"
+          ]
+        },
+        {
+          "name": "Write",
+          "input": [
+            "file_path",
+            "content"
+          ]
+        },
+        {
+          "name": "Read",
+          "input": [
+            "file_path"
+          ]
+        }
+      ],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "num_turns": 4,
+        "denials": [
+          "Bash",
+          "Read"
+        ],
+        "result": "我没能把 `hi` 写入 `../outside.txt`，两次操作都被你拒绝了：一次是检查该文件的 Bash 命令，一次是读取它的 Read 操作。\n\n目标文件的绝对路径是 `/tmp/spike-XXXX/o"
+      }
+    },
+    "e4_read_outside": {
+      "exit": 0,
+      "permRequests": [
+        {
+          "tool": "Read",
+          "path": "{\"file_path\":\"/tmp/spike-XXXX/outside.txt\"}"
+        }
+      ],
+      "outsideChanged": false,
+      "types": [
+        "system/init",
+        "assistant",
+        "rate_limit_event",
+        "system/task_summary",
+        "user",
+        "system/post_turn_summary",
+        "result/success"
+      ],
+      "toolUses": [
+        {
+          "name": "Read",
+          "input": [
+            "file_path"
+          ]
+        }
+      ],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "num_turns": 2,
+        "denials": [
+          "Read"
+        ],
+        "result": "这次读取被拒绝了：文件 `../outside.txt` 位于当前工作目录之外，系统拒绝了对它的访问。我没有读取到它的内容，也不会绕过这个限制去尝试其他途径。\n\n如果你希望我读取它，可以：\n- 把文件内容直接粘贴到对话里，我来帮你分析；\n- 或者把文件复制到当前项目目录内，然后告诉我新的路径；\n- 或者在权限设置里允许"
+      }
+    },
+    "e4_no_prompt_tool": {
+      "exit": 0,
+      "outsideCreated": false,
+      "types": [
+        "system/init",
+        "system/thinking_tokens",
+        "assistant",
+        "system/permission_denied",
+        "user",
+        "rate_limit_event",
+        "system/task_summary",
+        "system/post_turn_summary",
+        "result/success"
+      ],
+      "toolUses": [
+        {
+          "name": "Bash",
+          "input": [
+            "command",
+            "description"
+          ]
+        },
+        {
+          "name": "Write",
+          "input": [
+            "file_path",
+            "content"
+          ]
+        }
+      ],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "num_turns": 3,
+        "denials": [
+          "Bash",
+          "Write"
+        ],
+        "result": "I couldn't write `../outside.txt`. Both attempts were blocked by the permission system: the Bash command was held for approval, and the Write tool to `/private/"
+      }
+    },
+    "e5_bad_model": {
+      "exit": 1,
+      "stderr": "[claude-code:unrecognized_model] {\"model\":\"no-such-model-xyz\",\"query_source\":\"sdk\"}\n",
+      "types": [
+        "system/init",
+        "assistant",
+        "result/success"
+      ],
+      "toolUses": [],
+      "result": {
+        "subtype": "success",
+        "is_error": true,
+        "num_turns": 1,
+        "denials": [],
+        "result": "There's an issue with the selected model (no-such-model-xyz). It may not exist or you may not have access to it. Run --model to pick a different model."
+      }
+    },
+    "e5_max_turns": {
+      "exit": 1,
+      "types": [
+        "system/init",
+        "system/thinking_tokens",
+        "assistant",
+        "user",
+        "rate_limit_event",
+        "system/task_summary",
+        "result/error_max_turns"
+      ],
+      "toolUses": [
+        {
+          "name": "Write",
+          "input": [
+            "file_path",
+            "content"
+          ]
+        }
+      ],
+      "result": {
+        "subtype": "error_max_turns",
+        "is_error": true,
+        "num_turns": 2,
+        "denials": [],
+        "result": "undefined"
+      }
+    },
+    "e7_detect": {
+      "version": "2.1.318 (Claude Code)",
+      "versionExit": 0,
+      "loggedIn": {
+        "exit": 0,
+        "loggedIn": true,
+        "authMethod": "claude.ai"
+      },
+      "emptyConfigDir": {
+        "exit": 1,
+        "loggedIn": false,
+        "authMethod": "none",
+        "raw": "{\n  \"loggedIn\": false,\n  \"authMethod\": \"none\",\n  \"apiProvider\": \"firstParty\",\n  \"analyticsDisabled\": false,\n  \"projectsDirectory\": \"/tmp/spike-XXXX-672Eep/projects\",\n  \"configDirectory\": \"/tmp/spike-XXXX"
+      }
+    }
+  }
+}

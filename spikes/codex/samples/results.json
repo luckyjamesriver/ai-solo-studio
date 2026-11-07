@@ -1,0 +1,235 @@
+{
+  "tool": "codex",
+  "version": "codex-cli 0.166.0",
+  "results": {
+    "e7_detect": {
+      "version": "codex-cli 0.166.0",
+      "versionExit": 0,
+      "loggedIn": {
+        "exit": 0,
+        "text": "Logged in using ChatGPT"
+      },
+      "emptyCodexHome": {
+        "exit": 1,
+        "text": "Not logged in"
+      }
+    },
+    "e1_exec": {
+      "exit": 0,
+      "ms": 18641,
+      "types": [
+        "thread.started",
+        "turn.started",
+        "item.completed:agent_message",
+        "item.started:command_execution",
+        "item.completed:command_execution",
+        "item.started:file_change",
+        "item.completed:file_change",
+        "turn.completed"
+      ],
+      "last": "turn.completed",
+      "hasH1Hello": true
+    },
+    "e2_exec_readonly": {
+      "exit": 0,
+      "fileChanged": false,
+      "types": [
+        "thread.started",
+        "turn.started",
+        "item.completed:agent_message",
+        "item.started:command_execution",
+        "item.completed:command_execution",
+        "turn.completed"
+      ],
+      "last": "turn.completed"
+    },
+    "e4_exec_outside": {
+      "exit": 0,
+      "outsideCreated": false,
+      "types": [
+        "thread.started",
+        "turn.started",
+        "item.completed:agent_message",
+        "turn.completed"
+      ],
+      "last": "turn.completed",
+      "commands": []
+    },
+    "e3_exec_interrupt": {
+      "sentAfterFirstCommandStarted": true,
+      "exitCode": null,
+      "exitSignal": "SIGTERM",
+      "msToExit": 5,
+      "filesAtExit": "index.html,note1.txt",
+      "filesAfter4s": "index.html,note1.txt",
+      "modifiedAfterExit": false
+    },
+    "e5_exec_bad_model": {
+      "exit": 1,
+      "stderr": "Reading additional input from stdin...\n",
+      "types": [
+        "thread.started",
+        "item.completed:error",
+        "turn.started",
+        "error",
+        "turn.failed"
+      ],
+      "last": "turn.failed",
+      "err": [
+        "{\"type\":\"error\",\"message\":\"The 'no-such-model-xyz' model is not supported when using Codex with a ChatGPT account.\"}",
+        "{\"type\":\"turn.failed\",\"error\":{\"message\":\"The 'no-such-model-xyz' model is not supported when using Codex with a ChatGPT account.\"}}"
+      ]
+    },
+    "e5_exec_failing_task": {
+      "exit": 0,
+      "types": [
+        "thread.started",
+        "turn.started",
+        "item.completed:agent_message",
+        "item.started:command_execution",
+        "item.completed:command_execution",
+        "turn.completed"
+      ],
+      "last": "turn.completed"
+    },
+    "e2_app_accept": {
+      "status": "completed",
+      "approvals": [
+        {
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "itemId": "exec-51ef3102-4a5b-4a2a-8353-23f0d8f89778",
+            "reason": "当前环境为只读沙箱。是否允许修改 index.html，加入 <h1>Hello</h1>？",
+            "command": "/bin/zsh -lc \"perl -0pi -e 's/<body>\\\\n/<body>\\\\n<h1>Hello<\\\\/h1>\\\\n/' index.html\"",
+            "cwd": "/tmp/spike-XXXX/repo"
+          },
+          "decision": "accept"
+        }
+      ],
+      "hasH1Hello": true,
+      "ms": 20399,
+      "methods": [
+        "remoteControl/status/changed",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "account/updated",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "item/reasoning/summaryPartAdded",
+        "item/reasoning/summaryTextDelta",
+        "item/commandExecution/requestApproval",
+        "serverRequest/resolved",
+        "turn/completed"
+      ],
+      "stderr": ""
+    },
+    "e1_app_events": {
+      "methods": [
+        "remoteControl/status/changed",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "account/updated",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "item/reasoning/summaryPartAdded",
+        "item/reasoning/summaryTextDelta",
+        "item/commandExecution/requestApproval",
+        "serverRequest/resolved",
+        "turn/completed"
+      ]
+    },
+    "e2_app_decline": {
+      "status": "completed",
+      "approvals": [
+        {
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "itemId": "exec-01ff5899-dd39-4ed5-875e-f0be1ace6bf0",
+            "reason": "当前环境为只读，是否允许修改 index.html，加入 <h1>Hello</h1>？",
+            "command": "/bin/zsh -lc \"python3 -c 'from pathlib import Path; p = Path(\\\"index.html\\\"); s = p.read_text(); p.write_text(s.replace(\\\"<body>\\\\n\\\", \\\"<body>\\\\n<h1>Hello</h1>\\\\n\\\", 1))'\"",
+            "cwd": "/tmp/spike-XXXX/repo"
+          },
+          "decision": "decline"
+        }
+      ],
+      "hasH1Hello": false,
+      "ms": 21214,
+      "methods": [
+        "remoteControl/status/changed",
+        "account/updated",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "item/reasoning/summaryPartAdded",
+        "item/reasoning/summaryTextDelta",
+        "item/commandExecution/requestApproval",
+        "serverRequest/resolved",
+        "turn/completed"
+      ],
+      "stderr": "\u001b[2m2026-11-07T11:11:32.833597Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_core::tools::router\u001b[0m\u001b[2m:\u001b[0m \u001b[3merror\u001b[0m\u001b[2m=\u001b[0mexec_command failed: CreateProcess { message: \"Rejected(\\\"rejected by user\\\")\" }\n"
+    },
+    "e4_app_outside": {
+      "status": "completed",
+      "approvals": [
+        {
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "itemId": "exec-97100170-cfa5-402a-a67e-4f19ecb433f1",
+            "reason": "是否允许将文字 hi 写入工作区外的 ../outside.txt？",
+            "command": "/bin/zsh -lc \"printf 'hi' > ../outside.txt\"",
+            "cwd": "~/.spike-XXXX/repo"
+          },
+          "decision": "decline"
+        }
+      ],
+      "outsideExists": false,
+      "methods": [
+        "remoteControl/status/changed",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "account/updated",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "item/commandExecution/requestApproval",
+        "serverRequest/resolved",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ]
+    },
+    "e3_app_interrupt": {
+      "status": "interrupted",
+      "msFromInterruptToTurnEnd": 106,
+      "filesAtEnd": "index.html,note1.txt",
+      "filesLater": "index.html,note1.txt",
+      "modifiedAfterEnd": false
+    }
+  }
+}
