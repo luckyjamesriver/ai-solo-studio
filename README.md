@@ -19,6 +19,8 @@
 
 ## 开发
 
+推荐使用 **Node.js 22 LTS**（仓库根目录有 `.nvmrc`，`package.json` 的 `engines` 限定为 `>=22 <23`）：`nvm use` 或 `fnm use` 即可切换。
+
 ```bash
 npm install
 npm test          # 核心引擎测试（模拟执行体 + 真实临时 Git 仓库）
