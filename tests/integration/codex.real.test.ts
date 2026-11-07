@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll } from 'vitest';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TaskRunner, type PendingPermission } from '../../src/core/task/runner.js';
-import { CodexExecutor } from '../../src/core/executor/adapters/codex.js';
+import { CodexExecutor, codexLaunchConfig } from '../../src/core/executor/adapters/codex.js';
 import * as G from '../../src/core/git/git.js';
 import { makeRepo, tmpDir } from '../helpers.js';
 
@@ -81,4 +82,42 @@ describe.skipIf(!enabled)('真实 Codex：TaskRunner 完整闭环', () => {
     expect(await G.headSha(repo)).toBe(headBefore);
     await expect(fs.access(outside)).rejects.toThrow();
   }, 300_000);
+
+  it('配置隔离：用户配置的 MCP 服务器与连接器不会出现在会话可用工具里', async () => {
+    const cwd = await tmpDir('codex-iso-');
+    // 用适配器自己的发现逻辑（真实 config/read）
+    const names = await (executor as unknown as { discoverMcpServers(cwd: string): Promise<string[]> }).discoverMcpServers(cwd);
+    expect(names.length).toBeGreaterThanOrEqual(0);
+    const child = spawn('codex', codexLaunchConfig(cwd, { mcpServers: names }).args, { cwd, stdio: ['pipe', 'pipe', 'ignore'] });
+    let buf = '';
+    let id = 1;
+    const pending = new Map<number, (m: any) => void>();
+    child.stdout.setEncoding('utf8').on('data', (d: string) => {
+      buf += d;
+      let i: number;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (!line) continue;
+        const m = JSON.parse(line);
+        if (m.id !== undefined && !m.method) pending.get(m.id)?.(m);
+      }
+    });
+    const rpc = (method: string, params: object) => new Promise<any>((resolve) => {
+      const i = id++;
+      pending.set(i, resolve);
+      child.stdin.write(`${JSON.stringify({ method, id: i, params })}\n`);
+    });
+    try {
+      await rpc('initialize', { clientInfo: { name: 'iso_test', title: 't', version: '0' } });
+      child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
+      const st = await rpc('mcpServerStatus/list', {});
+      const servers = (st.result?.data ?? []) as { name: string; tools?: Record<string, unknown> }[];
+      const withTools = servers.filter((s) => Object.keys(s.tools ?? {}).length > 0).map((s) => s.name);
+      console.info(`[real-codex] 用户 MCP 共 ${names.length} 个；隔离后仍有工具的服务器：${JSON.stringify(withTools)}`);
+      expect(withTools).toEqual([]);
+    } finally {
+      child.kill();
+    }
+  }, 120_000);
 });

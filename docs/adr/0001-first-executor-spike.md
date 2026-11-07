@@ -89,6 +89,23 @@
 - 用 API Key 接入任意模型提供方：合规。
 - 用 Claude 或 Antigravity 订阅登录令牌接入：被两家明确禁止，已有封禁执行记录。本项目不得采用。
 
+## 配置隔离调查与已知限制（M2 收尾，2026-11-07，Codex 0.166.0）
+
+依据：`codex app-server generate-json-schema` 生成的 schema、`codex app-server --help`，以及对真实 app-server 的实测（`config/read`、`mcpServerStatus/list`）。官方文档页（learn.chatgpt.com/docs/config-file/config-reference、…/agent-configuration/agents-md）的长表格抓取不完整，仅作参考。
+
+| 项 | 结论 | 做法 / 依据 |
+|---|---|---|
+| 用户配置的 MCP 服务器 | **能关闭** | 先用临时 app-server 调 `config/read` 只取 `mcp_servers` 的键，再对每个名字传 `-c mcp_servers.<名>.enabled=false`。没有“全部关闭”的总开关；对用户配置里不存在的名字写 `enabled=false` 会让 app-server 无法启动（已实测），所以不能用 `codex mcp list`（它还列出插件自带服务器）。查不出名单则不启动（宁可失败）。实测：关闭后 `mcpServerStatus/list` 中所有服务器工具数为 0（集成测试断言）。 |
+| ChatGPT 连接器（apps，实测有数百个工具）与插件 | **能关闭** | `--disable apps`、`--disable plugins`。 |
+| 用户自定义指令（config.toml 的 `instructions` / `developer_instructions`） | **能清空** | `-c instructions=""`、`-c developer_instructions=""`、`-c include_apps_instructions=false`（`config/read` 实测生效）。 |
+| 模型默认值 | **部分** | 调用方指定模型时通过 thread/start 的 `model` 固定；未指定时使用用户的默认模型。后续在界面里选择模型。 |
+| AGENTS.md（用户目录 `~/.codex/AGENTS.md` 与项目内 AGENTS.md） | **不能关闭（已知限制）** | 官方文档只描述加载规则，没有关闭开关；`project_doc_max_bytes=0` 未见文档保证，不依赖。唯一的办法是改 `CODEX_HOME`，但那需要复制或重建认证文件，被明确禁止。风险：用户全局的 AGENTS.md 可能影响执行体行为。后续：按任务分配工具/规则时再设计；在此之前验收卡与审批仍是兜底。 |
+| hooks、notify、memories 等其他用户配置项 | **未逐项验证（已知限制）** | 本轮未发现对应的官方“单次会话关闭”方式；沙箱与审批参数已显式传入，不受其影响。 |
+
+令牌刷新：`account/chatgptAuthTokens/refresh` 的响应必须包含 `accessToken` 与 `chatgptAccountId`，schema 说明该模式是“令牌由外部宿主应用提供并只存于内存、刷新由宿主负责”，且标注 FOR OPENAI INTERNAL USE ONLY。这要求我们接触并转发凭证，因此**保持拒绝**。使用 `codex login` 的托管登录时，Codex 自行刷新，不会向客户端发出该请求（实测整个任务期间未出现）。
+
+版本：适配器声明经过验证的版本 0.166.0（`VERIFIED_CODEX_VERSION`）；`detect()` 在版本不同时返回 `verified: false` 与提示，不阻止使用。
+
 ## 决定
 
 2026-11-07。
@@ -96,7 +113,7 @@
 1. **第一个执行体：Codex，通过 `codex app-server` 接入。** 依据：第 2、3 项在 app-server 路线上通过（`exec` 没有审批通道，不用于需要审批的任务），第 6 项条款路径清晰。
 2. **认证**：开发阶段使用用户本机 `codex login` 的登录状态；面向用户发布前，实现官方“Sign in with ChatGPT”（开源本地应用的计划使用授权），遵循其 UI/品牌规范。**不得复制 OpenAI DevKit 代码**（非商业许可，与本项目 MIT 不兼容）。
 3. **第二个执行体候选：Claude Code，仅 API Key 模式**（不依赖订阅登录）。
-4. **下一轮验证**：ACP 协议（Cursor 等）、DeepSeek（Whale）。
+4. **下一轮验证**：ACP 协议、DeepSeek Harness（DSH，疑似社区项目，待核实许可与调用方式）与 Whale 的对比，并研读 Agents Anywhere 的 Runtime 协议（见 docs/PROJECT_CONTEXT.md“竞争与参考”）。
 5. **Antigravity** 在获得官方书面确认前不接入。
 
 原则（保留）：第 2、3、6 项任一不满足的候选不得作为第一个执行体。Codex 的 app-server 被官方标注为 experimental，协议可能变化，适配器必须显式传参并有版本回归测试。

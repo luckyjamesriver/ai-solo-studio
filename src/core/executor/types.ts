@@ -58,6 +58,8 @@ export interface DetectResult {
   installed: boolean;
   loggedIn: 'yes' | 'no' | 'unknown';
   version?: string;
+  /** 版本是否为经过验证的版本（未知版本不阻止使用，仅提示） */
+  verified?: boolean;
   note?: string;
 }
 

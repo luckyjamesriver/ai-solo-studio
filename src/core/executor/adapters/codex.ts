@@ -24,6 +24,14 @@ export interface CodexLaunchConfig {
   turnOverrides: Record<string, unknown>;
 }
 
+/** TOML 键：裸键只允许 A-Za-z0-9_-，其余加引号并转义 */
+export function tomlKey(name: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(name) ? name : `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/** 经过验证的 Codex 版本。其他版本不阻止使用，但 detect() 会提示“未经验证”。 */
+export const VERIFIED_CODEX_VERSION = '0.166.0';
+
 /**
  * 最终生效的隔离与安全参数——全部集中在这里，便于测试。
  * - app-server 没有“忽略用户配置”的开关，所以：命令行用 -c 覆盖沙箱与审批，线程与回合参数里再各声明一次；
@@ -31,7 +39,7 @@ export interface CodexLaunchConfig {
  * - 审批：需要时询问（on-request）；
  * - 禁用插件。
  */
-export function codexLaunchConfig(cwd: string, opts: { model?: string } = {}): CodexLaunchConfig {
+export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServers?: string[] } = {}): CodexLaunchConfig {
   return {
     args: [
       'app-server',
@@ -41,8 +49,20 @@ export function codexLaunchConfig(cwd: string, opts: { model?: string } = {}): C
       `sandbox_mode="${SANDBOX_MODE}"`,
       '-c',
       `approval_policy="${APPROVAL_POLICY}"`,
+      // 用户在 config.toml 里写的自定义指令不进入会话（官方配置键 instructions / developer_instructions）
+      '-c',
+      'instructions=""',
+      '-c',
+      'developer_instructions=""',
+      '-c',
+      'include_apps_instructions=false',
+      // 逐个关闭用户配置的 MCP 服务器（官方键 mcp_servers.<名称>.enabled；没有“全部关闭”的总开关）
+      ...(opts.mcpServers ?? []).flatMap((name) => ['-c', `mcp_servers.${tomlKey(name)}.enabled=false`]),
       '--disable',
       'plugins',
+      // 关闭 ChatGPT 连接器（apps）：否则会话里会出现数百个来自用户账号的连接器工具
+      '--disable',
+      'apps',
     ],
     threadStart: {
       cwd,
@@ -75,6 +95,8 @@ export interface CodexOptions {
   interruptGraceMs?: number;
   /** SIGTERM 后等待退出的时间，超时 SIGKILL */
   killGraceMs?: number;
+  /** 列出用户配置的 MCP 服务器名称（默认通过官方 app-server 的 config/read，只取名称）。测试中可注入。 */
+  discoverMcpServers?: (cwd: string) => Promise<string[]>;
 }
 
 type RpcId = number | string;
@@ -101,6 +123,67 @@ export class CodexExecutor implements Executor {
     return this.options.prefixArgs ?? [];
   }
 
+  /**
+   * 只读取名称：用一个临时的 app-server 调官方 `config/read`（只取 mcp_servers 的键），随即关闭。
+   * 不能用 `codex mcp list`：它还会列出插件自带的服务器，而对“用户配置里并不存在”的名字写 enabled=false 会让 app-server 无法启动（已实测）。
+   * 配置内容（可能含环境变量等敏感项）只在内存里取键，不记录、不转发。
+   */
+  private async discoverMcpServers(cwd: string): Promise<string[]> {
+    if (this.options.discoverMcpServers) return this.options.discoverMcpServers(cwd);
+    const env = { ...process.env, ...this.options.env };
+    return new Promise<string[]>((resolve, reject) => {
+      let child: ChildProcess;
+      try {
+        child = spawn(this.command, [...this.prefix, 'app-server', '--listen', 'stdio://', '--disable', 'plugins', '--disable', 'apps'], { cwd, env, shell: false, stdio: ['pipe', 'pipe', 'ignore'] });
+      } catch (e) {
+        reject(Object.assign(e as Error, { spawnError: true }));
+        return;
+      }
+      let settled = false;
+      let buf = '';
+      let nextId = 1;
+      const waiting = new Map<number, (m: RpcMessage) => void>();
+      const end = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.kill('SIGKILL');
+        fn();
+      };
+      const timer = setTimeout(() => end(() => reject(new Error('读取 Codex 配置超时'))), 30_000);
+      const rpc = (method: string, params: object) =>
+        new Promise<RpcMessage>((res) => {
+          const id = nextId++;
+          waiting.set(id, res);
+          child.stdin?.write(`${JSON.stringify({ method, id, params })}\n`);
+        });
+      child.on('error', (err) => end(() => reject(Object.assign(err, { spawnError: true }))));
+      child.on('close', () => end(() => reject(new Error('读取 Codex 配置时 app-server 提前退出'))));
+      child.stdin?.on('error', () => {});
+      child.stdout?.setEncoding('utf8').on('data', (c: string) => {
+        buf += c;
+        let i: number;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line) continue;
+          try {
+            const m = JSON.parse(line) as RpcMessage;
+            if (m.id !== undefined && !m.method) waiting.get(m.id as number)?.(m);
+          } catch {}
+        }
+      });
+      (async () => {
+        await rpc('initialize', { clientInfo: { name: 'ai_solo_studio', title: 'AI Solo Studio', version: '0.3.0' } });
+        child.stdin?.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
+        const r = await rpc('config/read', { includeLayers: false, cwd });
+        if (r.error) throw new Error(r.error.message ?? 'config/read 失败');
+        const servers = (r.result as { config?: { mcp_servers?: Record<string, unknown> } } | undefined)?.config?.mcp_servers ?? {};
+        end(() => resolve(Object.keys(servers)));
+      })().catch((e: Error) => end(() => reject(e)));
+    });
+  }
+
   async detect(): Promise<DetectResult> {
     const cwd = process.cwd();
     const env = { ...process.env, ...this.options.env };
@@ -114,7 +197,9 @@ export class CodexExecutor implements Executor {
     let loggedIn: DetectResult['loggedIn'] = 'unknown';
     if (s.outcome.kind === 'exited' && s.outcome.code === 0) loggedIn = 'yes';
     else if (s.outcome.kind === 'exited' && /not logged in/i.test(text)) loggedIn = 'no';
-    return { installed: true, loggedIn, ...(version ? { version } : {}), ...(text ? { note: text.split('\n').at(-1)! } : {}) };
+    const verified = !version || version.includes(VERIFIED_CODEX_VERSION);
+    const notes = [text ? text.split('\n').at(-1)! : '', verified ? '' : `未经验证的 Codex 版本（本应用验证过的是 ${VERIFIED_CODEX_VERSION}），可能不兼容。`].filter(Boolean);
+    return { installed: true, loggedIn, ...(version ? { version } : {}), verified, ...(notes.length ? { note: notes.join(' ') } : {}) };
   }
 
   start(opts: StartOptions): ExecutorRun {
@@ -123,7 +208,6 @@ export class CodexExecutor implements Executor {
     try {
       cwd = fs.realpathSync(opts.cwd);
     } catch {}
-    const cfg = codexLaunchConfig(cwd, opts.model ? { model: opts.model } : {});
     const interruptGraceMs = this.options.interruptGraceMs ?? 5000;
     const killGraceMs = this.options.killGraceMs ?? 3000;
 
@@ -235,6 +319,11 @@ export class CodexExecutor implements Executor {
           { kind, paths, description: `${p.reason ? `${p.reason}\n` : ''}修改文件：${paths.join('、') || '（未提供文件列表）'}` },
           m.id!,
         );
+      } else if (m.method === 'account/chatgptAuthTokens/refresh') {
+        // 该请求要求客户端把 accessToken 交还给 Codex（schema：response.required = accessToken、chatgptAccountId），
+        // 属于“外部宿主管理令牌”模式，且官方标注 FOR OPENAI INTERNAL USE ONLY。我们不接触凭证，保持拒绝。
+        write({ id: m.id, error: { code: -32601, message: 'AI Solo Studio does not manage or supply credentials' } });
+        ch.push({ type: 'log', stream: 'stderr', text: '已拒绝令牌刷新请求：本应用不接触登录凭证。\n' });
       } else {
         // 其他服务端请求（额外权限、用户输入、MCP、动态工具、令牌刷新等）本适配器不支持，明确拒绝
         write({ id: m.id, error: { code: -32601, message: `unsupported by AI Solo Studio: ${m.method}` } });
@@ -304,6 +393,8 @@ export class CodexExecutor implements Executor {
     };
 
     // ---------- 启动 ----------
+    const launch = (mcpServers: string[]) => {
+    const cfg = codexLaunchConfig(cwd, { ...(opts.model ? { model: opts.model } : {}), mcpServers });
     try {
       child = spawn(this.command, [...this.prefix, ...cfg.args], {
         cwd,
@@ -365,6 +456,25 @@ export class CodexExecutor implements Executor {
       });
     }
 
+    };
+
+    // 先（只读地）查出用户配置了哪些 MCP 服务器，再带着“逐个关闭”的参数启动。查不出来就不启动：宁可失败，也不让用户的外部工具悄悄进入会话。
+    (async () => {
+      let names: string[];
+      try {
+        names = await this.discoverMcpServers(cwd);
+      } catch (e) {
+        if ((e as { spawnError?: boolean }).spawnError) {
+          if (!finished) finish({ kind: 'spawn_error', message: (e as Error).message });
+          return;
+        }
+        if (!finished) finish({ kind: 'exited', code: 1 }, `无法确认用户配置的 MCP 服务器，为保证隔离已中止：${(e as Error).message}`);
+        return;
+      }
+      if (finished) return; // 启动前已被停止
+      launch(names);
+    })();
+
     return {
       events: ch,
       async respond(requestId: string, decision: Decision) {
@@ -389,7 +499,8 @@ export class CodexExecutor implements Executor {
         if (finished) return;
         stopRequested = true;
         declineAllPending();
-        interrupt();
+        if (!child) finish({ kind: 'stopped' }); // 还没启动进程（正在查 MCP 配置）：直接结束，之后不会再启动
+        else interrupt();
         await done;
       },
     };

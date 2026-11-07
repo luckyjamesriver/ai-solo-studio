@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CodexExecutor, codexLaunchConfig } from '../src/core/executor/adapters/codex.js';
+import { CodexExecutor, codexLaunchConfig, tomlKey, VERIFIED_CODEX_VERSION } from '../src/core/executor/adapters/codex.js';
 import { parseCommand } from '../src/core/executor/adapters/codex-command.js';
 import { assess, canAutoApprove } from '../src/core/policy/risk.js';
 import type { DeniedOperation, Decision, ExecutorEvent, PermissionRequest } from '../src/core/executor/types.js';
@@ -25,7 +25,7 @@ interface Drive {
 
 async function drive(
   script: Step[],
-  o: { decide?: (r: PermissionRequest) => Decision; timeoutMs?: number; stopWhen?: (e: ExecutorEvent) => boolean } = {},
+  o: { mcp?: string[] | Error; decide?: (r: PermissionRequest) => Decision; timeoutMs?: number; stopWhen?: (e: ExecutorEvent) => boolean } = {},
 ): Promise<Drive> {
   const cwd = await tmpDir('codex-fake-');
   const rec = path.join(cwd, '..', `rec-${path.basename(cwd)}.jsonl`);
@@ -33,6 +33,10 @@ async function drive(
     command: process.execPath,
     prefixArgs: [FAKE_SERVER],
     env: { FAKE_APP_SCRIPT: JSON.stringify(script), FAKE_RECORD: rec },
+    discoverMcpServers: async () => {
+      if (o.mcp instanceof Error) throw o.mcp;
+      return o.mcp ?? ['context7', 'my server'];
+    },
     interruptGraceMs: 400,
     killGraceMs: 300,
   });
@@ -178,7 +182,16 @@ describe('Codex 适配器：配置隔离与沙箱参数', () => {
 
   it('codexLaunchConfig 显式声明：仅 worktree 可写、不含临时目录、需要时询问、不联网', () => {
     const cfg = codexLaunchConfig('/work/tree', { model: 'm1' });
-    expect(cfg.args).toEqual(['app-server', '--listen', 'stdio://', '-c', 'sandbox_mode="workspace-write"', '-c', 'approval_policy="on-request"', '--disable', 'plugins']);
+    expect(cfg.args).toEqual([
+      'app-server', '--listen', 'stdio://',
+      '-c', 'sandbox_mode="workspace-write"',
+      '-c', 'approval_policy="on-request"',
+      '-c', 'instructions=""',
+      '-c', 'developer_instructions=""',
+      '-c', 'include_apps_instructions=false',
+      '--disable', 'plugins',
+      '--disable', 'apps',
+    ]);
     expect(cfg.threadStart).toEqual({ cwd: '/work/tree', approvalPolicy: 'on-request', sandbox: 'workspace-write', ephemeral: true, model: 'm1' });
     expect(cfg.turnOverrides).toEqual({
       cwd: '/work/tree',
@@ -186,6 +199,57 @@ describe('Codex 适配器：配置隔离与沙箱参数', () => {
       sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/work/tree'], excludeSlashTmp: true, excludeTmpdirEnvVar: true, networkAccess: false },
     });
     expect(JSON.stringify(cfg)).not.toMatch(FORBIDDEN);
+  });
+
+  it('用户配置的 MCP 服务器被逐个关闭；自定义指令被清空；连接器被禁用', async () => {
+    expect(codexLaunchConfig('/w', { mcpServers: ['context7', 'my server'] }).args).toEqual(
+      expect.arrayContaining(['-c', 'mcp_servers.context7.enabled=false', '-c', 'mcp_servers."my server".enabled=false']),
+    );
+    expect(tomlKey('a-b_1')).toBe('a-b_1');
+    expect(tomlKey('we"ird')).toBe('"we\\"ird"');
+    const d = await drive([{ complete: { status: 'completed' } }], { mcp: ['context7', 'my server'] });
+    const argv = d.record.find((r) => r.kind === 'argv')!.argv as string[];
+    expect(argv).toEqual(
+      expect.arrayContaining(['mcp_servers.context7.enabled=false', 'mcp_servers."my server".enabled=false', 'instructions=""', 'developer_instructions=""', '--disable', 'apps']),
+    );
+  });
+
+  it('查不出用户配置了哪些 MCP 服务器 → 不启动 Codex（宁可失败，不破坏隔离）', async () => {
+    const d = await drive([{ complete: { status: 'completed' } }], { mcp: new Error('boom') });
+    expect(d.exit).toEqual({ kind: 'exited', code: 1 });
+    expect(messages(d).join('\n')).toMatch(/无法确认用户配置的 MCP/);
+    expect(d.record.some((r) => r.kind === 'argv')).toBe(false); // app-server 没被启动
+  });
+
+  it('在 MCP 查询尚未结束时收到停止：立即 stopped，之后不会启动 Codex', async () => {
+    const cwd = await tmpDir('codex-fake-');
+    const rec = path.join(cwd, 'rec.jsonl');
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const ex = new CodexExecutor({
+      command: process.execPath,
+      prefixArgs: [FAKE_SERVER],
+      env: { FAKE_APP_SCRIPT: '[]', FAKE_RECORD: rec },
+      discoverMcpServers: async () => {
+        await gate;
+        return [];
+      },
+    });
+    const run = ex.start({ cwd, prompt: 'x' });
+    await run.stop();
+    release();
+    const events: ExecutorEvent[] = [];
+    for await (const e of run.events) events.push(e);
+    expect(events.at(-1)).toMatchObject({ type: 'exit', outcome: { kind: 'stopped' } });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(fs.existsSync(rec)).toBe(false); // app-server 从未被启动
+  });
+
+  it('令牌刷新请求被明确拒绝（我们不接触凭证），且不会卡住', async () => {
+    const d = await drive([{ askOther: { method: 'account/chatgptAuthTokens/refresh' } }]);
+    expect(decisions(d)[0]).toHaveProperty('error');
+    expect(JSON.stringify(decisions(d)[0])).toMatch(/credentials/);
+    expect(d.exit).toEqual({ kind: 'exited', code: 0 });
   });
 
   it('真实发给 app-server 的启动参数与请求中包含隔离设置，且不含任何禁止参数', async () => {
@@ -212,6 +276,12 @@ describe('Codex 适配器：detect()', () => {
     new CodexExecutor({ command, prefixArgs: command === process.execPath ? [FAKE_CLI] : [], env: { FAKE_LOGIN: login } });
   it('已安装且已登录', async () => {
     expect(await ex('yes').detect()).toMatchObject({ installed: true, loggedIn: 'yes', version: 'codex-cli 9.9.9' });
+  });
+  it('版本与经过验证的版本不同 → 提示“未经验证”，但不阻止使用', async () => {
+    const r = await ex('yes').detect(); // 假 CLI 报告 9.9.9
+    expect(r).toMatchObject({ installed: true, verified: false });
+    expect(r.note).toMatch(new RegExp(`未经验证.*${VERIFIED_CODEX_VERSION}`));
+    expect(VERIFIED_CODEX_VERSION).toBe('0.166.0');
   });
   it('已安装但未登录', async () => {
     expect(await ex('no').detect()).toMatchObject({ installed: true, loggedIn: 'no' });
