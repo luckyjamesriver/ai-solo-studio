@@ -104,7 +104,7 @@ export function renderTaskFile(i: { taskId: string; binding: { repoRoot: string;
 }
 
 const firstLineOf = (t: string) => t.split('\n', 1)[0]!.trim();
-const numberOf = (line: string) => /^任务编号[:：]\s*(\S+)/.exec(line)?.[1];
+const numberOf = (line: string) => line.match(/^任务编号[:：]\s*(\S+)/)?.[1];
 
 export async function exportTask(i: ExportInput): Promise<ExportResult> {
   if (!TASK_ID.test(i.taskId)) throw new Error(`任务编号不合法：${i.taskId}`);

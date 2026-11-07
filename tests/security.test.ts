@@ -69,6 +69,25 @@ describe('安全基线（防回归）', () => {
     expect((await new ClaudeCliThinker({ env: { [DEV_PERSONAL_ENV]: '1' }, isPackaged: true }).detect()).available).toBe(false);
   });
 
+  it('M3-A2：流程引擎与交接模块只依赖 Thinker 接口，不引用任何具体思考者实现', () => {
+    const concrete = /ClaudeCliThinker|CodexThinker|FakeThinker|claude-cli(?:\.js)?['"]|\/codex(?:\.js)?['"]|\/fake(?:\.js)?['"]|DEV_PERSONAL_ENV/;
+    const files = [...walk('src/core/thinking/flow'), ...walk('src/core/thinking/handoff')].filter((x) => /\.ts$/.test(x));
+    expect(files.length).toBeGreaterThan(5);
+    for (const f of files) expect(read(f), f).not.toMatch(concrete);
+    // 具体实现只允许出现在入口层（cli/presets.ts）
+    const users = walk('src/core/thinking').filter((x) => /\.ts$/.test(x) && concrete.test(read(x)) && !/thinking\/(claude-cli|codex|fake|index)\.ts$/.test(x));
+    expect(users.map((u) => path.relative('src/core/thinking', u))).toEqual(['cli/presets.ts']);
+    // 断言自身有效：样例确实会被匹配
+    expect("import { CodexThinker } from '../codex.js';").toMatch(concrete);
+  });
+
+  it('M3-A2：思考者只返回结构化内容——流程与交接模块不让思考者拿到写权限（宿主写入）', () => {
+    // 流程/交接里不出现把写文件能力交给思考者的字样
+    for (const f of [...walk('src/core/thinking/flow'), ...walk('src/core/thinking/handoff')].filter((x) => /\.ts$/.test(x))) {
+      expect(read(f), f).not.toMatch(/fileAccess\s*:\s*['"]worktree_write['"]|grantedMcp\s*:\s*\[\s*['"]/);
+    }
+  });
+
   it('M3-A1 遗留：src/main 中每个 ClaudeCliThinker 构造点都必须显式传入 isPackaged', () => {
     for (const f of walk('src/main').filter((x) => /\.(c?ts|tsx)$/.test(x))) {
       const s = read(f);

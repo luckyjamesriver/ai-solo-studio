@@ -31,7 +31,7 @@ export function extractSections(md: string, nums: number[]): string {
   const out: string[] = [];
   let take = false;
   for (const line of lines) {
-    const h = /^##\s+(\d+)(?:\.\d+)?[.\s]/.exec(line);
+    const h = line.match(/^##\s+(\d+)(?:\.\d+)?[.\s]/);
     if (h) take = nums.includes(Number(h[1]));
     else if (/^#{1,2}\s/.test(line) && !/^###/.test(line)) take = false;
     if (take) out.push(line);

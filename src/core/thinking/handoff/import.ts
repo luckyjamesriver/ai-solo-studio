@@ -41,11 +41,11 @@ const LABELS: Record<string, string[]> = {
 export function parseReport(text: string): { taskNo?: string; fields: ImportResult['claimed'] } {
   const lines = text.split('\n');
   const first = lines[0]?.trim() ?? '';
-  const taskNo = /^任务编号[:：]\s*(\S+)/.exec(first)?.[1];
+  const taskNo = first.match(/^任务编号[:：]\s*(\S+)/)?.[1];
   const fields: ImportResult['claimed'] = {};
   for (const [key, labels] of Object.entries(LABELS)) {
     for (const line of lines) {
-      const m = /^\s*(?:[-*]\s*)?(?:\*\*)?([^:：*]+?)(?:\*\*)?\s*[:：]\s*(?:`([^`]+)`|(\S.*?))\s*$/.exec(line);
+      const m = line.match(/^\s*(?:[-*]\s*)?(?:\*\*)?([^:：*]+?)(?:\*\*)?\s*[:：]\s*(?:`([^`]+)`|(\S.*?))\s*$/);
       if (m && labels.includes(m[1]!.trim())) {
         (fields as Record<string, string>)[key] = (m[2] ?? m[3] ?? '').trim();
         break;

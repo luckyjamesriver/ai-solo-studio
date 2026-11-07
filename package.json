@@ -19,7 +19,8 @@
     "dev:renderer": "vite",
     "start": "npm run build && electron .",
     "smoke": "npm run build && node scripts/smoke.mjs",
-    "try:codex": "npm run build:core && node scripts/try-codex.mjs"
+    "try:codex": "npm run build:core && node scripts/try-codex.mjs",
+    "think": "npm run build:core && node scripts/think.mjs"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
