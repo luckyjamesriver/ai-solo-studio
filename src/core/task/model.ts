@@ -100,6 +100,12 @@ export interface Task {
   op?: OpLog;
   /** 启动核对或操作后无法判定的状态：需要人工查看（不自动动手） */
   manualReview?: { reason: string; at: string };
+  /** 最近一次执行的执行体进程记录（启动核对时据此判断它是否仍在运行） */
+  execProc?: { pid: number; at: string; name?: string };
+  /** 验收证据的版本序号：每次生成验收证据（含重新检查）加一；确认类请求必须带上当时的版本，旧版本一律拒绝 */
+  acceptanceRev?: number;
+  /** 启动核对修正过这个任务（界面标“已核对”并说明修正了什么） */
+  reconciled?: { at: string; note: string };
   /** 最近一次清理各步结果（清理失败时展示与重试用） */
   cleanup?: { at: string; steps: { step: string; ok: boolean; error?: string }[] };
   timeline: TimelineEntry[];

@@ -12,6 +12,7 @@ import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } fro
 import { runCheck, scriptsDigest, type CheckResult, type SandboxCommandRunner } from '../checks/scripts.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
+import { recordProcess, verifyNoLiveExecutor, type ProcessProbe } from './process-check.js';
 
 export type OpFailReason =
   | 'busy'
@@ -45,6 +46,17 @@ export interface ReconcileEntry {
   action: string;
 }
 
+/** 启动核对第一步（只读识别）的结果 */
+export type ReconcileFinding =
+  | { kind: 'idle' }
+  | { kind: 'cleanup_gone' }
+  | { kind: 'save_merged'; merged: string }
+  | { kind: 'save_not_merged' }
+  | { kind: 'discard_resume' }
+  | { kind: 'undo_not_happened' }
+  | { kind: 'undo_done'; head: string }
+  | { kind: 'manual'; reason: string };
+
 export interface PendingPermission {
   taskId: string;
   request: PermissionRequest;
@@ -63,6 +75,8 @@ export interface RunnerOptions {
    * 两者都没有时，检查结果为“未检查”，绝不在宿主上直接运行。
    */
   sandboxRunner?: SandboxCommandRunner;
+  /** 启动核对用的进程探测（测试里可替换；缺省探测真实进程） */
+  processProbe?: ProcessProbe;
 }
 
 /**
@@ -221,6 +235,7 @@ export class TaskRunner extends EventEmitter {
     }
 
     delete t.effectivePermissions; // 每次开工重新记录实际生效的权限，不沿用上一次
+    delete t.execProc;
     t.isolationWarnings = [];
     const run = this.opts.executor.start({
       cwd: t.worktree.path,
@@ -236,6 +251,8 @@ export class TaskRunner extends EventEmitter {
     const rule = this.opts.autoApprove ?? { autoLow: false };
 
     for await (const ev of run.events) {
+      // 执行体进程一旦启动就记下它的进程号与可执行文件名，供启动核对判断它是否仍在运行
+      if (!t.execProc && run.pid) t.execProc = await recordProcess(run.pid, this.opts.processProbe);
       if (ev.type === 'message') this.log(t, 'message', ev.text, ev.source);
       else if (ev.type === 'isolation') {
         if (ev.info.permissions) t.effectivePermissions = ev.info.permissions; // 以启动后核验得到的实际生效权限为准
@@ -298,6 +315,7 @@ export class TaskRunner extends EventEmitter {
     this.log(t, 'state', `Git：主线 ${t.gitBinding.mainHeadAtStart.slice(0, 8)}→${t.gitBinding.mainHeadAtEnd.slice(0, 8)}，工作树 ${t.gitBinding.worktreeHeadAtStart.slice(0, 8)}→${t.gitBinding.worktreeHeadAtEnd.slice(0, 8)}`);
     delete t.acceptedTree;
     delete t.checksVoid;
+    t.acceptanceRev = (t.acceptanceRev ?? 0) + 1; // 每次生成验收证据（含重新检查）版本加一：旧版本的确认请求一律作废
 
     let drivers = await G.detectExternalDrivers(wt.path);
     if (drivers.supported) drivers = await G.detectExternalDrivers(repo);
@@ -380,6 +398,15 @@ export class TaskRunner extends EventEmitter {
 
   /** 用户对验收标准逐条确认/否决，或标记已试用。只改用户输入，不改自动检查结果。 */
   async confirm(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean; deniedAck?: number; overall?: boolean }) {
+    if (!this.enter(id)) throw new Error(MESSAGES.busy); // 与保存/放弃/撤销/重新检查互斥，避免同时改同一份记录
+    try {
+      return await this.confirmInner(id, update);
+    } finally {
+      this.leave(id);
+    }
+  }
+
+  private async confirmInner(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean; deniedAck?: number; overall?: boolean }) {
     const t = await this.load(id);
     if (t.state !== 'reviewing' || !t.card) throw new Error('任务不在验收阶段。');
     if (t.card.items.some((i) => i.key === 'drivers')) throw new Error(MESSAGES.externalDriver);
@@ -565,8 +592,15 @@ export class TaskRunner extends EventEmitter {
   }
 
   /** 保存的收尾：清理副本与分支，再迁移到 saved / saved_cleanup_pending。保存与启动核对共用。 */
-  private async finishSave(t: Task): Promise<SaveResult> {
-    const cleanup = await G.removeWorktree(this.opts.repo, t.worktree!);
+  private async finishSave(t: Task, fromReconcile = false): Promise<SaveResult> {
+    let cleanup: G.CleanupResult;
+    if (fromReconcile) {
+      // 启动核对中的收尾：先核实任务归属与执行体进程，核实不过就不删除
+      const r = await this.reconcileCleanup(t);
+      cleanup = 'blocked' in r ? { ok: false, steps: [{ step: 'check', ok: false, error: r.blocked }] } : r.cleanup;
+    } else {
+      cleanup = await G.removeWorktree(this.opts.repo, t.worktree!);
+    }
     this.recordCleanup(t, cleanup);
     this.endOp(t, 'finished');
     await this.fire(t, cleanup.ok ? 'save' : 'save_cleanup_pending');
@@ -656,90 +690,187 @@ export class TaskRunner extends EventEmitter {
     }
   }
 
-  /**
-   * 启动核对（B4-plan 第 6 节）：应用启动时调用。对每个操作中断的任务，按 Git 真实状态修正记录；
-   * 无法判定的标“需要人工查看”（manualReview），不自动动手。
-   */
-  async reconcileTasks(): Promise<ReconcileEntry[]> {
+  // ───────────────────────── 启动核对（B4-plan 第 6 节；B4-2 拆成“识别”与“安全收尾”两步） ─────────────────────────
+
+  /** 第一步（只读）：按 Git 真实状态识别一个任务的中断情况。不写任务记录、不动任何目录。 */
+  async inspectTask(t: Task): Promise<ReconcileFinding> {
     const repo = this.opts.repo;
-    const out: ReconcileEntry[] = [];
+    const op = t.op;
+    if (!op || op.phase === 'finished' || op.phase === 'interrupted') {
+      // 清理待办但副本与分支其实已经没有了（例如被人工清理）：只需把记录改为清理完成
+      if (['saved_cleanup_pending', 'discard_cleanup_pending'].includes(t.state) && t.worktree && (await G.worktreeGone(repo, t.worktree))) return { kind: 'cleanup_gone' };
+      return { kind: 'idle' };
+    }
+    if (op.kind === 'save') {
+      const pre = op.preHead;
+      if (!pre) return { kind: 'manual', reason: '保存中断，且没有记录合并前的版本。' };
+      if (t.state !== 'reviewing' && t.state !== 'save_failed_unmerged') return { kind: 'manual', reason: '保存中断，但任务状态已经不是验收阶段。' };
+      const head = await G.headSha(repo);
+      const inMerge = await G.mergeInProgress(repo);
+      const merged = op.taskCommit ? await G.findMergeCommit(repo, pre, op.taskCommit) : null;
+      if (merged && !inMerge) return { kind: 'save_merged', merged };
+      if (!inMerge && head === pre && (await G.dirtyFiles(repo)).length === 0) return { kind: 'save_not_merged' };
+      return { kind: 'manual', reason: '保存中断后，项目的版本或文件状态无法判定。' };
+    }
+    if (op.kind === 'discard') {
+      if (!t.worktree) return { kind: 'manual', reason: '放弃中断，但没有记录任务副本。' };
+      return { kind: 'discard_resume' };
+    }
+    if (op.kind === 'undo') {
+      const rec = t.saveRecord;
+      if (!rec) return { kind: 'manual', reason: '撤销中断，但没有保存记录。' };
+      const head = await G.headSha(repo);
+      const dirty = await G.dirtyFiles(repo);
+      if (head === rec.mergeCommit && dirty.length === 0) return { kind: 'undo_not_happened' };
+      if (head !== rec.mergeCommit && dirty.length === 0 && (await G.isAncestor(repo, rec.mergeCommit, head)) && (await G.treeOf(repo, head)) === (await G.treeOf(repo, rec.preMergeHead))) return { kind: 'undo_done', head };
+      return { kind: 'manual', reason: '撤销中断后，项目的版本或文件状态无法判定。' };
+    }
+    return { kind: 'manual', reason: '清理中断。' };
+  }
+
+  /** 第一步（只读）：识别全部任务，返回需要处理的。 */
+  async identifyTasks(): Promise<{ taskId: string; finding: ReconcileFinding }[]> {
+    const out: { taskId: string; finding: ReconcileFinding }[] = [];
     for (const listed of await this.store.list()) {
-      const id = listed.id;
+      const t = await this.load(listed.id);
+      const finding = await this.inspectTask(t);
+      if (finding.kind !== 'idle') out.push({ taskId: listed.id, finding });
+    }
+    return out;
+  }
+
+  /**
+   * 安全清理（只用于启动核对）：删除前依次核实 任务归属 → 没有本应用记录的执行体进程仍在运行 → 路径校验（removeWorktree 内部再做一次）。
+   * 任一项确认不了就不删除，返回 blocked（调用方把任务标为“清理待处理”，由用户点“重试清理”）。
+   */
+  private async reconcileCleanup(t: Task): Promise<{ blocked: string } | { cleanup: G.CleanupResult }> {
+    const wt = t.worktree!;
+    const owner = G.worktreeOwnershipProblem(this.opts.repo, wt, t.id);
+    if (owner) return { blocked: owner };
+    const proc = await verifyNoLiveExecutor(t, this.opts.processProbe);
+    if (!proc.ok) return { blocked: proc.reason };
+    return { cleanup: await G.removeWorktree(this.opts.repo, wt) };
+  }
+
+  private markReconciled(t: Task, note: string): void {
+    t.reconciled = { at: new Date().toISOString(), note };
+  }
+
+  /** 第二步（有写入）：按识别结果安全收尾。 */
+  async reconcileTasks(): Promise<ReconcileEntry[]> {
+    const out: ReconcileEntry[] = [];
+    for (const { taskId: id, finding: first } of await this.identifyTasks()) {
       if (!this.enter(id)) continue;
       try {
         const t = await this.load(id);
-        const op = t.op;
-        if (!op || op.phase === 'finished' || op.phase === 'interrupted') {
-          // 清理待办但副本与分支其实已经没有了（例如被人工清理）：记录为清理完成
-          if (['saved_cleanup_pending', 'discard_cleanup_pending'].includes(t.state) && t.worktree && (await G.worktreeGone(repo, t.worktree))) {
-            await this.fire(t, 'cleanup_done');
-            out.push({ taskId: id, action: '副本与分支已不存在，清理待办已记为完成' });
-          }
-          continue;
-        }
-        const manual = async (reason: string) => {
-          t.manualReview = { reason, at: new Date().toISOString() };
+        // 加锁后重新识别：识别到应用之间任务可能已变化
+        const f = await this.inspectTask(t);
+        if (f.kind !== first.kind) continue;
+        const repo = this.opts.repo;
+        if (f.kind === 'cleanup_gone') {
+          this.markReconciled(t, '副本与分支已经不存在，清理已记为完成。');
+          await this.fire(t, 'cleanup_done');
+          out.push({ taskId: id, action: '副本与分支已不存在，清理待办已记为完成' });
+        } else if (f.kind === 'manual') {
+          t.manualReview = { reason: f.reason, at: new Date().toISOString() };
+          this.markReconciled(t, '上次操作中断，无法确定项目的状态，为安全起见已停止，请不要继续操作。');
           await this.persist(t);
-          out.push({ taskId: id, action: `需要人工查看：${reason}` });
-        };
-        if (op.kind === 'save') {
-          const pre = op.preHead;
-          if (!pre) { await manual('保存中断，且没有记录合并前的版本。'); continue; }
-          if (t.state !== 'reviewing' && t.state !== 'save_failed_unmerged') { await manual('保存中断，但任务状态已经不是验收阶段。'); continue; }
-          const head = await G.headSha(repo);
-          const inMerge = await G.mergeInProgress(repo);
-          const merged = op.taskCommit ? await G.findMergeCommit(repo, pre, op.taskCommit) : null;
-          if (merged && !inMerge) {
-            // 合并已经落在分支上：补记合并结果，并完成收尾
-            t.saveRecord = { preMergeHead: pre, taskCommit: op.taskCommit!, mergeCommit: merged, branch: t.binding?.branch ?? (await G.currentBranch(repo)), savedAt: new Date().toISOString() };
-            this.opStep(t, '启动核对：合并已在分支上', true, merged);
-            op.mergeCommit = merged;
-            await this.opPhase(t, 'merged');
-            const r = await this.finishSave(t);
-            out.push({ taskId: id, action: r.ok && r.task.state === 'saved' ? '已修正为 saved' : '已修正为 saved_cleanup_pending' });
-          } else if (!inMerge && head === pre && (await G.dirtyFiles(repo)).length === 0) {
-            this.opStep(t, '启动核对：合并没有发生，项目保持原样', true);
+          out.push({ taskId: id, action: `需要人工查看：${f.reason}` });
+        } else if (f.kind === 'save_merged') {
+          // 合并已经落在分支上：补记合并结果，并完成收尾
+          const op = t.op!;
+          t.saveRecord = { preMergeHead: op.preHead!, taskCommit: op.taskCommit!, mergeCommit: f.merged, branch: t.binding?.branch ?? (await G.currentBranch(repo)), savedAt: new Date().toISOString() };
+          this.opStep(t, '启动核对：合并已在分支上', true, f.merged);
+          op.mergeCommit = f.merged;
+          this.markReconciled(t, '上次保存在收尾前中断，核对后确认内容已经保存到项目。');
+          await this.opPhase(t, 'merged');
+          const r = await this.finishSave(t, true);
+          out.push({ taskId: id, action: r.ok && r.task.state === 'saved' ? '已修正为 saved' : '已修正为 saved_cleanup_pending' });
+        } else if (f.kind === 'save_not_merged') {
+          this.opStep(t, '启动核对：合并没有发生，项目保持原样', true);
+          this.endOp(t, 'interrupted');
+          this.markReconciled(t, '上次保存在合并前中断，项目保持原样，可以重新保存。');
+          await this.persist(t);
+          out.push({ taskId: id, action: '保存在合并前中断，项目保持原样；可以重新保存' });
+        } else if (f.kind === 'discard_resume') {
+          // 放弃的意图已明确：继续清理（只针对本任务的副本与分支，且必须先核实）
+          const r = await this.reconcileCleanup(t);
+          if ('blocked' in r) {
+            this.opStep(t, '启动核对：清理前核实未通过，没有删除', false, r.blocked);
             this.endOp(t, 'interrupted');
-            await this.persist(t);
-            out.push({ taskId: id, action: '保存在合并前中断，项目保持原样；可以重新保存' });
+            this.markReconciled(t, '上次放弃在清理时中断；无法确认可以安全删除任务副本，需要你点“重试清理”。');
+            if (canFire(t.state, 'discard_cleanup_pending')) await this.fire(t, 'discard_cleanup_pending');
+            else await this.persist(t);
+            out.push({ taskId: id, action: '放弃的清理未执行（核实未通过），记为 discard_cleanup_pending' });
           } else {
-            await manual('保存中断后，项目的版本或文件状态无法判定。');
-          }
-        } else if (op.kind === 'discard') {
-          // 放弃的意图已明确：继续清理（只针对本任务的副本与分支）
-          if (!t.worktree) { await manual('放弃中断，但没有记录任务副本。'); continue; }
-          const cleanup = await G.removeWorktree(repo, t.worktree);
-          this.recordCleanup(t, cleanup);
-          this.endOp(t, 'finished');
-          if (canFire(t.state, cleanup.ok ? 'discard' : 'discard_cleanup_pending')) await this.fire(t, cleanup.ok ? 'discard' : 'discard_cleanup_pending');
-          else await this.persist(t);
-          out.push({ taskId: id, action: cleanup.ok ? '放弃已完成清理' : '放弃的清理未完成，记为 discard_cleanup_pending' });
-        } else if (op.kind === 'undo') {
-          const rec = t.saveRecord;
-          if (!rec) { await manual('撤销中断，但没有保存记录。'); continue; }
-          const head = await G.headSha(repo);
-          const dirty = await G.dirtyFiles(repo);
-          if (head === rec.mergeCommit && dirty.length === 0) {
-            this.opStep(t, '启动核对：撤销没有发生，项目保持原样', true);
-            this.endOp(t, 'interrupted');
-            await this.persist(t);
-            out.push({ taskId: id, action: '撤销在开始前中断，项目保持原样；可以重新撤销' });
-          } else if (head !== rec.mergeCommit && dirty.length === 0 && (await G.isAncestor(repo, rec.mergeCommit, head)) && (await G.treeOf(repo, head)) === (await G.treeOf(repo, rec.preMergeHead))) {
-            op.undoCommit = head;
+            this.recordCleanup(t, r.cleanup);
             this.endOp(t, 'finished');
-            await this.fire(t, 'undo');
-            out.push({ taskId: id, action: '撤销已在分支上，已修正为 undone' });
-          } else {
-            await manual('撤销中断后，项目的版本或文件状态无法判定。');
+            this.markReconciled(t, '上次放弃在清理时中断，核对后已完成清理。');
+            const ev = r.cleanup.ok ? 'discard' : 'discard_cleanup_pending';
+            if (canFire(t.state, ev)) await this.fire(t, ev);
+            else await this.persist(t);
+            out.push({ taskId: id, action: r.cleanup.ok ? '放弃已完成清理' : '放弃的清理未完成，记为 discard_cleanup_pending' });
           }
-        } else {
-          await manual('清理中断。');
+        } else if (f.kind === 'undo_not_happened') {
+          this.opStep(t, '启动核对：撤销没有发生，项目保持原样', true);
+          this.endOp(t, 'interrupted');
+          this.markReconciled(t, '上次撤销在开始前中断，项目保持原样，可以重新撤销。');
+          await this.persist(t);
+          out.push({ taskId: id, action: '撤销在开始前中断，项目保持原样；可以重新撤销' });
+        } else if (f.kind === 'undo_done') {
+          t.op!.undoCommit = f.head;
+          this.endOp(t, 'finished');
+          this.markReconciled(t, '上次撤销已经生效，核对后记录已更新为“已撤销”。');
+          await this.fire(t, 'undo');
+          out.push({ taskId: id, action: '撤销已在分支上，已修正为 undone' });
         }
       } finally {
         this.leave(id);
       }
     }
     return out;
+  }
+
+  // ───────────────────────── 只读预判（界面显示按钮是否可用；真正操作时核心层会再判一次） ─────────────────────────
+
+  /** 同一任务是否有保存/放弃/撤销/清理/重新检查/确认正在进行 */
+  isBusy(id: string): boolean {
+    return this.busy.has(id) || this.runs.has(id) || this.starting.has(id);
+  }
+
+  /**
+   * 保存的只读预判：与 save 的检查顺序一致（外部驱动 → 仓库与分支 → 主项目干净 → 验收内容未变），但不写任何记录。
+   * 返回第一个不满足的原因，null 表示目前可以保存。
+   */
+  async previewSave(t: Task): Promise<OpFail | null> {
+    const repo = this.opts.repo;
+    const wt = t.worktree;
+    const binding = t.binding;
+    if (!wt || !binding || !t.acceptedTree) return { ok: false, reason: 'not_ready', detail: MESSAGES.notReady };
+    for (const dir of [wt.path, repo]) {
+      const d = await G.detectExternalDrivers(dir);
+      if (!d.supported) return { ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver };
+    }
+    if ((await fs.realpath(repo)) !== binding.repoPath) return { ok: false, reason: 'repo_changed', detail: MESSAGES.repoChanged };
+    if ((await G.currentBranch(repo)) !== binding.branch) return { ok: false, reason: 'branch_changed', detail: MESSAGES.branchChanged };
+    const dirty = await G.dirtyFiles(repo);
+    if (dirty.length) return { ok: false, reason: 'dirty_main', detail: MESSAGES.dirtyMain, files: dirty };
+    if ((await G.computeTree(repo, wt.path)) !== t.acceptedTree) return { ok: false, reason: 'acceptance_invalid', detail: MESSAGES.acceptanceInvalid };
+    return null;
+  }
+
+  /** 撤销的只读预判：与 undo 的前置检查一致。null 表示目前可以撤销。 */
+  async previewUndo(t: Task): Promise<OpFail | null> {
+    const repo = this.opts.repo;
+    const rec = t.saveRecord;
+    if (!['saved', 'undo_failed'].includes(t.state) || !rec) return { ok: false, reason: 'not_allowed', detail: '这个任务没有可以撤销的保存。' };
+    const d = await G.detectExternalDrivers(repo);
+    if (!d.supported) return { ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver };
+    if ((await G.currentBranch(repo)) !== rec.branch) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused };
+    if ((await G.headSha(repo)) !== rec.mergeCommit) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused };
+    const dirty = await G.dirtyFiles(repo);
+    if (dirty.length) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused, files: dirty };
+    return null;
   }
 }
 

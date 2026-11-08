@@ -70,6 +70,8 @@ export interface ExecutorRun {
   respond(requestId: string, decision: Decision): Promise<void>;
   /** 真实停止底层进程。 */
   stop(): Promise<void>;
+  /** 底层执行体进程号（进程启动后才有；模拟执行体没有）。只用于启动核对时判断执行体是否仍在运行。 */
+  readonly pid?: number | undefined;
 }
 
 export interface DetectResult {

@@ -241,6 +241,25 @@ export interface FileChange {
   path: string;
   additions: number | null;
   deletions: number | null;
+  /** 改名时的原路径 */
+  oldPath?: string;
+}
+
+/** 读取某个 tree / 提交里的一个文件（成果展示用，只读）。不存在返回 null；超过 maxBytes 只返回大小。 */
+export type BlobRead = { kind: 'missing' } | { kind: 'too_large'; size: number } | { kind: 'ok'; size: number; text: string };
+export async function readBlob(dir: string, rev: string, filePath: string, maxBytes: number): Promise<BlobRead> {
+  // rev 必须是 40 位十六进制（tree 或提交）；文件路径只作为 <rev>:<path> 的一部分，不会被当成选项
+  if (!/^[0-9a-f]{40}$/.test(rev)) throw new Error('无效的版本。');
+  const spec = `${rev}:${filePath}`;
+  let size: number;
+  try {
+    size = Number((await git(dir, ['cat-file', '-s', spec])).trim());
+  } catch {
+    return { kind: 'missing' };
+  }
+  if (!Number.isFinite(size)) return { kind: 'missing' };
+  if (size > maxBytes) return { kind: 'too_large', size };
+  return { kind: 'ok', size, text: await git(dir, ['cat-file', '-p', spec]) };
 }
 
 /** 相对基线的改动清单（包含未提交与未跟踪文件）。 */
@@ -263,7 +282,9 @@ export async function diffSummary(wt: Worktree): Promise<FileChange[]> {
       const code = (parts[0] ?? '?')[0] ?? '?';
       const p = parts[parts.length - 1] ?? '';
       const [additions, deletions] = counts.get(p) ?? [null, null];
-      return { status: map[code] ?? 'other', path: p, additions, deletions };
+      const change: FileChange = { status: map[code] ?? 'other', path: p, additions, deletions };
+      if (code === 'R' && parts.length > 2 && parts[1]) change.oldPath = parts[1];
+      return change;
     });
 }
 
@@ -331,6 +352,18 @@ function checkOwnWorktree(repo: string, wt: Worktree): string | null {
   const expected = path.resolve(repo, '.studio', 'worktrees', id);
   if (path.resolve(wt.path) !== expected) return `目录 ${wt.path} 不是这个任务的副本目录，已拒绝清理。`;
   return null;
+}
+
+/** 任务归属核实（启动核对用）：副本必须正是这个任务编号对应的分支与目录。返回问题说明，null 表示没问题。 */
+export function worktreeOwnershipProblem(repo: string, wt: Worktree, taskId: string): string | null {
+  let expectedBranch: string;
+  try {
+    expectedBranch = taskBranch(taskId);
+  } catch {
+    return '任务编号不合法。';
+  }
+  if (wt.branch !== expectedBranch) return '任务副本的分支与任务编号不一致。';
+  return checkOwnWorktree(repo, wt);
 }
 
 /**

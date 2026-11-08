@@ -832,6 +832,10 @@ export class CodexExecutor implements Executor {
 
     return {
       events: ch,
+      /** 执行体进程号（进程启动后才有）；任务记录据此在启动核对时判断执行体是否还在运行 */
+      get pid(): number | undefined {
+        return child?.pid;
+      },
       async respond(requestId: string, decision: Decision) {
         const rpcId = pendingApprovals.get(requestId);
         if (rpcId === undefined) throw new Error(`未知的权限请求：${requestId}`);
