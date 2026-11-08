@@ -58,6 +58,8 @@ export interface UserAcceptanceView {
   confirmTexts: { discard: string; undo: string; save: string | null };
   /** 项目状态异常：禁止一切写操作，只读 */
   readOnly: boolean;
+  /** 同一任务有操作进行中（含刚结束、记录还在收尾）：界面稍后会重新取一次视图 */
+  busy: boolean;
   /** 启动核对修正过：一句话说明；否则 null */
   reconciled: string | null;
   /** 可复制的诊断摘要：只含任务编号、状态、时间与上面的固定文案 */
@@ -339,6 +341,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
       save: ctx.otherUndoableSave ? VIEW_TEXT.saveSupersedes : null,
     },
     readOnly,
+    busy: ctx.busy,
     reconciled: t.reconciled ? `已核对：${t.reconciled.note}` : null,
     diagnosticSummary: summary,
     version: acceptanceVersion(t),

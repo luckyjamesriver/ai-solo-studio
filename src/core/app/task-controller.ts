@@ -1,5 +1,4 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { StaleRunError, StateConflictError, WriterLockedError, type OpenOptions } from '../persistence/index.js';
 import * as G from '../git/git.js';
 import { GitError } from '../git/git.js';
 import { MESSAGES } from '../task/messages.js';
@@ -36,6 +35,8 @@ export interface ControllerOptions {
   /** 系统文件夹选择框（只有主进程能弹；渲染进程拿不到路径参数的入口） */
   pickDirectory: () => Promise<string | null>;
   prefs: TaskPrefs;
+  /** 记录库的打开选项（主进程里传入：数据目录所在卷检查、租约等待） */
+  storeOptions?: OpenOptions;
 }
 
 const EDITABLE = ['draft', 'clarifying', 'planned', 'approved'];
@@ -53,7 +54,7 @@ export class TaskController {
 
   /** 懒创建：第一次真正用到任务功能时才取得执行体 */
   private r(): TaskRunner {
-    this.runner ??= new TaskRunner({ repo: this.o.repo, executor: this.o.makeExecutor() });
+    this.runner ??= new TaskRunner({ repo: this.o.repo, executor: this.o.makeExecutor(), ...(this.o.storeOptions ? { storeOptions: this.o.storeOptions } : {}) });
     return this.runner;
   }
 
@@ -67,6 +68,7 @@ export class TaskController {
 
   private async load(id: unknown): Promise<Task> {
     if (typeof id !== 'string') throw new Error('无效的任务编号。');
+    await this.ready(); // 启动核对先于任何读写（否则可能把刚开工的任务当作“中断的运行”）
     const t = await this.r().store.get(id);
     if (!t) throw new Error('找不到这个任务。');
     return t;
@@ -85,6 +87,7 @@ export class TaskController {
   async create(request: unknown): Promise<TaskView> {
     if (typeof request !== 'string' || !request.trim()) throw new Error('请先写下你想让 AI 做什么。');
     if (request.length > 4000) throw new Error('需求太长了，请精简到 4000 字以内。');
+    await this.ready();
     return this.view(await this.r().create(request.trim()));
   }
 
@@ -162,7 +165,7 @@ export class TaskController {
     this.active.add(t.id);
     void this.r()
       .start(t.id)
-      .catch((e: Error) => this.startErrors.set(t.id, e.message))
+      .catch((e: Error) => this.startErrors.set(t.id, this.persistenceMessage(e) ?? e.message))
       .finally(() => this.active.delete(t.id));
     return this.view(t);
   }
@@ -192,16 +195,22 @@ export class TaskController {
     return this.reconcileDone;
   }
 
-  /** 原始错误只写进 <项目>/.studio/diagnostics.log（受保护的诊断记录），界面不读取 */
+  /** 原始错误只写进 <项目>/.studio/events.jsonl（受保护的诊断记录，经持久化服务追加），界面不读取 */
   private async diagnose(taskId: string | undefined, what: string, e: unknown): Promise<void> {
     try {
-      const dir = path.join(this.o.repo, '.studio');
-      await fs.mkdir(dir, { recursive: true });
       const raw = e instanceof Error ? `${e.message}${e instanceof GitError ? `\n${e.stderr}` : ''}` : String(e);
-      await fs.appendFile(path.join(dir, 'diagnostics.log'), `${new Date().toISOString()} ${taskId ?? '-'} ${what}: ${raw}\n`);
+      await (await this.r().store.recordStore()).appendEvent('diagnostic', { taskId: taskId ?? null, what, raw });
     } catch {
       // 诊断记录写不进去也不能影响界面
     }
+  }
+
+  /** 把持久化层的显式错误映射成固定文案；其余未知错误返回 null */
+  private persistenceMessage(e: unknown): string | null {
+    if (e instanceof StateConflictError || e instanceof StaleRunError) return MESSAGES.stateConflict;
+    if (e instanceof WriterLockedError) return MESSAGES.writerLocked;
+    if (e instanceof Error && e.message === MESSAGES.busy) return MESSAGES.busy;
+    return null;
   }
 
   private checkArg(re: RegExp, v: unknown): string {
@@ -265,7 +274,7 @@ export class TaskController {
           outcome = await work(t);
         } catch (e) {
           await this.diagnose(id, '操作失败', e);
-          outcome = { ok: false, message: e instanceof Error && e.message === MESSAGES.busy ? MESSAGES.busy : MESSAGES.unknownError };
+          outcome = { ok: false, message: this.persistenceMessage(e) ?? MESSAGES.unknownError };
         }
       }
     } finally {

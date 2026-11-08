@@ -87,6 +87,9 @@ const T: Record<TaskState, Partial<Record<TaskEvent, TaskState>>> = {
   undo_failed: { undo: 'undone', undo_failed: 'undo_failed' },
 };
 
+/** 全部任务状态（持久化时校验记录里的状态值） */
+export const TASK_STATES = Object.keys(T) as TaskState[];
+
 export class InvalidTransition extends Error {
   constructor(public readonly from: TaskState, public readonly event: TaskEvent) {
     super(`非法状态迁移：${from} --${event}-->`);

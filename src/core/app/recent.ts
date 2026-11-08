@@ -1,6 +1,7 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { updateRecord, type OpenOptions } from '../persistence/index.js';
+import { APP_COLLECTION, AppStore } from './app-store.js';
 import { validateProjectPath, type ProjectPathOptions } from '../env/project-path.js';
 
 /**
@@ -19,41 +20,38 @@ export interface RecentView extends RecentEntry {
   exists: boolean;
 }
 
-const FILE = 'recent-projects.json';
+const ID = 'recent-projects';
 const MAX = 10;
 
-export class RecentProjects {
-  constructor(private readonly dir: string, private readonly pathOpts: ProjectPathOptions = {}) {}
+const normalize = (raw: { entries?: unknown } | null): RecentEntry[] => {
+  if (!raw || !Array.isArray(raw.entries)) return [];
+  return raw.entries.filter(
+    (e): e is RecentEntry => !!e && typeof e === 'object' && typeof (e as RecentEntry).id === 'string' && typeof (e as RecentEntry).path === 'string' && typeof (e as RecentEntry).lastOpened === 'string',
+  );
+};
 
-  private get file() {
-    return path.join(this.dir, FILE);
+export class RecentProjects {
+  private readonly app: AppStore;
+  constructor(private readonly dir: string, private readonly pathOpts: ProjectPathOptions = {}, storeOpts: OpenOptions = {}) {
+    this.app = new AppStore(dir, storeOpts);
   }
 
   private async read(): Promise<RecentEntry[]> {
-    try {
-      const raw = JSON.parse(await fs.readFile(this.file, 'utf8')) as { entries?: unknown };
-      if (!Array.isArray(raw.entries)) return [];
-      return raw.entries.filter(
-        (e): e is RecentEntry => !!e && typeof e === 'object' && typeof (e as RecentEntry).id === 'string' && typeof (e as RecentEntry).path === 'string' && typeof (e as RecentEntry).lastOpened === 'string',
-      );
-    } catch {
-      return [];
-    }
+    return normalize(await this.app.read(ID));
   }
 
-  private async write(entries: RecentEntry[]): Promise<void> {
-    await fs.mkdir(this.dir, { recursive: true });
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify({ version: 1, entries }, null, 2), { mode: 0o600 });
-    await fs.rename(tmp, this.file);
+  private async write(change: (cur: RecentEntry[]) => RecentEntry[]): Promise<void> {
+    await updateRecord(await this.app.store(), APP_COLLECTION, ID, { version: 1, entries: [] }, (cur) => ({ version: 1, entries: change(normalize(cur)) }));
   }
 
   /** 记录一次打开（路径应已通过 validateProjectPath）。已有同一路径则更新时间并置顶。 */
   async record(projectPath: string, now: Date = new Date()): Promise<RecentEntry> {
-    const all = await this.read();
-    const prev = all.find((e) => e.path === projectPath);
-    const entry: RecentEntry = { id: prev?.id ?? randomUUID(), path: projectPath, lastOpened: now.toISOString() };
-    await this.write([entry, ...all.filter((e) => e.path !== projectPath)].slice(0, MAX));
+    let entry!: RecentEntry;
+    await this.write((all) => {
+      const prev = all.find((e) => e.path === projectPath);
+      entry = { id: prev?.id ?? randomUUID(), path: projectPath, lastOpened: now.toISOString() };
+      return [entry, ...all.filter((e) => e.path !== projectPath)].slice(0, MAX);
+    });
     return entry;
   }
 
@@ -74,6 +72,6 @@ export class RecentProjects {
   }
 
   async forget(id: string): Promise<void> {
-    await this.write((await this.read()).filter((e) => e.id !== id));
+    await this.write((all) => all.filter((e) => e.id !== id));
   }
 }

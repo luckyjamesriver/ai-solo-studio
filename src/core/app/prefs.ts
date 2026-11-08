@@ -1,32 +1,26 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { updateRecord, type OpenOptions } from '../persistence/index.js';
+import { APP_COLLECTION, AppStore } from './app-store.js';
 
 export type ModePreference = 'standard' | 'full_trust';
+
+const ID = 'task-prefs';
+type Projects = Record<string, { lastMode: ModePreference }>;
 
 /**
  * 项目级偏好：只记“上次选了哪种模式”，用来预选。
  * **偏好永远不能代替确认**：选了完全信任的项目下次只是预选，每个任务开工前仍必须重新确认。
+ * 存储：userData 记录库里的 `app/task-prefs`（经持久化服务提交，原子写 + CAS）。
  */
 export class TaskPrefs {
-  constructor(private readonly dataDir: string) {}
-  private file() {
-    return path.join(this.dataDir, 'task-prefs.json');
-  }
-  private async read(): Promise<Record<string, { lastMode: ModePreference }>> {
-    try {
-      const v = JSON.parse(await fs.readFile(this.file(), 'utf8')) as { projects?: Record<string, { lastMode: ModePreference }> };
-      return v.projects ?? {};
-    } catch {
-      return {};
-    }
+  private readonly app: AppStore;
+  constructor(dataDir: string, storeOpts: OpenOptions = {}) {
+    this.app = new AppStore(dataDir, storeOpts);
   }
   async getMode(project: string): Promise<ModePreference> {
-    return (await this.read())[project]?.lastMode === 'full_trust' ? 'full_trust' : 'standard';
+    const v = (await this.app.read(ID)) as { projects?: Projects } | null;
+    return v?.projects?.[project]?.lastMode === 'full_trust' ? 'full_trust' : 'standard';
   }
   async setMode(project: string, mode: ModePreference): Promise<void> {
-    const all = await this.read();
-    all[project] = { lastMode: mode };
-    await fs.mkdir(this.dataDir, { recursive: true });
-    await fs.writeFile(this.file(), JSON.stringify({ projects: all }, null, 2));
+    await updateRecord(await this.app.store(), APP_COLLECTION, ID, {}, (cur) => ({ projects: { ...((cur as { projects?: Projects }).projects ?? {}), [project]: { lastMode: mode } } }));
   }
 }

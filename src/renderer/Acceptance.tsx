@@ -71,6 +71,13 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
     studio().getAcceptanceView(task.id).then((v) => { setView(v); setLoadError(null); }).catch((e: Error) => setLoadError(e.message));
   }, [task.id]);
   useEffect(load, [load, task.state]);
+  // 取到视图时任务可能还在收尾（主进程标记 busy）：稍后重新取一次，避免界面停在“全部置灰”
+  const viewBusy = view?.busy ?? false;
+  useEffect(() => {
+    if (!viewBusy || pending) return;
+    const timer = setTimeout(load, 500);
+    return () => clearTimeout(timer);
+  }, [viewBusy, pending, load, view]);
 
   const run = async (call: (s: ReturnType<typeof studio>) => Promise<AcceptanceActionResult>) => {
     if (inFlight.current) return;

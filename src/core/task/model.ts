@@ -60,6 +60,10 @@ export interface SaveRecord {
 
 export interface Task {
   id: string;
+  /** 记录的修订号：由存储层在读取和提交后填入，不随记录内容保存；提交时用来做 CAS（ADR 0005） */
+  revision?: number;
+  /** 记录当前的运行编号：由存储层在读取后填入；开工时换成新的，旧运行的回传一律被拒绝 */
+  runId?: string;
   request: string;
   state: TaskState;
   plan?: Plan;

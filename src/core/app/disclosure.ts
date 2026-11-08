@@ -1,5 +1,5 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { updateRecord, type OpenOptions } from '../persistence/index.js';
+import { APP_COLLECTION, AppStore } from './app-store.js';
 
 /**
  * 首次外发告知（需求 v1.5 §3.5）：本应用会把项目资料发给哪些 AI 服务、何时发送、不会发送什么。
@@ -48,31 +48,23 @@ export interface DisclosureRecord {
   services: string[];
 }
 
-const FILE = 'disclosure.json';
+const ID = 'disclosure';
 
 export class DisclosureStore {
-  constructor(private readonly dir: string) {}
-
-  private get file() {
-    return path.join(this.dir, FILE);
+  private readonly app: AppStore;
+  constructor(dir: string, storeOpts: OpenOptions = {}) {
+    this.app = new AppStore(dir, storeOpts);
   }
 
   async get(): Promise<DisclosureRecord | null> {
-    try {
-      const r = JSON.parse(await fs.readFile(this.file, 'utf8')) as Partial<DisclosureRecord>;
-      if (r.version !== DISCLOSURE_VERSION || typeof r.acceptedAt !== 'string') return null;
-      return { version: r.version, acceptedAt: r.acceptedAt, services: Array.isArray(r.services) ? r.services.map(String) : [] };
-    } catch {
-      return null;
-    }
+    const r = (await this.app.read(ID)) as Partial<DisclosureRecord> | null;
+    if (!r || r.version !== DISCLOSURE_VERSION || typeof r.acceptedAt !== 'string') return null;
+    return { version: r.version, acceptedAt: r.acceptedAt, services: Array.isArray(r.services) ? r.services.map(String) : [] };
   }
 
   async accept(content: DisclosureContent, now: Date = new Date()): Promise<DisclosureRecord> {
     const rec: DisclosureRecord = { version: DISCLOSURE_VERSION, acceptedAt: now.toISOString(), services: content.services.map((s) => s.name) };
-    await fs.mkdir(this.dir, { recursive: true });
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(rec, null, 2), { mode: 0o600 });
-    await fs.rename(tmp, this.file);
+    await updateRecord(await this.app.store(), APP_COLLECTION, ID, {}, () => ({ ...rec }));
     return rec;
   }
 

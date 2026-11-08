@@ -4,7 +4,8 @@ import * as G from '../git/git.js';
 import { next, canFire, type TaskEvent } from './state.js';
 import { MESSAGES } from './messages.js';
 import { saveBlockers } from './save-rules.js';
-import { TaskStore } from './store.js';
+import { TaskStore, type SaveOptions } from './store.js';
+import { RecordStore, StaleRunError, type OpenOptions } from '../persistence/index.js';
 import { resolveCapabilities, type Capabilities } from '../capabilities/model.js';
 import type { OpLog, Plan, Task, TimelineEntry } from './model.js';
 import type { Decision, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
@@ -55,7 +56,9 @@ export type ReconcileFinding =
   | { kind: 'discard_resume' }
   | { kind: 'undo_not_happened' }
   | { kind: 'undo_done'; head: string }
-  | { kind: 'manual'; reason: string };
+  | { kind: 'manual'; reason: string }
+  /** 任务记录还停在“施工中”，但本进程没有这次运行（应用退出或崩溃过）：需要换掉运行编号、按失败收尾 */
+  | { kind: 'run_interrupted' };
 
 export interface PendingPermission {
   taskId: string;
@@ -77,6 +80,8 @@ export interface RunnerOptions {
   sandboxRunner?: SandboxCommandRunner;
   /** 启动核对用的进程探测（测试里可替换；缺省探测真实进程） */
   processProbe?: ProcessProbe;
+  /** 记录库的打开选项（数据目录所在卷检查、租约等待时间；主进程里传入，测试里缺省） */
+  storeOptions?: OpenOptions;
 }
 
 /**
@@ -93,22 +98,23 @@ export class TaskRunner extends EventEmitter {
 
   constructor(private readonly opts: RunnerOptions) {
     super();
-    this.store = new TaskStore(opts.repo);
+    this.store = new TaskStore(opts.repo, opts.storeOptions);
   }
 
   private log(task: Task, kind: TimelineEntry['kind'], text: string, source?: 'host') {
     task.timeline.push({ at: new Date().toISOString(), kind, text, ...(source ? { source } : {}) });
   }
 
-  private async fire(task: Task, ev: TaskEvent) {
+  private async fire(task: Task, ev: TaskEvent, opts?: SaveOptions) {
     const from = task.state;
     task.state = next(task.state, ev);
     this.log(task, 'state', `${from} → ${task.state}`);
-    await this.persist(task);
+    await this.persist(task, opts);
   }
 
-  private async persist(task: Task) {
-    await this.store.save(task);
+  /** 提交任务记录（带修订号 CAS 与运行编号校验）：冲突或运行过期会抛出 StateConflictError / StaleRunError，绝不静默覆盖 */
+  private async persist(task: Task, opts?: SaveOptions) {
+    await this.store.save(task, opts);
     this.emit('update', structuredClone(task));
   }
 
@@ -192,6 +198,9 @@ export class TaskRunner extends EventEmitter {
     this.stopRequested.delete(id);
     try {
       return await this.runTask(id, prompt);
+    } catch (e) {
+      if (e instanceof StaleRunError) return this.load(id); // 本次运行已被取代，不改任何东西
+      throw e;
     } finally {
       this.starting.delete(id);
       this.stopRequested.delete(id);
@@ -224,7 +233,8 @@ export class TaskRunner extends EventEmitter {
       worktreePath: t.worktree.path,
     };
     delete t.gitBinding;
-    await this.fire(t, 'start');
+    t.runId = RecordStore.newRunId(); // 每次开工是新的一次运行：之后旧运行的任何回传都会被拒绝
+    await this.fire(t, 'start', { startRun: true });
 
     // 准备阶段收到停止：不启动执行体，直接进入 stopped 并照常验收
     if (this.stopRequested.has(id)) {
@@ -274,7 +284,15 @@ export class TaskRunner extends EventEmitter {
         t.denied = ev.denied ?? [];
         t.deniedAcks = t.denied.map(() => false);
       }
-      await this.persist(t);
+      try {
+        await this.persist(t);
+      } catch (e) {
+        if (!(e instanceof StaleRunError)) throw e;
+        // 这次运行已被取代（任务已经重新开工）：不能再写入，停掉它
+        await run.stop().catch(() => undefined);
+        this.runs.delete(t.id);
+        return t;
+      }
     }
     this.runs.delete(t.id);
 
@@ -704,6 +722,7 @@ export class TaskRunner extends EventEmitter {
   async inspectTask(t: Task): Promise<ReconcileFinding> {
     const repo = this.opts.repo;
     const op = t.op;
+    if (t.state === 'running' && !this.runs.has(t.id) && !this.starting.has(t.id)) return { kind: 'run_interrupted' };
     if (!op || op.phase === 'finished' || op.phase === 'interrupted') {
       // 清理待办但副本与分支其实已经没有了（例如被人工清理）：只需把记录改为清理完成
       if (['saved_cleanup_pending', 'discard_cleanup_pending'].includes(t.state) && t.worktree && (await G.worktreeGone(repo, t.worktree))) return { kind: 'cleanup_gone' };
@@ -779,6 +798,29 @@ export class TaskRunner extends EventEmitter {
           this.markReconciled(t, '副本与分支已经不存在，清理已记为完成。');
           await this.fire(t, 'cleanup_done');
           out.push({ taskId: id, action: '副本与分支已不存在，清理待办已记为完成' });
+        } else if (f.kind === 'run_interrupted') {
+          // 先换掉运行编号（fence）：旧运行之后的任何回传都会被拒绝；再核实执行体进程，最后按失败收尾
+          const proc = await verifyNoLiveExecutor(t, this.opts.processProbe);
+          t.runId = RecordStore.newRunId();
+          if (!proc.ok) {
+            t.manualReview = { reason: '上次执行被中断，无法确认执行体已经停止。', at: new Date().toISOString() };
+            this.markReconciled(t, '上次执行因应用退出而中断，无法确认 AI 已经停止，为安全起见已停止，请不要继续操作。');
+            await this.persist(t, { startRun: true, note: 'fence' });
+            out.push({ taskId: id, action: `需要人工查看：${proc.reason}` });
+          } else {
+            t.exit = { kind: 'signaled', signal: 'APP_RESTART' };
+            t.denied ??= [];
+            t.deniedAcks ??= [];
+            this.markReconciled(t, '上次执行因应用退出而中断，已按失败处理；AI 的成果仍在任务副本里，可以查看后保存或放弃。');
+            await this.fire(t, 'exec_exit_fail', { startRun: true, note: 'fence' });
+            try {
+              await this.review(t);
+            } catch {
+              t.manualReview = { reason: '执行中断后无法生成验收内容。', at: new Date().toISOString() };
+              await this.persist(t);
+            }
+            out.push({ taskId: id, action: '执行被中断，已换掉运行编号并按失败收尾' });
+          }
         } else if (f.kind === 'manual') {
           t.manualReview = { reason: f.reason, at: new Date().toISOString() };
           this.markReconciled(t, '上次操作中断，无法确定项目的状态，为安全起见已停止，请不要继续操作。');
