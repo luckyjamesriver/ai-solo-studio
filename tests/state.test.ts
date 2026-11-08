@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { next, canFire, InvalidTransition } from '../src/core/task/state.js';
+import { next, canFire, InvalidTransition, TERMINAL, transitionTable } from '../src/core/task/state.js';
 
 describe('任务状态机', () => {
   it('完整的快乐路径', () => {
@@ -33,5 +33,30 @@ describe('任务状态机', () => {
   it('终态不可再迁移', () => {
     expect(() => next('saved', 'discard')).toThrow();
     expect(() => next('discarded', 'start')).toThrow();
+  });
+
+  it('B4：保存、放弃、撤销、清理的迁移', () => {
+    expect(next('reviewing', 'save_cleanup_pending')).toBe('saved_cleanup_pending');
+    expect(next('reviewing', 'save_conflict')).toBe('save_failed_unmerged');
+    expect(next('save_failed_unmerged', 'discard')).toBe('discarded');
+    expect(next('save_failed_unmerged', 'save')).toBe('saved');
+    expect(next('reviewing', 'discard_cleanup_pending')).toBe('discard_cleanup_pending');
+    expect(next('saved_cleanup_pending', 'cleanup_done')).toBe('saved');
+    expect(next('discard_cleanup_pending', 'cleanup_done')).toBe('discarded');
+    expect(next('saved', 'undo')).toBe('undone');
+    expect(next('saved', 'undo_failed')).toBe('undo_failed');
+    expect(next('undo_failed', 'undo')).toBe('undone');
+  });
+
+  it('B4：没有“仍然保存”之类的捷径——检查之外的状态都不能直接保存或撤销', () => {
+    for (const s of ['draft', 'planned', 'approved', 'running', 'exec_succeeded', 'saved', 'saved_cleanup_pending', 'discarded', 'undone', 'undo_failed'] as const) {
+      expect(canFire(s, 'save'), `${s} 不应能 save`).toBe(false);
+    }
+    for (const s of ['reviewing', 'save_failed_unmerged', 'saved_cleanup_pending', 'discard_cleanup_pending', 'undone', 'discarded', 'running'] as const) {
+      expect(canFire(s, 'undo'), `${s} 不应能 undo`).toBe(false);
+    }
+    expect(canFire('discarded', 'cleanup_done')).toBe(false);
+    expect(TERMINAL).toEqual(['discarded', 'undone']);
+    expect(transitionTable().length).toBeGreaterThan(40);
   });
 });

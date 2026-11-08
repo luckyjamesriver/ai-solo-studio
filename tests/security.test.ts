@@ -348,4 +348,74 @@ describe('安全基线（防回归）', () => {
     expect(m).toHaveLength(1);
     expect(m[0]![1]).not.toMatch(/\bisPackaged\b/);
   });
+
+  /**
+   * M3-B4-1（新增，只收紧；没有放宽或修改任何已有断言）：受控 Git 层与保存流程。
+   */
+  describe('B4-1：受控 Git 层', () => {
+    const DIRECT_GIT = /\b(?:run|runProcess|spawn|spawnSync|execFile|execFileSync)\(\s*['"]git['"]|['"]git['"]\s*,\s*\[/;
+    /** 取出从 start 开始、到下一个行首 `}`（函数结束）为止的源码 */
+    const fnBody = (src: string, start: string): string => {
+      const i = src.indexOf(start);
+      expect(i, `找不到 ${start}`).toBeGreaterThanOrEqual(0);
+      const j = src.indexOf('\n}\n', i);
+      return src.slice(i, j === -1 ? undefined : j);
+    };
+    const methodBody = (src: string, start: string): string => {
+      const i = src.indexOf(start);
+      expect(i, `找不到 ${start}`).toBeGreaterThanOrEqual(0);
+      const j = src.indexOf('\n  }\n', i);
+      return src.slice(i, j === -1 ? undefined : j);
+    };
+
+    it('src 中除 git.ts 外不得直接调用 git（run(\'git\' / [\'git\', [...] 等）；断言自身有效', () => {
+      for (const [f, s] of sources) {
+        if (f.endsWith(path.join('core', 'git', 'git.ts'))) continue;
+        expect(s, `${f} 直接调用了 git，必须经 git.ts 的统一入口`).not.toMatch(DIRECT_GIT);
+      }
+      expect("run('git', args)").toMatch(DIRECT_GIT);
+      expect("spawn('git', ['status'])").toMatch(DIRECT_GIT);
+      expect("const argv = ['git', ['x']]").toMatch(DIRECT_GIT);
+      expect("resolveTool('git', {})").not.toMatch(DIRECT_GIT); // 只是工具名，不是调用
+    });
+
+    it('git.ts 的统一入口固定附加 hooksPath、fsmonitor、gpgsign 三项参数（并且真的用在调用里）', () => {
+      const g = read('src/core/git/git.ts');
+      expect(g).toContain("'core.hooksPath=/dev/null'");
+      expect(g).toContain("'core.fsmonitor=false'");
+      expect(g).toContain("'commit.gpgsign=false'");
+      expect(g).toContain("'tag.gpgsign=false'");
+      expect(g).toContain("'diff.external='");
+      expect(fnBody(g, 'export async function git(')).toContain('...SAFE_GIT_CONFIG');
+      const dec = fnBody(g, 'function decorate(');
+      expect(dec).toContain('--no-ext-diff');
+      expect(dec).toContain('--no-textconv');
+      expect(dec).toContain('--no-verify');
+    });
+
+    it('保存函数必须调用外部驱动检测、与 acceptedTree 比对，并用 commit-tree 生成任务提交（不再 add -A）', () => {
+      const r = read('src/core/task/runner.ts');
+      const save = methodBody(r, 'private async doSave(');
+      expect(save).toContain('detectExternalDrivers(');
+      expect(save).toContain('computeTree(');
+      expect(save).toMatch(/tree\s*!==\s*t\.acceptedTree/);
+      expect(save).toContain('commitTree(');
+      expect(save).not.toMatch(/'add'|commitWorktree|--no-verify=false/);
+      expect(r).not.toContain('commitWorktree'); // runner 不再使用“add -A 后提交”
+      // 撤销同样受外部驱动检测约束
+      expect(methodBody(r, 'async undo(')).toContain('detectExternalDrivers(');
+      // 开工创建副本前（checkout 会触发 smudge 驱动）也必须先检测
+      expect(r.indexOf('detectExternalDrivers(this.opts.repo)')).toBeLessThan(r.indexOf('G.createWorktree('));
+    });
+
+    it('removeWorktree 不得吞错（不得 .catch(() => undefined)）；清理前校验只针对本任务', () => {
+      const g = read('src/core/git/git.ts');
+      const body = fnBody(g, 'export async function removeWorktree(');
+      expect(body).not.toMatch(/\.catch\(\s*\(\)\s*=>\s*undefined\s*\)/);
+      expect(body).toContain('checkOwnWorktree(');
+      expect(fnBody(g, 'function checkOwnWorktree(')).toContain('.studio');
+      // 断言自身有效
+      expect("await git(a).catch(() => undefined)").toMatch(/\.catch\(\s*\(\)\s*=>\s*undefined\s*\)/);
+    });
+  });
 });
