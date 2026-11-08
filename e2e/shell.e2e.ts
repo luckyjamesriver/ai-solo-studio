@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /**
  * Electron 端到端测试（Playwright，驱动真实的 Electron 窗口）。
@@ -191,6 +192,231 @@ describe('打开项目', () => {
     expect(await a.page.getByTestId('dirty').innerText()).toContain('2 个文件');
     expect(git(proj, 'rev-parse', 'HEAD').toString()).toBe(before);
     expect(git(proj, 'status', '--porcelain').toString().trim().split('\n')).toHaveLength(2);
+  });
+});
+
+/**
+ * 施工模式界面（M3-B3-2）。执行体用 FakeExecutor：和替换系统对话框同一思路——在运行中的主进程里替换依赖的方法，
+ * 把 CodexExecutor.prototype.start 指向 FakeExecutor（同一份已构建的模块实例），生产代码里没有任何测试开关，也不调用真实 Codex。
+ * 测试项目没有 package.json，所以检查项显示“未检查”（不会启动任何真实的受限运行环境）。
+ */
+const distUrl = (p: string) => pathToFileURL(path.join(root, 'dist-electron', 'core', p)).href;
+async function useFakeExecutor(app: ElectronApplication, script: unknown[]) {
+  await app.evaluate(
+    async (_e, a) => {
+      // evaluate 里不能用 import()（没有动态导入回调）；Node 24 支持 require() 同步加载 ES 模块，且与应用自己 import 的是同一份模块实例
+      const { createRequire } = process.getBuiltinModule('module');
+      const req = createRequire(a.codexUrl);
+      const { CodexExecutor } = req(a.codexPath);
+      const { FakeExecutor } = req(a.fakePath);
+      const fake = new FakeExecutor(a.script, { emitPermissions: true });
+      CodexExecutor.prototype.start = function (opts: unknown) { return fake.start(opts); };
+    },
+    { codexUrl: distUrl('executor/adapters/codex.js'), codexPath: fileURLToPath(distUrl('executor/adapters/codex.js')), fakePath: fileURLToPath(distUrl('executor/adapters/fake.js')), script },
+  );
+}
+async function openProjectWithFake(proj: string, script: unknown[], data = mk('data')) {
+  const a = await launch(data);
+  await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+  await useFakeExecutor(a.app, script);
+  await stubDialog(a.app, proj);
+  await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
+  await a.page.getByTestId('project').waitFor();
+  return a;
+}
+async function newTask(page: Page, text: string) {
+  await page.getByTestId('request').fill(text);
+  await page.getByTestId('create-task').click();
+  await page.getByTestId('plan-card').waitFor();
+}
+const taskFiles = (proj: string) => {
+  const dir = path.join(proj, '.studio', 'tasks');
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Record<string, any>) : [];
+};
+
+describe('施工模式界面', () => {
+  it('标准模式：计划卡默认标准 → 开工 → 施工视图只有“停止” → 停止后结果区显示事实与“AI 自己的说法”', async () => {
+    const proj = gitProject('std-site');
+    const a = await openProjectWithFake(proj, [{ do: 'say', text: '正在改标题，另外联网安装依赖失败了。' }, { do: 'write', path: 'index.html', content: '<h1>new</h1>' }, { do: 'hang' }]);
+    await newTask(a.page, '把首页标题改成 new');
+    const plan = a.page.getByTestId('plan-card');
+    expect(await a.page.getByTestId('mode-standard').isChecked()).toBe(true);
+    expect(await a.page.getByTestId('mode-full-trust').isChecked()).toBe(false);
+    const planText = await plan.innerText();
+    expect(planText).toContain('AI 只能修改这个任务的副本');
+    expect(planText).toContain('其他位置 AI 仍可读取');
+    expect(planText).toContain('允许联网（例如安装依赖）——开启后 AI 可访问任意网站。');
+    expect(planText).toContain('允许修改另一个文件夹');
+    expect(planText).toContain('没有可运行的构建或测试脚本');
+    expect(planText).not.toMatch(/域名|限制网站|白名单/); // 不暗示能限制网站
+    await shot(a.page, '4-计划卡（标准模式）');
+
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('run-view').waitFor();
+    await a.page.getByTestId('progress').getByText('正在改标题').waitFor();
+    // 施工视图：只有一个按钮“停止”，没有任何允许/批准按钮
+    const buttons = await a.page.getByTestId('run-view').locator('button').allInnerTexts();
+    expect(buttons).toEqual(['停止']);
+    const perm = await a.page.getByTestId('perm-summary').innerText();
+    expect(perm).toContain('标准模式');
+    expect(perm).toContain('可修改的位置：任务副本');
+    expect(perm).toContain('联网：不可以');
+    const runText = await a.page.getByTestId('run-view').innerText();
+    expect(runText).not.toMatch(/sandbox|never|danger|profile|approval|npm |git /i); // 没有内部名词和命令
+    expect(await a.page.getByTestId('fulltrust-badge').count()).toBe(0);
+    await shot(a.page, '6-施工中视图');
+
+    await a.page.getByTestId('stop-button').click();
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
+    const result = await a.page.getByTestId('result').innerText();
+    expect(result).toContain('应用自己验证过的事实');
+    expect(result).toContain('AI 报告以下操作未能完成');
+    expect(result).toContain('这是 AI 自己的说法');
+    expect(result).toContain('你停止了本次执行');
+    expect(result).toContain('检查「构建」');
+    expect(result).toContain('未检查');
+    expect(await a.page.getByTestId('changes').innerText()).toContain('index.html');
+    // AI 自述的失败被提取并标注
+    expect(await a.page.getByTestId('incomplete').innerText()).toContain('联网安装依赖失败了');
+    await shot(a.page, '7-结果区');
+    // 主项目没有被改动（任务在独立副本里）
+    expect(fs.readFileSync(path.join(proj, 'index.html'), 'utf8')).toBe('<h1>hi</h1>');
+    // 磁盘上的任务记录里有实际生效的权限
+    expect(taskFiles(proj)[0]?.effectivePermissions).toMatchObject({ mode: 'standard', approvalPolicy: 'never' });
+  });
+
+  it('标准模式正常结束：结果显示改动与检查；没有 AI 自述失败时不编造“未完成”', async () => {
+    const proj = gitProject('ok-site');
+    const a = await openProjectWithFake(proj, [{ do: 'say', text: '已经把标题改好了。' }, { do: 'write', path: 'index.html', content: '<h1>new</h1>' }]);
+    await newTask(a.page, '改标题');
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
+    expect(await a.page.getByTestId('changes').innerText()).toContain('index.html');
+    expect(await a.page.getByTestId('facts').innerText()).toContain('AI 执行过程是否正常结束：正常结束');
+    expect(await a.page.getByTestId('incomplete').innerText()).toContain('AI 没有报告未完成的操作');
+    expect(await a.page.getByTestId('unexpected').count()).toBe(0);
+  });
+
+  it('完全信任：不勾选“我已了解风险”不能开工；勾选确认后才开工，任务与列表都有“完全信任”标记；取消回到标准模式', async () => {
+    const proj = gitProject('trust-site');
+    const a = await openProjectWithFake(proj, [{ do: 'say', text: '工作中' }, { do: 'hang' }]);
+    await newTask(a.page, '改标题');
+    await a.page.getByTestId('mode-full-trust').check();
+    expect(await a.page.getByTestId('extras').count()).toBe(0); // 扩展权限只在标准模式下显示
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('trust-panel').waitFor();
+    const panel = await a.page.getByTestId('trust-panel').innerText();
+    expect(panel).toContain('AI 将拥有你这个电脑账户的全部权限：可以读取任何文件、联网、修改项目以外的文件，可能自行推送代码；它读到的内容会发送给 AI 服务商；对项目以外的修改无法撤销。仅对本任务有效。');
+    await shot(a.page, '5-完全信任确认面板');
+    // 不勾选：按钮禁用，什么都没开始，磁盘上没有确认标记
+    expect(await a.page.getByTestId('trust-confirm').isDisabled()).toBe(true);
+    await a.page.waitForTimeout(400);
+    expect(await a.page.getByTestId('run-view').count()).toBe(0);
+    expect(taskFiles(proj)[0]).toMatchObject({ state: 'planned' });
+    expect(taskFiles(proj)[0]?.fullTrustConfirmedAt).toBeUndefined();
+
+    // 取消：回到标准模式，仍然没有开工
+    await a.page.getByTestId('trust-cancel').click();
+    await a.page.getByTestId('trust-panel').waitFor({ state: 'detached' });
+    expect(await a.page.getByTestId('mode-standard').isChecked()).toBe(true);
+    expect(taskFiles(proj)[0]?.fullTrustConfirmedAt).toBeUndefined();
+
+    // 再选完全信任 → 勾选 → 确认并开工
+    await a.page.getByTestId('mode-full-trust').check();
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('trust-ack').check();
+    expect(await a.page.getByTestId('trust-confirm').isDisabled()).toBe(false);
+    await a.page.getByTestId('trust-confirm').click();
+    await a.page.getByTestId('run-view').waitFor();
+    expect(await a.page.getByTestId('run-view').getByTestId('fulltrust-badge').innerText()).toBe('完全信任');
+    expect(await a.page.getByTestId('perm-summary').innerText()).toContain('完全信任模式');
+    expect(await a.page.getByTestId('run-view').locator('button').allInnerTexts()).toEqual(['停止']); // 仍然只有停止
+    expect(await a.page.getByTestId('fulltrust-badge-list').innerText()).toBe('完全信任'); // 列表里也有
+    expect(taskFiles(proj)[0]?.fullTrustConfirmedAt).toBeTruthy();
+    await a.page.getByTestId('stop-button').click();
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
+    expect(await a.page.getByTestId('result').getByTestId('fulltrust-badge').innerText()).toBe('完全信任'); // 结果里标记仍在
+  });
+
+  it('偏好只预选：上次选了完全信任，新任务预选完全信任，但开工前仍然弹出确认面板', async () => {
+    const proj = gitProject('pref-site');
+    const a = await openProjectWithFake(proj, [{ do: 'say', text: '好了' }]);
+    await newTask(a.page, '任务一');
+    await a.page.getByTestId('mode-full-trust').check();
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('trust-ack').check();
+    await a.page.getByTestId('trust-confirm').click();
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
+
+    await newTask(a.page, '任务二');
+    expect(await a.page.getByTestId('mode-full-trust').isChecked()).toBe(true); // 预选
+    expect(await a.page.getByTestId('preselect-note').innerText()).toContain('每个任务开工前仍需要重新确认');
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('trust-panel').waitFor(); // 没有跳过确认
+    expect(await a.page.getByTestId('trust-confirm').isDisabled()).toBe(true);
+    expect(await a.page.getByTestId('run-view').count()).toBe(0);
+    const second = taskFiles(proj).find((t) => t.request === '任务二');
+    expect(second?.fullTrustConfirmedAt).toBeUndefined();
+  });
+
+  it('额外文件夹：含 .git 的被拒绝并说明原因；合格的可添加、可移除；联网开关随计划保存', async () => {
+    const proj = gitProject('dirs-site');
+    const extra = mk('extra');
+    const a = await openProjectWithFake(proj, [{ do: 'say', text: '好了' }]);
+    await newTask(a.page, '改标题');
+
+    await stubDialog(a.app, path.join(proj, '.git'));
+    await a.page.getByTestId('add-dir').click();
+    await a.page.getByTestId('extra-dir-error').waitFor();
+    expect(await a.page.getByTestId('extra-dir-error').innerText()).toContain('.git');
+    expect(await a.page.getByTestId('extra-dir-list').innerText()).toContain('没有额外的文件夹');
+
+    await stubDialog(a.app, proj); // 项目本身
+    await a.page.getByTestId('add-dir').click();
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="extra-dir-error"]')?.textContent?.includes('版本记录'));
+
+    await stubDialog(a.app, extra);
+    await a.page.getByTestId('net-toggle').check();
+    await a.page.getByTestId('add-dir').click();
+    await a.page.waitForFunction((p) => document.querySelector('[data-testid="extra-dir-list"]')?.textContent?.includes(p), extra);
+    expect(await a.page.getByTestId('extra-dir-error').count()).toBe(0);
+    const saved = taskFiles(proj)[0]!;
+    expect(saved.plan.capabilities.extraWritableDirs).toEqual([extra]);
+    expect(saved.plan.capabilities.externalNetwork).toBe('on');
+
+    await a.page.getByTestId('extra-dir-list').getByRole('button', { name: '移除' }).click();
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="extra-dir-list"]')?.textContent?.includes('没有额外的文件夹'));
+
+    // 开工后实际生效的权限里列出选定文件夹与联网
+    await a.page.getByTestId('add-dir').click();
+    await a.page.waitForFunction((p) => document.querySelector('[data-testid="extra-dir-list"]')?.textContent?.includes(p), extra);
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
+    await a.page.getByText('这次任务实际生效的权限').click();
+    const text = await a.page.getByTestId('result').innerText();
+    expect(text).toContain(`你选定的文件夹：${extra}`);
+    expect(text).toContain('联网：已开启，可访问任意网站');
+  });
+
+  it('渲染进程拿不到路径：任务相关 API 全是编号/文字/布尔值，伪造的参数被主进程拒绝', async () => {
+    const proj = gitProject('api-site');
+    const a = await openProjectWithFake(proj, []);
+    const r = await a.page.evaluate(async () => {
+      type Fn = (...x: unknown[]) => Promise<unknown>;
+      const s = (window as unknown as { studio: { createTask: Fn; savePlan: Fn; startTask: Fn; getTask: Fn } }).studio;
+      const t = (await s.createTask('x')) as { id: string };
+      const bad = async (f: () => Promise<unknown>) => f().then(() => 'ok', (e: Error) => e.message);
+      return {
+        badMode: await bad(() => s.savePlan(t.id, { goal: 'g', criteria: [], mode: 'yolo', network: false })),
+        fullTrustNoAck: await (async () => { await s.savePlan(t.id, { goal: 'g', criteria: [], mode: 'full_trust', network: false }); return bad(() => s.startTask(t.id, false)); })(),
+        badId: await bad(() => s.getTask('../../etc/passwd')),
+        apis: Object.keys(s).sort(),
+      };
+    });
+    expect(r.badMode).toContain('无效的模式');
+    expect(r.fullTrustNoAck).toContain('我已了解风险');
+    expect(r.badId).toContain('找不到');
+    expect(r.apis).toEqual(['acceptDisclosure', 'addExtraDir', 'chooseProject', 'createTask', 'detectEnvironment', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openRecent', 'projectStatus', 'recentProjects', 'removeExtraDir', 'savePlan', 'startTask', 'stopTask']);
   });
 });
 
