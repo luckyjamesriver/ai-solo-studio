@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { run, isSuccess } from '../proc/run.js';
 import { hostEnv } from '../env/host-env.js';
+import { ensureLine, makeDir, removeFile } from '../persistence/files.js';
 
 export class GitError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -174,7 +175,7 @@ export async function createWorktree(repo: string, taskId: string): Promise<Work
   const branch = taskBranch(taskId);
   const baseSha = await headSha(repo);
   const wtRoot = path.join(repo, '.studio', 'worktrees');
-  await fs.mkdir(wtRoot, { recursive: true });
+  await makeDir(wtRoot);
   await ensureStudioIgnored(repo);
   const wtPath = path.join(wtRoot, taskId);
   await git(repo, ['worktree', 'add', '-b', branch, wtPath, baseSha]);
@@ -185,14 +186,8 @@ export async function createWorktree(repo: string, taskId: string): Promise<Work
 async function ensureStudioIgnored(repo: string): Promise<void> {
   const gitDir = (await git(repo, ['rev-parse', '--git-common-dir'])).trim();
   const exclude = path.resolve(repo, gitDir, 'info', 'exclude');
-  await fs.mkdir(path.dirname(exclude), { recursive: true });
-  let content = '';
-  try {
-    content = await fs.readFile(exclude, 'utf8');
-  } catch {}
-  if (!content.split('\n').includes('.studio/')) {
-    await fs.appendFile(exclude, `${content.endsWith('\n') || content === '' ? '' : '\n'}.studio/\n`);
-  }
+  await makeDir(path.dirname(exclude));
+  await ensureLine(exclude, '.studio/'); // 读后判断、已有则不动、否则原子写（经持久化层的原语）
 }
 
 /** 把 worktree 中所有改动（含新文件）提交为一个提交；无改动时返回 null。保存流程不使用它（保存用 commitTree 冻结的验收内容）。 */
@@ -213,7 +208,7 @@ export async function commitWorktree(wt: Worktree, message: string): Promise<str
  */
 export async function computeTree(repo: string, worktreePath: string): Promise<string> {
   const dir = path.join(repo, '.studio');
-  await fs.mkdir(dir, { recursive: true });
+  await makeDir(dir);
   const idx = path.join(dir, `tree-index-${crypto.randomBytes(6).toString('hex')}`);
   const env = { GIT_INDEX_FILE: idx };
   try {
@@ -221,8 +216,8 @@ export async function computeTree(repo: string, worktreePath: string): Promise<s
     await git(worktreePath, ['add', '-A'], { env });
     return (await git(worktreePath, ['write-tree'], { env })).trim();
   } finally {
-    await fs.rm(idx, { force: true });
-    await fs.rm(`${idx}.lock`, { force: true });
+    await removeFile(idx);
+    await removeFile(`${idx}.lock`);
   }
 }
 

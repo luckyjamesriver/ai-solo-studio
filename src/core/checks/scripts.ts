@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { ProcOutcome } from '../proc/run.js';
 import type { Capabilities } from '../capabilities/model.js';
 import { hostEnv } from '../env/host-env.js';
+import { makeDir } from '../persistence/files.js';
 import type { FullTrustRecords } from '../executor/modes.js';
 
 /**
@@ -113,8 +114,7 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
   if (!opts.authorizedDigest) return { name, status: 'not_available', reason: '这些脚本没有经过你的批准，因此未检查。' };
   if (digest !== opts.authorizedDigest) return { name, status: 'not_available', reason: '脚本内容与你批准时不同（授权已失效），因此未检查。' };
 
-  const { mkdir } = fs;
-  await mkdir(path.join(dir, '.studio', 'tmp'), { recursive: true });
+  await makeDir(path.join(dir, '.studio', 'tmp'));
   const developerDir = await fs.stat('/Library/Developer/CommandLineTools').then(() => true, () => false);
   const r = await runner.runCommand({
     cwd: dir,

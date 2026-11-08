@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ArtifactRecord, ThreadRecord } from './types.js';
+import { atomicWrite, atomicWriteExclusive } from '../../persistence/files.js';
 
 export const sha256 = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
 
@@ -13,25 +14,8 @@ export class ArtifactMismatchError extends Error {
   }
 }
 
-/** 原子写入：临时文件 + rename（覆盖式，用于线程记录这类自己拥有的文件）。 */
-export async function atomicWrite(file: string, data: string): Promise<void> {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmp, data, 'utf8');
-  await fs.rename(tmp, file);
-}
-
-/** 原子且不覆盖：先写临时文件，再 link 到目标（目标已存在则失败 EEXIST），最后删除临时文件。 */
-export async function atomicWriteExclusive(file: string, data: string): Promise<void> {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmp, data, 'utf8');
-  try {
-    await fs.link(tmp, file);
-  } finally {
-    await fs.rm(tmp, { force: true });
-  }
-}
+/** 原子写与“原子且不覆盖”写：统一由持久化层的原语提供（write-file-atomic），这里只是转出，保持原有的引用路径。 */
+export { atomicWrite, atomicWriteExclusive };
 
 /** 线程目录：<项目>/.studio/threads/<线程编号>/（不入库）。 */
 export class ThreadStore {

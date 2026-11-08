@@ -1,6 +1,5 @@
-import fs from 'node:fs/promises';
 import os from 'node:os';
-import path from 'node:path';
+import { makeTempDir, removeTree } from '../persistence/files.js';
 import { run } from '../proc/run.js';
 import { classifyServiceError } from './errors.js';
 import { buildThinkPrompt, parseStructured } from './prompt.js';
@@ -109,7 +108,7 @@ export class ClaudeCliThinker implements Thinker {
     const base = { sent, service: this.service };
     const off = this.disabledReason();
     if (off) return { ...base, status: 'failed', rawText: '', error: off };
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-think-'));
+    const cwd = await makeTempDir('studio-think-');
     try {
       const r = await run(this.command, [...this.prefix, ...claudeCliArgs(this.options.model ? { model: this.options.model } : {})], {
         cwd,
@@ -170,7 +169,7 @@ export class ClaudeCliThinker implements Thinker {
       if (!parsed.ok) return { ...common, status: 'incomplete', rawText: text, error: parsed.error };
       return { ...common, status: 'complete', content: parsed.content, rawText: text };
     } finally {
-      await fs.rm(cwd, { recursive: true, force: true });
+      await removeTree(cwd);
     }
   }
 }

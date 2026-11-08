@@ -13,6 +13,13 @@ import { DisclosureStore, buildDisclosure } from '../core/app/disclosure.js';
 import { TaskStore } from '../core/task/store.js';
 import { TaskController } from '../core/app/task-controller.js';
 import { TaskPrefs } from '../core/app/prefs.js';
+import { localApfsProbe, RecordStore, VolumeNotSupportedError, WriterLockedError, type OpenOptions } from '../core/persistence/index.js';
+
+/**
+ * 持久化服务的打开选项（ADR 0005）：数据目录必须在本地 APFS；取不到数据目录租约时最多等 12 秒
+ * （上一次异常退出留下的租约要过一阵才会被判定为过期）。主进程里的持久化服务是项目数据与应用数据的唯一写入者。
+ */
+const STORE_OPTS: OpenOptions = { volumeProbe: localApfsProbe, lockWaitMs: 12_000 };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 let win: BrowserWindow | null = null;
@@ -22,8 +29,8 @@ let project: string | null = null;
 let pendingInit: string | null = null;
 
 const dataDir = () => app.getPath('userData');
-const recent = () => new RecentProjects(dataDir());
-const disclosureStore = () => new DisclosureStore(dataDir());
+const recent = () => new RecentProjects(dataDir(), {}, STORE_OPTS);
+const disclosureStore = () => new DisclosureStore(dataDir(), STORE_OPTS);
 const TOOLS = ['git', 'node', 'npm', 'codex'] as const;
 
 function createWindow() {
@@ -64,7 +71,7 @@ async function projectStatus() {
     isRepo: repo,
     uncommitted: repo ? await G.uncommittedCount(dir) : 0,
     savePoints: repo ? await G.savePoints(dir, 20) : [],
-    tasks: repo ? await new TaskStore(dir).list() : [],
+    tasks: repo ? await new TaskStore(dir, STORE_OPTS).list() : [],
   };
 }
 
@@ -90,8 +97,17 @@ async function openValidated(input: string): Promise<OpenResult> {
     return { kind: 'needs_init', name: path.basename(v.path), path: v.path };
   }
   project = v.path;
-  await recent().record(v.path);
-  return { kind: 'opened', status: await projectStatus() };
+  try {
+    await recent().record(v.path);
+    return { kind: 'opened', status: await projectStatus() };
+  } catch (e) {
+    // 数据目录不在本地 APFS，或被另一个写入者占用：不打开这个项目，如实说明（不写任何数据）
+    if (e instanceof VolumeNotSupportedError || e instanceof WriterLockedError) {
+      project = null;
+      return { kind: 'rejected', reason: e.message };
+    }
+    throw e;
+  }
 }
 
 async function health(): Promise<HealthReport> {
@@ -137,7 +153,8 @@ async function tasks(): Promise<TaskController> {
       const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: '选择允许 AI 修改的另一个文件夹' });
       return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
     },
-    prefs: new TaskPrefs(dataDir()),
+    prefs: new TaskPrefs(dataDir(), STORE_OPTS),
+    storeOptions: STORE_OPTS,
   });
   controllers.set(dir, ctl);
   return ctl;
@@ -194,8 +211,24 @@ ipcMain.handle('disclosure:accept', async () => {
   return disclosure();
 });
 
-app.whenReady().then(() => {
-  createWindow();
-  app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
+// 单实例（ADR 0005）：第二个实例只唤起已有窗口，不启动，更不会写数据——所有写入都来自同一个主进程。
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+  app.whenReady().then(() => {
+    createWindow();
+    app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
+  });
+}
+// 退出时释放数据目录租约（异常退出时租约会在一段时间后过期）
+app.on('will-quit', () => {
+  void RecordStore.closeAll();
 });
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit());

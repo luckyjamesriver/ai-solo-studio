@@ -1,6 +1,4 @@
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
+import { makeTempDir, removeTree } from '../persistence/files.js';
 import { CodexExecutor, type CodexOptions } from '../executor/adapters/codex.js';
 import { resolveCapabilities } from '../capabilities/model.js';
 import { classifyServiceError } from './errors.js';
@@ -38,7 +36,7 @@ export class CodexThinker implements Thinker {
   async think(req: ThinkRequest): Promise<ThinkResult> {
     const { prompt, sent } = buildThinkPrompt(req);
     const base = { sent, service: this.service };
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-think-'));
+    const cwd = await makeTempDir('studio-think-');
     try {
       const run = this.executor.start({
         cwd,
@@ -76,7 +74,7 @@ export class CodexThinker implements Thinker {
       if (!parsed.ok) return { ...common, status: 'incomplete', error: parsed.error };
       return { ...common, status: 'complete', content: parsed.content };
     } finally {
-      await fs.rm(cwd, { recursive: true, force: true });
+      await removeTree(cwd);
     }
   }
 }
