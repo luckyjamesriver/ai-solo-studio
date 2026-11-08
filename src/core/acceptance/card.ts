@@ -30,8 +30,12 @@ export interface AcceptanceCard {
   readyToSave: boolean;
   /** 本次验收对应的 Git 状态 */
   git?: GitBinding;
+  /** 本次验收绑定的内容（冻结的 tree） */
+  acceptedTree?: string;
   /** 给用户的一句话总结 */
   headline: string;
+  /** 需要如实告诉用户的说明（例如保存时没有运行项目自定义的提交检查） */
+  notes?: string[];
 }
 
 export interface CriterionState {
@@ -78,6 +82,12 @@ export function buildCard(input: {
   denied?: DeniedOperation[];
   deniedAcks?: boolean[];
   git?: GitBinding;
+  acceptedTree?: string;
+  /** 检查脚本改动了文件 → 检查结果作废（原因文字） */
+  checksVoid?: string;
+  /** 验收标准为空时，用户的整体确认 */
+  overallConfirmed?: boolean;
+  notes?: string[];
 }): AcceptanceCard {
   const items: AcceptanceItem[] = [exitItem(input.exit)];
   items.push(
@@ -86,6 +96,7 @@ export function buildCard(input: {
       : { key: 'changes', label: '有实际文件改动', status: 'failed', evidence: '没有任何文件被修改' },
   );
   for (const c of input.checks) items.push(checkItem(c));
+  if (input.checksVoid) items.push({ key: 'checks_modified', label: '检查是否改动了文件', status: 'not_checked', evidence: input.checksVoid });
   const denied = input.denied ?? [];
   const acks = input.deniedAcks ?? [];
   const deniedAllAcked = denied.every((_, i) => acks[i] === true);
@@ -115,8 +126,18 @@ export function buildCard(input: {
     }),
   );
 
+  // 验收标准为空时，必须由用户整体确认“我已看过改动，结果符合我的要求”
+  if (input.criteria.length === 0) {
+    items.push({
+      key: 'overall',
+      label: '我已看过改动，结果符合我的要求',
+      status: input.overallConfirmed ? 'user_confirmed' : 'pending_user',
+      evidence: input.overallConfirmed ? '由你确认' : '等待你确认',
+    });
+  }
+
   const anyFailed = items.some((i) => i.status === 'failed' || i.status === 'user_rejected');
-  const criteriaDone = input.criteria.every((c) => c.decision === 'confirmed');
+  const criteriaDone = input.criteria.length === 0 ? input.overallConfirmed === true : input.criteria.every((c) => c.decision === 'confirmed');
   const readyToSave = !anyFailed && criteriaDone && deniedAllAcked && input.changes.length > 0;
 
   const headline = anyFailed
@@ -132,5 +153,19 @@ export function buildCard(input: {
   const card: AcceptanceCard = { items, changes: input.changes, readyToSave, headline };
   if (input.aiSummary) card.aiSummary = input.aiSummary;
   if (input.git) card.git = input.git;
+  if (input.acceptedTree) card.acceptedTree = input.acceptedTree;
+  if (input.notes?.length) card.notes = input.notes;
+  return card;
+}
+
+/** 项目使用了外部驱动：不读取任何内容、不运行任何检查，只给出不能自动保存的说明（副本保留，可放弃）。 */
+export function blockedCard(reason: string, drivers: string[], git?: GitBinding): AcceptanceCard {
+  const card: AcceptanceCard = {
+    items: [{ key: 'drivers', label: '项目文件类型受工作台支持', status: 'failed', evidence: `${reason}：${drivers.join('；')}` }],
+    changes: [],
+    readyToSave: false,
+    headline: `${reason}。AI 的成果仍保留在任务副本中，你可以放弃它。`,
+  };
+  if (git) card.git = git;
   return card;
 }

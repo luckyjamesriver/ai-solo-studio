@@ -449,11 +449,11 @@ export async function detectExternalDrivers(dir: string): Promise<DriverCheck> {
   const config = await effectiveConfig(dir);
   const defined = { filter: new Set<string>(), diff: new Set<string>(), merge: new Set<string>() };
   for (const { key, value } of config) {
-    let m = /^filter\.(.+)\.(clean|smudge|process)$/.exec(key);
+    let m = key.match(/^filter\.(.+)\.(clean|smudge|process)$/);
     if (m && value.trim()) defined.filter.add(m[1]!);
-    m = /^diff\.(.+)\.(command|textconv)$/.exec(key);
+    m = key.match(/^diff\.(.+)\.(command|textconv)$/);
     if (m && value.trim()) defined.diff.add(m[1]!);
-    m = /^merge\.(.+)\.driver$/.exec(key);
+    m = key.match(/^merge\.(.+)\.driver$/);
     if (m && value.trim()) defined.merge.add(m[1]!);
   }
   const hits = new Map<string, string>();

@@ -71,7 +71,12 @@ const STATE_TEXT: Record<TaskState, string> = {
   timed_out: '已超时',
   reviewing: '等待你验收',
   saved: '已保存',
-  discarded: '已撤销',
+  saved_cleanup_pending: '已保存，临时文件还没清理干净',
+  save_failed_unmerged: '有冲突，没有保存',
+  discarded: '已放弃',
+  discard_cleanup_pending: '已放弃，临时文件还没清理干净',
+  undone: '已撤销保存',
+  undo_failed: '撤销没有成功',
 };
 
 export const extraDirKey = (p: string): string => createHash('sha1').update(p).digest('hex').slice(0, 10);
