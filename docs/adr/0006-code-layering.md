@@ -18,5 +18,7 @@ src/core（纯 Node）/ main / preload / renderer 的分层事实上已形成，
    - 断言自身有效性：每条规则配一个“应当命中”的反例样本。
 7. 现有直接写文件的位置（任务存储、偏好、最近项目、外发告知、线程、交接、诊断日志、`.git/info/exclude`）在迁移前登记为豁免清单，清单只许减少、不许增加。
 
+**实现状态（2026-11-09）**：持久化依赖边界检查已落地（tests/security.test.ts “ADR 0006：持久化依赖边界”）：src 里只有 `src/core/persistence/` 可以直接写文件，唯一豁免是模拟执行体写任务副本（`executor/adapters/fake.ts`）；记录库（`persistence/index|store|…`）只能被 `task/store.ts`、`task/runner.ts`、`app/{app-store,recent,disclosure,prefs,task-controller}.ts`、`main/index.ts` 引用；文件原语（`persistence/files`）只能被 `git.ts`、`checks/scripts.ts`、`thinking/{codex,claude-cli,flow/store}.ts` 引用——这两份清单只许减少。检查用 import 图扫描实现，没有引入新工具。“src/core 不得 import electron”的断言仍未添加。
+
 ## 后果
 所有界面文案、状态判定、存储规则都在 core 里可单测；e2e 只验证接线；绕过存储层的写法会在测试里直接失败。
