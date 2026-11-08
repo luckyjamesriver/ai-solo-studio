@@ -36,20 +36,127 @@ describe('安全基线（防回归）', () => {
     for (const [f, s] of sources) expect(s, f).not.toMatch(/\/Users\/[a-z]|\/home\/[a-z]/i);
   });
 
-  it('Codex 适配器：源码与生成的参数中不出现禁止的权限/沙箱参数', async () => {
-    const forbidden = /danger-full-access|dangerFullAccess|dangerously|--yolo|bypass|full-auto|["']never["']|=never/i;
-    for (const f of ['src/core/executor/adapters/codex.ts', 'src/core/executor/adapters/codex-command.ts']) {
-      expect(read(f), f).not.toMatch(forbidden);
+  /**
+   * M3-B3-1 修订（维护者 2026-11-08 批准，范围严格限定，见 docs/plans/2026-11-08-B3.md 第 5 节）：
+   * 原断言：Codex 适配器源码与生成的参数中完全不得出现 danger-full-access / dangerFullAccess / "never" / =never，
+   *        且必须是 sandbox_mode="workspace-write" + approval_policy="on-request" + 线程审批 untrusted。
+   * 新断言：
+   *  1) never 只允许出现在模式映射模块（src/core/executor/modes.ts）；其他源码位置仍然禁止；
+   *  2) danger-full-access / dangerFullAccess 只允许出现在 modes.ts，且只在完全信任分支（buildFullTrustMode），
+   *     该函数必须调用 requireFullTrustConfirmed；
+   *  3) 全部源码不得出现 acceptWithExecpolicyAmendment（“以后都允许”）；
+   *  4) 不得出现 sandbox_mode 与 default_permissions 同时配置（逐文件 + 生成的参数）；
+   *  5) 检查脚本运行路径不得直接使用 proc/run 启动 npm（必须经 command/exec）。
+   * 其余禁止项（dangerously、--yolo、bypass、full-auto、登录凭证文件）不变，仍对全部相关源码生效。
+   */
+  const MODES = 'src/core/executor/modes.ts';
+  const neverLiteral = /["'`]never["'`]|=never\b|=["']never["']/;
+  const fullAccess = /danger-full-access|dangerFullAccess/;
+  const stillForbidden = /dangerously|--yolo|bypass|full-auto/i;
+
+  it('B3-1：never 与 danger-full-access 只出现在模式映射模块；完全信任分支必须经过门禁；其余禁止项不变', () => {
+    for (const [f, s] of sources) {
+      const code = stripComments(s);
+      if (f !== path.join('src', 'core', 'executor', 'modes.ts')) {
+        expect(code, `${f} 不得出现 never`).not.toMatch(neverLiteral);
+        expect(code, `${f} 不得出现 danger-full-access`).not.toMatch(fullAccess);
+      }
     }
+    for (const f of ['src/core/executor/adapters/codex.ts', 'src/core/executor/adapters/codex-command.ts', 'src/core/executor/adapters/codex-readonly.ts', MODES]) {
+      expect(stripComments(read(f)), f).not.toMatch(stillForbidden);
+    }
+    // modes.ts：danger-full-access 只出现在完全信任构建函数里，且该函数调用 requireFullTrustConfirmed
+    const code = stripComments(read(MODES));
+    const fnStart = code.indexOf('export async function buildFullTrustMode');
+    expect(fnStart).toBeGreaterThan(0);
+    const next = code.indexOf('\nexport ', fnStart + 10);
+    const fn = code.slice(fnStart, next === -1 ? undefined : next);
+    expect(fn).toMatch(/await requireFullTrustConfirmed\(/);
+    expect(fn.indexOf('requireFullTrustConfirmed(')).toBeLessThan(fn.search(fullAccess)); // 先过门禁，再出现完全信任参数
+    const outside = code.slice(0, fnStart) + (next === -1 ? '' : code.slice(next));
+    // 函数之外只有期望值核验里的比较（出现类型名而不是启动参数）；启动参数形式 danger-full-access 不得出现在函数之外
+    expect(outside).not.toMatch(/danger-full-access/);
+    expect([...outside.matchAll(/dangerFullAccess/g)].length).toBeLessThanOrEqual(3); // 类型声明、期望值与核验
+    // 断言自身有效：样例确实会被匹配
+    expect("approvalPolicy: 'never'").toMatch(neverLiteral);
+    expect('x=never').toMatch(neverLiteral);
+    expect("sandbox: 'danger-full-access'").toMatch(fullAccess);
+  });
+
+  it('B3-1：全部源码不得出现“以后都允许”（acceptWithExecpolicyAmendment）；审批回调在施工模式下只回 decline', () => {
+    for (const [f, s] of sources) expect(s, f).not.toMatch(/acceptWithExecpolicyAmendment|execpolicy_amendment|ExecpolicyAmendment/i);
+    const codex = stripComments(read('src/core/executor/adapters/codex.ts'));
+    // 施工模式下唯一的审批处理函数只写 decline
+    const m = /const rejectUnexpectedApproval[\s\S]*?\n    \};/.exec(codex);
+    expect(m).not.toBeNull();
+    expect(m![0]).toMatch(/decision: 'decline'/);
+    expect(m![0]).not.toMatch(/accept/i);
+    // 回复 accept 的唯一位置是思考层的只读流程（respond('allow')），且受 constructionMode 分支保护
+    expect(codex).toMatch(/if \(constructionMode && \(m\.method === 'item\/commandExecution\/requestApproval'/);
+    expect(codex.match(/'accept'/g)?.length).toBe(1);
+    // 断言自身有效
+    expect('{ acceptWithExecpolicyAmendment: {} }').toMatch(/acceptWithExecpolicyAmendment/);
+  });
+
+  it('B3-1：不得同时配置 sandbox_mode 与 default_permissions（逐文件 + 生成的参数）', async () => {
+    const legacy = /sandbox_mode=["'`]|sandbox_mode=\\?"/;
+    const profile = /default_permissions=["'`$]|default_permissions=\\?"/;
+    for (const [f, s] of sources) {
+      const code = stripComments(s);
+      expect(legacy.test(code) && profile.test(code), `${f} 同时配置了 sandbox_mode 与 default_permissions`).toBe(false);
+    }
+    expect(stripComments(read(MODES))).not.toMatch(legacy);
+    expect(stripComments(read('src/core/executor/adapters/codex-readonly.ts'))).not.toMatch(profile);
+    const { codexLaunchConfig, permissionLaunchFor } = await import('../src/core/executor/adapters/codex.js');
+    const { resolveCapabilities } = await import('../src/core/capabilities/model.js');
+    for (const caps of [resolveCapabilities(), resolveCapabilities({ externalNetwork: 'on' }), resolveCapabilities({ fileAccess: 'worktree_read_only' })]) {
+      const cfg = codexLaunchConfig('/work/tree', { model: 'm', capabilities: caps });
+      const hasLegacy = cfg.args.some((a) => /^sandbox_mode=/.test(a));
+      const hasProfile = cfg.args.some((a) => /^default_permissions=/.test(a));
+      expect(hasLegacy && hasProfile).toBe(false);
+      expect(hasLegacy || hasProfile).toBe(true);
+      // 标准模式没有任何完全信任字样；线程/回合参数里也没有
+      if (caps.fileAccess === 'worktree_write') expect(JSON.stringify(cfg)).not.toMatch(fullAccess);
+    }
+    expect(permissionLaunchFor('/w', resolveCapabilities()).args).toContain('default_permissions="studio_standard"');
+    // 断言自身有效
+    expect('sandbox_mode="workspace-write" default_permissions="x"').toMatch(legacy);
+    expect('-c default_permissions="x"').toMatch(profile);
+  });
+
+  it('B3-1：检查脚本不得由宿主直接运行（不得用 proc/run 启动 npm），必须经沙箱运行器（command/exec）', () => {
+    const s = stripComments(read('src/core/checks/scripts.ts'));
+    expect(s).not.toMatch(/from ['"][^'"]*proc\/run(?:\.js)?['"][^;\n]*\brun\b|import\s*\{[^}]*\brun\b[^}]*\}\s*from\s*['"][^'"]*proc\/run/);
+    expect(s).not.toMatch(/node:child_process|\bspawn\(|\bexecFile\(|\bfork\(/);
+    expect(s).toMatch(/runner\.runCommand\(/);
+    // 任务编排器不得自己启动 npm，也不得为检查直接引入进程运行模块
+    const r = stripComments(read('src/core/task/runner.ts'));
+    expect(r).not.toMatch(/proc\/run|child_process|['"]npm['"]/);
+    // 沙箱运行器的实现通过 app-server 的 command/exec
+    expect(stripComments(read('src/core/executor/adapters/codex.ts'))).toMatch(/rpc\('command\/exec'/);
+    // 只有 codex.ts / codex-command.ts 之外的源码里，没有任何地方把 'npm' 作为命令启动
+    for (const [f, src] of sources) {
+      if (f.endsWith(path.join('checks', 'scripts.ts'))) continue;
+      expect(stripComments(src), f).not.toMatch(/\b(?:run|spawn|execFile)\(\s*(?:npm|['"]npm(?:\.cmd)?['"])/);
+    }
+    // 断言自身有效
+    expect("import { run } from '../proc/run.js';").toMatch(/import\s*\{[^}]*\brun\b[^}]*\}\s*from\s*['"][^'"]*proc\/run/);
+  });
+
+  it('Codex 适配器：标准模式生成的参数符合预期（权限配置档 + never，无旧式沙箱参数）', async () => {
     const { codexLaunchConfig } = await import('../src/core/executor/adapters/codex.js');
     const cfg = codexLaunchConfig('/work/tree', { model: 'm' });
-    expect(JSON.stringify(cfg)).not.toMatch(forbidden);
-    expect(cfg.args).toContain('sandbox_mode="workspace-write"');
-    expect(cfg.args).toContain('approval_policy="on-request"');
-    // M2.5：默认“每条命令都询问”（untrusted，比 on-request 更严格），只能经 thread/start 与 turn/start 参数声明
-    expect(cfg.threadStart).toMatchObject({ sandbox: 'workspace-write', approvalPolicy: 'untrusted' });
-    expect(cfg.turnOverrides).toMatchObject({ approvalPolicy: 'untrusted' });
-    expect(codexLaunchConfig('/work/tree', { capabilities: { fileAccess: 'worktree_write', commandExecution: 'sandbox_auto', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [] } }).threadStart).toMatchObject({ approvalPolicy: 'on-request' });
+    expect(cfg.args).toContain('default_permissions="studio_standard"');
+    expect(cfg.args.some((a) => /^sandbox_mode=/.test(a) || /^approval_policy=/.test(a))).toBe(false);
+    expect(cfg.threadStart).toMatchObject({ approvalPolicy: 'never' });
+    expect(cfg.threadStart).not.toHaveProperty('sandbox');
+    expect(cfg.turnOverrides).toMatchObject({ approvalPolicy: 'never' });
+    expect(cfg.turnOverrides).not.toHaveProperty('sandboxPolicy');
+    // 思考层的只读启动保持原样：旧式只读 + 每条命令询问
+    const { codexLaunchConfig: c2 } = await import('../src/core/executor/adapters/codex.js');
+    const ro = c2('/work/tree', { capabilities: { fileAccess: 'worktree_read_only', externalNetwork: 'off', credentialAccess: 'none', grantedMcp: [], nonOfficialModelEndpoint: 'deny', constructionMode: 'standard', extraWritableDirs: [], allowedNetworkDomains: [] } });
+    expect(ro.args).toContain('sandbox_mode="read-only"');
+    expect(ro.threadStart).toMatchObject({ approvalPolicy: 'untrusted', sandbox: 'read-only' });
   });
 
   it('思考者实现中不出现跳过权限/放开沙箱的参数，也不读取登录凭证文件', () => {

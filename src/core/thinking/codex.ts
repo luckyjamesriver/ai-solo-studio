@@ -45,7 +45,7 @@ export class CodexThinker implements Thinker {
         prompt,
         ...(this.options.model ? { model: this.options.model } : {}),
         ...(req.timeoutMs ? { timeoutMs: req.timeoutMs } : {}),
-        capabilities: resolveCapabilities({ fileAccess: 'worktree_read_only', commandExecution: 'ask_each', externalNetwork: 'off', grantedMcp: [] }),
+        capabilities: resolveCapabilities({ fileAccess: 'worktree_read_only', externalNetwork: 'off', grantedMcp: [] }),
       });
       const messages: string[] = []; // AI 的话
       const hostNotes: string[] = []; // 适配器的说明（如隔离失败原因）

@@ -6,7 +6,7 @@ import { resolveCapabilities, type Capabilities } from '../capabilities/model.js
 import type { Plan, Task, TimelineEntry } from './model.js';
 import type { Decision, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
-import { runCheck, type CheckResult } from '../checks/scripts.js';
+import { runCheck, scriptsDigest, type CheckResult, type SandboxCommandRunner } from '../checks/scripts.js';
 import { buildCard } from '../acceptance/card.js';
 
 export interface PendingPermission {
@@ -20,9 +20,13 @@ export interface RunnerOptions {
   executor: Executor;
   autoApprove?: AutoApproveRule;
   timeoutMs?: number;
-  /** 测试中可关闭真实的 npm 检查 */
+  /** 测试中可关闭检查 */
   runChecks?: boolean;
-  npmCommand?: string;
+  /**
+   * 运行项目脚本（build/test）的沙箱运行器。缺省使用执行体自带的（Codex：command/exec，与施工同一权限配置档）；
+   * 两者都没有时，检查结果为“未检查”，绝不在宿主上直接运行。
+   */
+  sandboxRunner?: SandboxCommandRunner;
 }
 
 /**
@@ -99,7 +103,26 @@ export class TaskRunner extends EventEmitter {
   async approve(id: string): Promise<Task> {
     const t = await this.load(id);
     if (!t.plan) throw new Error('没有计划，不能批准。');
+    // 批准同时授权“将运行的脚本”：记录当前 package.json 中 build/test（含 pre/post）脚本的内容摘要；
+    // 之后脚本内容变化（包括被 AI 改动）则授权失效，对应检查标“未检查”。
+    const digest = await scriptsDigest(this.opts.repo);
+    if (digest) t.checkAuth = { digest, at: new Date().toISOString() };
+    else delete t.checkAuth;
     await this.fire(t, 'approve');
+    return t;
+  }
+
+  /**
+   * 本任务的完全信任确认（每个任务单独确认；只有计划声明了完全信任模式、且已批准的任务才能确认）。
+   * 确认标记写进任务记录，是门禁函数 requireFullTrustConfirmed 读取的唯一依据。
+   */
+  async confirmFullTrust(id: string): Promise<Task> {
+    const t = await this.load(id);
+    if (t.plan?.capabilities.constructionMode !== 'full_trust') throw new Error('这个任务的计划没有选择完全信任模式。');
+    if (t.state !== 'approved') throw new Error('任务必须先经你批准，才能确认完全信任。');
+    t.fullTrustConfirmedAt = new Date().toISOString();
+    this.log(t, 'message', '你已确认：本任务以完全信任模式运行。');
+    await this.persist(t);
     return t;
   }
 
@@ -138,11 +161,14 @@ export class TaskRunner extends EventEmitter {
       return this.review(t);
     }
 
+    delete t.effectivePermissions; // 每次开工重新记录实际生效的权限，不沿用上一次
     const run = this.opts.executor.start({
       cwd: t.worktree.path,
       prompt: prompt ?? buildPrompt(t),
       timeoutMs: this.opts.timeoutMs ?? 20 * 60_000,
       capabilities: t.plan?.capabilities ?? resolveCapabilities(),
+      taskId: t.id,
+      fullTrustRecords: this.store,
     });
     this.runs.set(t.id, run);
     // 执行体启动期间（或启动的同一时刻）到来的停止请求：登记后立刻补发给执行体
@@ -151,7 +177,10 @@ export class TaskRunner extends EventEmitter {
 
     for await (const ev of run.events) {
       if (ev.type === 'message') this.log(t, 'message', ev.text);
-      else if (ev.type === 'isolation') this.log(t, 'isolation', `隔离已核验：审批=${ev.info.approvalPolicy}，沙箱=${ev.info.sandbox}，模型=${ev.info.model ?? '未知'}，授予的 MCP=${ev.info.grantedMcp.join('、') || '无'}，指令来源=${ev.info.instructionSources.join('、') || '无'}${ev.info.warnings.length ? `；警告：${ev.info.warnings.join('；')}` : ''}`);
+      else if (ev.type === 'isolation') {
+        if (ev.info.permissions) t.effectivePermissions = ev.info.permissions; // 以启动后核验得到的实际生效权限为准
+        this.log(t, 'isolation', `隔离已核验：审批=${ev.info.approvalPolicy}，沙箱=${ev.info.sandbox}，模型=${ev.info.model ?? '未知'}，授予的 MCP=${ev.info.grantedMcp.join('、') || '无'}，指令来源=${ev.info.instructionSources.join('、') || '无'}${ev.info.permissions ? `；权限：${ev.info.permissions.summary}` : ''}${ev.info.warnings.length ? `；警告：${ev.info.warnings.join('；')}` : ''}`);
+      }
       else if (ev.type === 'tool') this.log(t, 'tool', `${ev.name}: ${ev.summary}`);
       else if (ev.type === 'permission_request') {
         const risk = assess(ev.request, t.worktree.path);
@@ -200,7 +229,12 @@ export class TaskRunner extends EventEmitter {
     const checks: CheckResult[] = [];
     if (this.opts.runChecks !== false) {
       for (const name of ['build', 'test'] as const) {
-        const c = await runCheck(wt.path, name, this.opts.npmCommand ? { npmCommand: this.opts.npmCommand } : {});
+        const c = await runCheck(wt.path, name, this.opts.sandboxRunner ?? this.opts.executor.sandboxRunner, {
+          authorizedDigest: t.checkAuth?.digest,
+          ...(t.plan?.capabilities ? { capabilities: t.plan.capabilities } : {}),
+          taskId: t.id,
+          fullTrustRecords: this.store,
+        });
         this.log(t, 'check', `${name}: ${c.status}`);
         checks.push(c);
       }

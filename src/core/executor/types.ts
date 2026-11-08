@@ -37,6 +37,8 @@ export interface IsolationInfo {
   instructionSources: string[];
   approvalPolicy: string;
   sandbox: string;
+  /** 实际生效的权限（取自 thread/start 响应，与期望核验一致后才会出现） */
+  permissions?: EffectivePermissions;
   grantedMcp: string[];
   modelProvider?: string | undefined;
   /** 需要提醒的事项，例如“数据将发往非官方地址：<地址>” */
@@ -80,8 +82,14 @@ export interface DetectResult {
 }
 
 import type { Capabilities } from '../capabilities/model.js';
+import type { EffectivePermissions, FullTrustRecords } from './modes.js';
+import type { SandboxCommandRunner } from '../checks/scripts.js';
 
 export interface StartOptions {
+  /** 任务编号（完全信任门禁按它查任务记录里的确认标记） */
+  taskId?: string;
+  /** 任务记录读取接口（完全信任门禁用）；缺省视为没有任何确认 */
+  fullTrustRecords?: FullTrustRecords;
   /** 任务 worktree 的绝对路径；执行体只能在此目录内工作 */
   cwd: string;
   prompt: string;
@@ -98,6 +106,8 @@ export interface Executor {
   readonly capabilities: { permissionPrompts: boolean; resumeAfterStop: boolean };
   detect(): Promise<DetectResult>;
   start(opts: StartOptions): ExecutorRun;
+  /** 在与施工相同的权限配置档下运行项目脚本的运行器；没有则脚本检查一律为“未检查”（不回退到宿主运行） */
+  readonly sandboxRunner?: SandboxCommandRunner;
 }
 
 export function isExitSuccess(o: ExitOutcome): boolean {

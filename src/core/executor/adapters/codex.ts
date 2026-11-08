@@ -9,19 +9,17 @@ import type { DeniedOperation, DetectResult, Decision, Executor, ExecutorEvent, 
 import { resolveCapabilities, type Capabilities } from '../../capabilities/model.js';
 import { assess } from '../../policy/risk.js';
 import { parseCommand } from './codex-command.js';
+import { readOnlyLaunch } from './codex-readonly.js';
+import type { SandboxCommandRunner, SandboxExecRequest, SandboxExecResult } from '../../checks/scripts.js';
+import { buildFullTrustMode, buildStandardMode, effectivePermissionsOf, sensitiveFallbackList, verifyEffectivePermissions, type EffectivePermissions, type FullTrustRecords, type ModeExpectation } from '../modes.js';
+
+type PermissionLaunch = Pick<ReturnType<typeof buildStandardMode>, 'args' | 'threadStart' | 'turnOverrides' | 'describe'> & { expected: ModeExpectation };
 
 /**
  * Codex 适配器：通过 `codex app-server`（stdio，换行分隔的 JSON-RPC）驱动。
  * 协议与行为以 spikes/codex/ 的实测和 `codex app-server generate-json-schema` 生成的 schema 为准。
  * app-server 被官方标注为 experimental，协议可能变化。
  */
-
-/**
- * 配置层（-c）的 approval_policy 只接受 on-request（实测：`approval_policy="untrusted"` 会让 app-server 拒绝启动，
- * 报 “no longer supported”）；“每条命令都询问”（untrusted）只能通过 thread/start 与 turn/start 的参数声明。
- * 实测对比见 ADR 0001“approval_policy 实测”。启动后会用 thread/start 的响应核验实际生效值。
- */
-const CONFIG_APPROVAL_POLICY = 'on-request';
 
 export interface CodexLaunchConfig {
   /** `codex app-server` 的命令行参数（不含可执行文件本身） */
@@ -31,17 +29,30 @@ export interface CodexLaunchConfig {
   /** turn/start 中每个回合都再次显式声明的参数（不依赖线程或用户配置的默认值） */
   turnOverrides: Record<string, unknown>;
   /** 期望在 thread/start 响应里看到的实际生效值（启动后核验用） */
-  expected: { approvalPolicy: string; sandboxType: 'workspaceWrite' | 'readOnly'; networkAccess: boolean };
+  expected: ModeExpectation;
+  /** 人读摘要：本次启动配置的权限（写入任务记录） */
+  describe: string;
 }
 
-/** 能力 → Codex 参数的映射（单点定义，便于测试） */
-export function mapCapabilities(c: Capabilities) {
-  return {
-    sandboxMode: c.fileAccess === 'worktree_write' ? 'workspace-write' : 'read-only',
-    sandboxType: (c.fileAccess === 'worktree_write' ? 'workspaceWrite' : 'readOnly') as 'workspaceWrite' | 'readOnly',
-    approvalPolicy: c.commandExecution === 'ask_each' ? 'untrusted' : 'on-request',
+/** 能力 → 权限启动参数（单点定义，便于测试）。完全信任需要异步门禁，必须由调用方先构建后经 opts.launch 传入。 */
+export function permissionLaunchFor(cwd: string, c: Capabilities): PermissionLaunch {
+  if (c.fileAccess === 'worktree_read_only') return readOnlyLaunch(cwd);
+  if (c.constructionMode === 'full_trust') throw new Error('完全信任模式必须先通过 buildFullTrustMode（任务级确认门禁）。');
+  return buildStandardMode({
+    cwd,
+    extraWritable: c.extraWritableDirs,
     network: c.externalNetwork === 'on',
-  };
+    allowedDomains: c.allowedNetworkDomains,
+    denyRead: standardDenyList(cwd, c.extraWritableDirs),
+  });
+}
+
+/**
+ * 标准模式的读取拒绝清单：固定敏感清单。B3-1 实测：整个主目录 deny 在 macOS 上会让 node（lstat 主目录）与 git（~/.gitconfig）失效，
+ * 无法用于真实项目，所以不作为默认（原因与证据见 modes.ts 与 B3-1 报告）。
+ */
+export function standardDenyList(_cwd: string, _extra: string[]): string[] {
+  return sensitiveFallbackList();
 }
 
 /** TOML 键：裸键只允许 A-Za-z0-9_-，其余加引号并转义 */
@@ -59,19 +70,18 @@ export const VERIFIED_CODEX_VERSION = '0.166.0';
  * - 审批：需要时询问（on-request）；
  * - 禁用插件。
  */
-export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServers?: string[]; capabilities?: Partial<Capabilities> } = {}): CodexLaunchConfig {
+export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServers?: string[]; capabilities?: Partial<Capabilities>; launch?: PermissionLaunch } = {}): CodexLaunchConfig {
   const caps = resolveCapabilities(opts.capabilities);
-  const m = mapCapabilities(caps);
+  const m = opts.launch ?? permissionLaunchFor(cwd, caps);
   return {
-    expected: { approvalPolicy: m.approvalPolicy, sandboxType: m.sandboxType, networkAccess: m.network },
+    expected: m.expected,
+    describe: m.describe,
     args: [
       'app-server',
       '--listen',
       'stdio://',
-      '-c',
-      `sandbox_mode="${m.sandboxMode}"`,
-      '-c',
-      `approval_policy="${CONFIG_APPROVAL_POLICY}"`,
+      // 权限（权限配置档或思考层的只读参数）：不再有旧式沙箱配置键与它并用
+      ...m.args,
       // 用户在 config.toml 里写的自定义指令不进入会话（官方配置键 instructions / developer_instructions）
       '-c',
       'instructions=""',
@@ -110,21 +120,8 @@ export function codexLaunchConfig(cwd: string, opts: { model?: string; mcpServer
       '--disable',
       'apps',
     ],
-    threadStart: {
-      cwd,
-      approvalPolicy: m.approvalPolicy,
-      sandbox: m.sandboxMode,
-      ephemeral: true,
-      ...(opts.model ? { model: opts.model } : {}),
-    },
-    turnOverrides: {
-      cwd,
-      approvalPolicy: m.approvalPolicy,
-      sandboxPolicy:
-        m.sandboxType === 'workspaceWrite'
-          ? { type: 'workspaceWrite', writableRoots: [cwd], excludeSlashTmp: true, excludeTmpdirEnvVar: true, networkAccess: m.network }
-          : { type: 'readOnly' },
-    },
+    threadStart: { ...m.threadStart, ephemeral: true, ...(opts.model ? { model: opts.model } : {}) },
+    turnOverrides: { ...m.turnOverrides },
   };
 }
 
@@ -162,16 +159,32 @@ export function selfCheckLaunch(cfg: CodexLaunchConfig, caps: Capabilities, disa
   const problems: string[] = [];
   const a = cfg.args;
   const pair = (flag: string, value: string) => a.some((x, i) => x === flag && a[i + 1] === value);
-  const m = mapCapabilities(caps);
-  if (!pair('-c', `sandbox_mode="${m.sandboxMode}"`)) problems.push('沙箱模式');
-  if (!pair('-c', `approval_policy="${CONFIG_APPROVAL_POLICY}"`)) problems.push('配置层审批策略');
-  if (cfg.threadStart.approvalPolicy !== m.approvalPolicy || (cfg.turnOverrides as { approvalPolicy?: unknown }).approvalPolicy !== m.approvalPolicy) problems.push('命令审批策略');
-  if (cfg.threadStart.sandbox !== m.sandboxMode) problems.push('线程沙箱');
-  const sp = (cfg.turnOverrides as { sandboxPolicy?: { type?: string; writableRoots?: string[]; networkAccess?: boolean } }).sandboxPolicy;
-  if (sp?.type !== m.sandboxType) problems.push('回合沙箱类型');
-  if (m.sandboxType === 'workspaceWrite') {
-    if (!(sp?.writableRoots?.length === 1 && sp.writableRoots[0] === cfg.threadStart.cwd)) problems.push('可写根（只能是任务工作树）');
-    if (sp?.networkAccess !== m.network) problems.push('外部网络开关');
+  const exp = cfg.expected;
+  // 审批策略：线程与回合各声明一次，且等于期望
+  if (cfg.threadStart.approvalPolicy !== exp.approvalPolicy || (cfg.turnOverrides as { approvalPolicy?: unknown }).approvalPolicy !== exp.approvalPolicy) problems.push('命令审批策略');
+  const cfgArgs = a.filter((_, i) => a[i - 1] === '-c');
+  const hasLegacy = cfgArgs.some((x) => /^sandbox_mode\s*=/.test(x));
+  const hasProfile = cfgArgs.some((x) => /^default_permissions\s*=/.test(x));
+  if (hasLegacy && hasProfile) problems.push('旧式沙箱配置与权限配置档不能并用');
+  if (exp.mode === 'standard') {
+    if (!hasProfile) problems.push('权限配置档（default_permissions）');
+    if (hasLegacy) problems.push('标准模式不得使用旧式沙箱配置');
+    if (!cfgArgs.some((x) => x.startsWith(`permissions.${exp.profileId}=`))) problems.push('权限配置档内容（permissions.<id>）');
+    if (cfg.threadStart.sandbox !== undefined || (cfg.turnOverrides as { sandboxPolicy?: unknown }).sandboxPolicy !== undefined) problems.push('标准模式不得再传旧式 sandbox / sandboxPolicy');
+    // 可写根只能是任务副本与用户选定的额外目录：权限配置档里出现的 =“write” 条目必须正是这些路径
+    const profile = cfgArgs.find((x) => x.startsWith('permissions.')) ?? '';
+    const writes = [...profile.matchAll(/"((?:[^"\\]|\\.)*)"="write"/g)].map((m) => m[1]!.replace(/\\(.)/g, '$1'));
+    const allowed = new Set([String(cfg.threadStart.cwd), ...caps.extraWritableDirs]);
+    for (const w of writes) if (!allowed.has(w)) problems.push(`可写根（只能是任务副本与额外目录）：${w}`);
+    if (!writes.includes(String(cfg.threadStart.cwd))) problems.push('可写根缺少任务副本');
+    if (exp.networkEnabled !== (caps.externalNetwork === 'on')) problems.push('外部网络开关');
+    if (/network=\{enabled=true/.test(profile) !== exp.networkEnabled) problems.push('权限配置档中的网络开关');
+  } else if (exp.mode === 'read_only') {
+    if (!pair('-c', 'sandbox_mode="read-only"')) problems.push('只读沙箱');
+  } else {
+    if (hasLegacy || hasProfile) problems.push('完全信任模式不应带任何权限配置');
+    // 完全信任的沙箱参数只由 modes.ts 的完全信任分支产生；这里只确认它确实带着（具体取值由启动后的生效沙箱核验）
+    if (typeof cfg.threadStart.sandbox !== 'string') problems.push('线程沙箱');
   }
   for (const f of ['hooks', 'memories', 'multi_agent', 'remote_plugin', 'shell_snapshot', 'plugins', 'apps']) if (!pair('--disable', f)) problems.push(`扩展 ${f} 未关闭`);
   for (const kv of ['notify=[]', 'memories.use_memories=false', 'memories.generate_memories=false', 'allow_login_shell=false', 'shell_environment_policy.inherit="core"', 'instructions=""', 'developer_instructions=""']) {
@@ -181,6 +194,8 @@ export function selfCheckLaunch(cfg: CodexLaunchConfig, caps: Capabilities, disa
   for (const name of disabledMcp) if (!pair('-c', `mcp_servers.${tomlKey(name)}.enabled=false`)) problems.push(`MCP「${name}」未关闭`);
   return problems;
 }
+
+const NO_RECORDS: FullTrustRecords = { get: async () => undefined };
 
 export interface CodexOptions {
   /** 可执行文件，默认 `codex`；测试中指向假的 app-server */
@@ -283,6 +298,106 @@ export class CodexExecutor implements Executor {
     });
   }
 
+  /**
+   * 项目脚本的沙箱运行器：用 app-server 的 command/exec，在与施工相同的权限配置档（及同一套隔离参数）下运行一条命令。
+   * 任何一步无法确认（读不到 MCP 名单、自检不过、生效权限与期望不一致、进程起不来）→ unavailable，调用方标“未检查”；
+   * 绝不在宿主上直接运行。
+   */
+  readonly sandboxRunner: SandboxCommandRunner = { runCommand: (req) => this.execInSandbox(req) };
+
+  private async execInSandbox(req: SandboxExecRequest): Promise<SandboxExecResult> {
+    let cwd = req.cwd;
+    try {
+      cwd = fs.realpathSync(req.cwd);
+    } catch {}
+    const started = Date.now();
+    let caps: Capabilities;
+    let launch: PermissionLaunch | undefined;
+    try {
+      caps = resolveCapabilities(req.capabilities);
+      if (caps.constructionMode === 'full_trust' && caps.fileAccess !== 'worktree_read_only') launch = await buildFullTrustMode(req.taskId ?? '', cwd, req.fullTrustRecords ?? NO_RECORDS);
+    } catch (e) {
+      return { status: 'unavailable', reason: (e as Error).message };
+    }
+    let names: string[];
+    try {
+      names = await this.discoverMcpServers(cwd);
+    } catch (e) {
+      return { status: 'unavailable', reason: `无法确认用户配置的 MCP 服务器：${(e as Error).message}` };
+    }
+    let cfg: CodexLaunchConfig;
+    try {
+      cfg = codexLaunchConfig(cwd, { mcpServers: names, capabilities: caps, ...(launch ? { launch } : {}) });
+    } catch (e) {
+      return { status: 'unavailable', reason: (e as Error).message };
+    }
+    const problems = selfCheckLaunch(cfg, caps, names);
+    if (problems.length) return { status: 'unavailable', reason: `权限配置无法确认：${problems.join('；')}` };
+
+    return new Promise<SandboxExecResult>((resolve) => {
+      let child: ChildProcess;
+      try {
+        child = spawn(this.command, [...this.prefix, ...cfg.args], { cwd, env: { ...hostEnv(), ...this.options.env }, shell: false, stdio: ['pipe', 'pipe', 'ignore'] });
+      } catch (e) {
+        resolve({ status: 'unavailable', reason: (e as Error).message });
+        return;
+      }
+      let settled = false;
+      let buf = '';
+      let nextId = 1;
+      const waiting = new Map<number, (m: RpcMessage) => void>();
+      const end = (r: SandboxExecResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.kill('SIGKILL');
+        resolve(r);
+      };
+      // 整体兜底：命令超时之外再留出启动与核验的时间
+      const timer = setTimeout(() => end({ status: 'ran', exitCode: null, stdout: '', stderr: '', timedOut: true, durationMs: Date.now() - started }), req.timeoutMs + 30_000);
+      const rpc = (method: string, params: object) =>
+        new Promise<RpcMessage>((res) => {
+          const id = nextId++;
+          waiting.set(id, res);
+          child.stdin?.write(`${JSON.stringify({ method, id, params })}\n`);
+        });
+      child.on('error', (err) => end({ status: 'unavailable', reason: err.message }));
+      child.on('close', () => end({ status: 'unavailable', reason: '受限运行环境（app-server）提前退出' }));
+      child.stdin?.on('error', () => {});
+      child.stdout?.setEncoding('utf8').on('data', (c: string) => {
+        buf += c;
+        let i: number;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line) continue;
+          try {
+            const m = JSON.parse(line) as RpcMessage;
+            if (m.id !== undefined && m.method) {
+              // 不应有任何服务端请求（无回合、无审批）：一律拒绝
+              child.stdin?.write(`${JSON.stringify({ id: m.id, error: { code: -32601, message: 'unsupported by AI Solo Studio' } })}\n`);
+            } else if (m.id !== undefined) waiting.get(m.id as number)?.(m);
+          } catch {}
+        }
+      });
+      (async () => {
+        await rpc('initialize', { clientInfo: { name: 'ai_solo_studio', title: 'AI Solo Studio', version: '0.3.0' } });
+        child.stdin?.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
+        // 先建一个临时线程，只为拿到“实际生效的权限”并与期望核验（不发起任何回合、不调用模型）
+        const t = await rpc('thread/start', cfg.threadStart);
+        if (t.error) return end({ status: 'unavailable', reason: `无法建立受限环境：${t.error.message ?? '未知错误'}` });
+        const bad = verifyEffectivePermissions(cfg.expected, t.result);
+        if (bad.length) return end({ status: 'unavailable', reason: `生效权限与期望不一致：${bad.join('；')}` });
+        const r = await rpc('command/exec', { command: req.argv, cwd, env: req.env, timeoutMs: req.timeoutMs });
+        if (r.error) return end({ status: 'unavailable', reason: `受限环境无法运行命令：${r.error.message ?? '未知错误'}` });
+        const res = (r.result ?? {}) as { exitCode?: number | null; stdout?: string; stderr?: string };
+        // command/exec 没有单独的“超时”字段：以“耗时已达上限且没有以 0 退出”判定为超时（保守：宁可报超时也不报成功）
+        const timedOut = Date.now() - started >= req.timeoutMs && res.exitCode !== 0;
+        end({ status: 'ran', exitCode: typeof res.exitCode === 'number' ? res.exitCode : null, stdout: res.stdout ?? '', stderr: res.stderr ?? '', timedOut, durationMs: Date.now() - started });
+      })().catch((e: Error) => end({ status: 'unavailable', reason: e.message }));
+    });
+  }
+
   /** 官方方式关不掉的用户级扩展：只检查文件/目录是否存在，绝不读取内容。 */
   private unisolatable(): string[] {
     const home = this.options.env?.CODEX_HOME ?? process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
@@ -341,6 +456,10 @@ export class CodexExecutor implements Executor {
     const pendingApprovals = new Map<string, RpcId>(); // 我们的请求 id → app-server 的 JSON-RPC id
     const fileItems = new Map<string, { path: string; kind: string }[]>();
     const denied: DeniedOperation[] = [];
+    /** 施工模式下收到的（不应出现的）审批请求 */
+    const anomalies: string[] = [];
+    /** 当前启动是否为施工模式（标准 / 完全信任）；思考层的只读启动为 false */
+    let constructionMode = false;
     const requests = new Map<string, PermissionRequest>();
     let seq = 0;
     let threadId: string | undefined;
@@ -371,6 +490,7 @@ export class CodexExecutor implements Executor {
       timers.forEach(clearTimeout);
       if (note) ch.push({ type: 'message', text: note, source: 'host' });
       if (denied.length) ch.push({ type: 'message', source: 'host', text: `有 ${denied.length} 项操作被拒绝，没有执行：${denied.map((d) => d.description.split('\n').at(-1)).join('；')}` });
+      if (anomalies.length) ch.push({ type: 'message', source: 'host', text: `异常：施工模式不应出现审批请求，但收到了 ${anomalies.length} 次（均已拒绝）。` });
       ch.push({ type: 'exit', outcome, ...(denied.length ? { denied } : {}) });
       ch.close();
       // 回合结束后 app-server 仍在运行，需要主动收掉
@@ -416,9 +536,25 @@ export class CodexExecutor implements Executor {
       ch.push({ type: 'permission_request', request: full });
     };
 
+    /**
+     * 施工模式（标准 / 完全信任）下审批策略是 never，理论上不会收到任何审批请求。
+     * 万一收到：一律拒绝（只回 decline，绝不回任何“以后都允许”类决定），记为异常并如实带进验收卡。
+     */
+    const rejectUnexpectedApproval = (m: RpcMessage) => {
+      const p = m.params ?? {};
+      const isCmd = m.method === 'item/commandExecution/requestApproval';
+      write({ id: m.id, result: { decision: 'decline' } });
+      const what = isCmd ? `命令：${parseCommand(String(p.command ?? '')).inner || String(p.command ?? '')}` : `修改文件：${(fileItems.get(String(p.itemId)) ?? []).map((c) => c.path).join('、') || '（未提供文件列表）'}`;
+      anomalies.push(what);
+      denied.push({ kind: isCmd ? 'run_command' : 'write_file', ...(isCmd ? { command: parseCommand(String(p.command ?? '')).argv } : {}), description: `异常的审批请求（施工模式不应出现，已拒绝）：${what}`, risk: 'high' });
+      ch.push({ type: 'log', stream: 'stderr', text: `异常：施工模式下收到审批请求，已拒绝。${what}\n` });
+    };
+
     const onServerRequest = (m: RpcMessage) => {
       const p = m.params ?? {};
-      if (m.method === 'item/commandExecution/requestApproval') {
+      if (constructionMode && (m.method === 'item/commandExecution/requestApproval' || m.method === 'item/fileChange/requestApproval')) {
+        rejectUnexpectedApproval(m);
+      } else if (m.method === 'item/commandExecution/requestApproval') {
         const raw = String(p.command ?? '');
         const parsed = parseCommand(raw);
         const paths = [...parsed.paths];
@@ -533,11 +669,12 @@ export class CodexExecutor implements Executor {
     };
 
     // ---------- 启动 ----------
-    const launch = (configured: string[]) => {
+    const launch = (configured: string[], fullTrustLaunch?: PermissionLaunch) => {
     // 启动前构建：未被授予的 MCP 全部关闭；授予的必须真的存在于用户配置里
     const missing = caps.grantedMcp.filter((n) => !configured.includes(n));
     const disabledMcp = configured.filter((n) => !granted.has(n));
-    const cfg = codexLaunchConfig(cwd, { ...(opts.model ? { model: opts.model } : {}), mcpServers: disabledMcp, capabilities: caps });
+    const cfg = codexLaunchConfig(cwd, { ...(opts.model ? { model: opts.model } : {}), mcpServers: disabledMcp, capabilities: caps, ...(fullTrustLaunch ? { launch: fullTrustLaunch } : {}) });
+    constructionMode = cfg.expected.mode !== 'read_only';
     // 启动前自检：任何一项无法确认，就不启动进程
     const problems = [...missing.map((n) => `授予的 MCP「${n}」不在用户配置中`), ...selfCheckLaunch(cfg, caps, disabledMcp)];
     if (problems.length) {
@@ -591,12 +728,9 @@ export class CodexExecutor implements Executor {
       }
 
       const verifyEffective = async (t: any): Promise<string[]> => {
-        const bad: string[] = [];
+        // 生效权限核验：以 thread/start 响应的 approvalPolicy、activePermissionProfile、网络状态为准，与期望逐项比对
+        const bad: string[] = [...verifyEffectivePermissions(cfg.expected, t)];
         let nonOfficial: string[] = [];
-        if (t?.approvalPolicy !== cfg.expected.approvalPolicy) bad.push(`命令审批策略（实际：${JSON.stringify(t?.approvalPolicy)}）`);
-        if (t?.sandbox?.type !== cfg.expected.sandboxType) bad.push(`沙箱类型（实际：${JSON.stringify(t?.sandbox?.type)}）`);
-        // 网络：只在“关闭”时核验（开启时线程级响应无法反映回合级的放行）
-        if (cfg.expected.sandboxType === 'workspaceWrite' && cfg.expected.networkAccess === false && t?.sandbox?.networkAccess !== false) bad.push('外部网络未关闭');
         try {
           const c = (await request('config/read', { includeLayers: false, cwd })) ?? {};
           const conf = c.config ?? {};
@@ -633,6 +767,7 @@ export class CodexExecutor implements Executor {
               instructionSources: Array.isArray(t?.instructionSources) ? t.instructionSources.map(String) : Object.values(t?.instructionSources ?? {}).map(String),
               approvalPolicy: t.approvalPolicy,
               sandbox: t.sandbox?.type,
+              permissions: effectivePermissionsOf(cfg.expected, t, cfg.describe),
               grantedMcp: caps.grantedMcp,
               modelProvider: typeof t?.modelProvider === 'string' ? t.modelProvider : undefined,
               warnings,
@@ -670,6 +805,16 @@ export class CodexExecutor implements Executor {
 
     // 先（只读地）查出用户配置了哪些 MCP 服务器，再带着“逐个关闭”的参数启动。查不出来就不启动：宁可失败，也不让用户的外部工具悄悄进入会话。
     (async () => {
+      // 完全信任：先过任务级确认门禁（没有本任务的确认标记就不启动任何进程）
+      let fullTrustLaunch: PermissionLaunch | undefined;
+      if (caps.fileAccess !== 'worktree_read_only' && caps.constructionMode === 'full_trust') {
+        try {
+          fullTrustLaunch = await buildFullTrustMode(opts.taskId ?? '', cwd, opts.fullTrustRecords ?? NO_RECORDS);
+        } catch (e) {
+          if (!finished) finish({ kind: 'exited', code: 1 }, `完全信任模式未获确认，任务未开始：${(e as Error).message}`);
+          return;
+        }
+      }
       let names: string[];
       try {
         names = await this.discoverMcpServers(cwd);
@@ -682,7 +827,7 @@ export class CodexExecutor implements Executor {
         return;
       }
       if (finished) return; // 启动前已被停止
-      launch(names);
+      launch(names, fullTrustLaunch);
     })();
 
     return {

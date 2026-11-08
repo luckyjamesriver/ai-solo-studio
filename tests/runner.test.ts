@@ -6,7 +6,7 @@ import { Channel } from '../src/core/executor/channel.js';
 import type { Executor, ExecutorEvent } from '../src/core/executor/types.js';
 import { FakeExecutor, type FakeStep } from '../src/core/executor/adapters/fake.js';
 import * as G from '../src/core/git/git.js';
-import { makeRepo } from './helpers.js';
+import { makeRepo, testSandboxRunner } from './helpers.js';
 
 const plan = {
   goal: '加入深色模式',
@@ -267,12 +267,12 @@ describe('任务闭环（模拟执行体 + 真实 Git）', () => {
       'check.js': 'const s=require("fs").readFileSync("index.html","utf8"); process.exit(s.includes("dark")?0:1);\n',
       'index.html': 'light\n',
     };
-    const good = await setup([{ do: 'write', path: 'index.html', content: 'dark\n' }, { do: 'exit', code: 0 }], { runChecks: true }, files);
+    const good = await setup([{ do: 'write', path: 'index.html', content: 'dark\n' }, { do: 'exit', code: 0 }], { runChecks: true, sandboxRunner: testSandboxRunner() }, files);
     const tg = await good.runner.start(good.id);
     expect(tg.card?.items.find((i) => i.key === 'build')?.status).toBe('verified');
     expect(tg.card?.items.find((i) => i.key === 'test')?.status).toBe('verified');
 
-    const bad = await setup([{ do: 'write', path: 'index.html', content: 'still light\n' }, { do: 'exit', code: 0 }], { runChecks: true }, files);
+    const bad = await setup([{ do: 'write', path: 'index.html', content: 'still light\n' }, { do: 'exit', code: 0 }], { runChecks: true, sandboxRunner: testSandboxRunner() }, files);
     const tb = await bad.runner.start(bad.id);
     expect(tb.card?.items.find((i) => i.key === 'test')?.status).toBe('failed');
     await bad.runner.confirm(bad.id, { criterion: 0, decision: 'confirmed' });

@@ -37,16 +37,29 @@ function effectiveConfig() {
     chatgpt_base_url: process.env.FAKE_CHATGPT_BASE_URL ?? 'https://chatgpt.com/backend-api/',
   };
 }
+// 权限配置档：从 -c default_permissions="<id>" 与 -c permissions.<id>={...} 推导（模拟真实 app-server 的 activePermissionProfile）。
+// FAKE_IGNORE 额外支持：profile（报告另一个配置档）、network（网络状态与期望相反）、sandbox（沙箱被放开）
+const profileId = (cflags.find((x) => x.startsWith('default_permissions=')) ?? '').replace(/^default_permissions="?/, '').replace(/"$/, '') || undefined;
+const profileText = profileId ? (cflags.find((x) => x.startsWith(`permissions.${profileId}=`)) ?? '') : '';
+const profileNetwork = /network=\{enabled=true/.test(profileText);
 function threadResult(p) {
-  const sb = p.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite';
-  return {
+  const base = {
     thread: { id: 'thread-1' },
     model: 'fake-model',
     modelProvider: process.env.FAKE_MODEL_PROVIDER ?? 'openai',
     approvalPolicy: ignore.includes('approval') ? 'on-request' : p.approvalPolicy,
-    sandbox: { type: ignore.includes('sandbox') ? 'dangerFullAccess' : sb, networkAccess: ignore.includes('network') },
     instructionSources: ['/home/u/.codex/AGENTS.md'],
   };
+  if (profileId) {
+    return {
+      ...base,
+      activePermissionProfile: ignore.includes('profile') ? { id: 'someone-else', extends: ':workspace' } : { id: profileId, extends: ':workspace' },
+      sandbox: { type: ignore.includes('sandbox') ? 'dangerFullAccess' : 'workspaceWrite', networkAccess: ignore.includes('network') ? !profileNetwork : profileNetwork },
+    };
+  }
+  if (p.sandbox === 'danger-full-access') return { ...base, sandbox: { type: ignore.includes('sandbox') ? 'workspaceWrite' : 'dangerFullAccess' } };
+  const sb = p.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite';
+  return { ...base, sandbox: { type: ignore.includes('sandbox') ? 'dangerFullAccess' : sb, networkAccess: ignore.includes('network') } };
 }
 
 let turnId = 'turn-1';
@@ -114,6 +127,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.method === 'config/read') {
     if (process.env.FAKE_CONFIG_ERROR) send({ id: m.id, error: { code: -32000, message: 'config unavailable' } });
     else send({ id: m.id, result: { config: effectiveConfig() } });
+  } else if (m.method === 'command/exec') {
+    // 假的沙箱命令执行：FAKE_EXEC（JSON：exitCode/stdout/stderr）；FAKE_EXEC_ERROR=1 报错
+    if (process.env.FAKE_EXEC_ERROR) send({ id: m.id, error: { code: -32000, message: 'exec unavailable' } });
+    else send({ id: m.id, result: JSON.parse(process.env.FAKE_EXEC ?? '{"exitCode":0,"stdout":"ok","stderr":""}') });
   } else if (m.method === 'hooks/list') {
     const present = ignore.includes('hooks_list');
     send({ id: m.id, result: { data: [{ cwd: process.cwd(), hooks: present ? [{ key: 'k' }] : [], warnings: [], errors: [] }] } });
