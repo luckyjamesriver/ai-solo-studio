@@ -4,6 +4,7 @@ import type { TaskState } from '../task/state.js';
 import { describePermissions, type PermissionSummary } from './permission-text.js';
 import { extractIncomplete, type IncompleteReport } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
+import { exitFailureText, notCheckedText } from '../acceptance/texts.js';
 
 /**
  * 给渲染层看的任务视图：只含大白话与必要事实。
@@ -55,11 +56,13 @@ export interface TaskView {
   /** 没能开工的原因（权限核验失败、完全信任未确认等） */
   startFailure: string | null;
   running: boolean;
+  /** 启动核对修正过这个任务：一句话说明（列表标“已核对”）；否则 null */
+  reconciled: string | null;
   result: ResultView | null;
   diagnostics: string[];
 }
 
-const STATE_TEXT: Record<TaskState, string> = {
+export const STATE_TEXT: Record<TaskState, string> = {
   draft: '草稿',
   clarifying: '等待澄清',
   planned: '计划待批准',
@@ -71,10 +74,10 @@ const STATE_TEXT: Record<TaskState, string> = {
   timed_out: '已超时',
   reviewing: '等待你验收',
   saved: '已保存',
-  saved_cleanup_pending: '已保存，临时文件还没清理干净',
+  saved_cleanup_pending: '已保存，临时文件还没清理干净（需要处理）',
   save_failed_unmerged: '有冲突，没有保存',
   discarded: '已放弃',
-  discard_cleanup_pending: '已放弃，临时文件还没清理干净',
+  discard_cleanup_pending: '已放弃，临时文件还没清理干净（需要处理）',
   undone: '已撤销保存',
   undo_failed: '撤销没有成功',
 };
@@ -133,7 +136,8 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
   if (task.card && task.exit) {
     const facts: FactView[] = [];
     const exit = task.card.items.find((i) => i.key === 'exit');
-    if (exit) facts.push({ label: 'AI 执行过程是否正常结束', status: exit.status === 'verified' ? 'ok' : 'bad', detail: exit.status === 'verified' ? '正常结束' : exit.evidence });
+    // 只给结论，不带卡片里的原始证据文字（可能含启动错误原文）
+    if (exit) facts.push({ label: 'AI 执行过程是否正常结束', status: exit.status === 'verified' ? 'ok' : 'bad', detail: exit.status === 'verified' ? '正常结束' : exitFailureText(task.exit) });
     facts.push({
       label: '改动了哪些文件',
       status: task.card.changes.length ? 'ok' : 'bad',
@@ -146,7 +150,7 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
         label: `检查「${CHECK_LABEL[key]}」`,
         status: item.status === 'verified' ? 'ok' : item.status === 'failed' ? 'bad' : 'unchecked',
         // 通过/失败只给结论，不给命令原文；“未检查”的原因本身是大白话
-        detail: item.status === 'verified' ? '通过' : item.status === 'failed' ? '未通过' : item.evidence,
+        detail: item.status === 'verified' ? '通过' : item.status === 'failed' ? '未通过' : notCheckedText(key, item.evidence),
       });
     }
     const incompleteSignals = (task.exit.kind !== 'exited' || task.exit.code !== 0) || denied.length > 0 || !!startFailure;
@@ -177,6 +181,7 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     progress: compact,
     startFailure,
     running: opts.running,
+    reconciled: task.reconciled ? `已核对：${task.reconciled.note}` : null,
     result,
     // 诊断记录：时间线的文字（含应用自己的说明），经已知噪音过滤；工具事件只留概括，不含命令
     diagnostics: task.timeline
