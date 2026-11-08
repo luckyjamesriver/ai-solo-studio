@@ -60,6 +60,6 @@ node node_modules/electron/cli.js --version
 - **Claude Code**（计划中的第二个执行体）：Claude 用户需自备 API Key；Anthropic 不允许第三方应用代用户使用 Claude 订阅登录。
 - 其他工具（Cursor、Antigravity、DeepSeek 等）的调查结论见 [ADR 0001](docs/adr/0001-first-executor-spike.md)。我们会在支持每个执行体前核查其现行条款，并在此说明。
 
-## 许可
+## 许可证
 
-MIT
+本项目采用 [Apache-2.0](LICENSE) 许可证，详见 [NOTICE](NOTICE)。
