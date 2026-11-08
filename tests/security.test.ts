@@ -143,6 +143,22 @@ describe('安全基线（防回归）', () => {
     expect("import { run } from '../proc/run.js';").toMatch(/import\s*\{[^}]*\brun\b[^}]*\}\s*from\s*['"][^'"]*proc\/run/);
   });
 
+  it('B3-1b（新增，只收紧）：标准模式的可写根中不得出现 .git 路径（含 .git/worktrees/<id>）；可写根只有副本与额外目录', async () => {
+    const { codexLaunchConfig } = await import('../src/core/executor/adapters/codex.js');
+    const { resolveCapabilities } = await import('../src/core/capabilities/model.js');
+    const worktree = '/proj/.studio/worktrees/t1';
+    for (const caps of [resolveCapabilities(), resolveCapabilities({ extraWritableDirs: ['/data/out'], externalNetwork: 'on' })]) {
+      const cfg = codexLaunchConfig(worktree, { capabilities: caps });
+      const profile = cfg.args.find((a) => a.startsWith('permissions.')) ?? '';
+      const writes = [...profile.matchAll(/"((?:[^"\\]|\\.)*)"="write"/g)].map((m) => m[1]!);
+      expect(writes.sort()).toEqual([worktree, ...caps.extraWritableDirs].sort());
+      for (const w of writes) expect(w, `可写根不得含 .git：${w}`).not.toMatch(/(^|\/)\.git(\/|$)/);
+    }
+    // 断言自身有效：样例确实会被匹配
+    expect('/proj/.git/worktrees/t1').toMatch(/(^|\/)\.git(\/|$)/);
+    expect('/proj/.gitignore-dir/x').not.toMatch(/(^|\/)\.git(\/|$)/);
+  });
+
   it('Codex 适配器：标准模式生成的参数符合预期（权限配置档 + never，无旧式沙箱参数）', async () => {
     const { codexLaunchConfig } = await import('../src/core/executor/adapters/codex.js');
     const cfg = codexLaunchConfig('/work/tree', { model: 'm' });
