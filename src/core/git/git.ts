@@ -262,30 +262,63 @@ export async function readBlob(dir: string, rev: string, filePath: string, maxBy
   return { kind: 'ok', size, text: await git(dir, ['cat-file', '-p', spec]) };
 }
 
-/** 相对基线的改动清单（包含未提交与未跟踪文件）。 */
+
+/**
+ * `diff --name-status -z` 的解析：状态码、路径各占一段（NUL 分隔）；改名/复制（R、C）后面跟两段路径（旧、新）。
+ * 中文与带空格的文件名不会被 Git 转义。
+ */
+export function parseNameStatusZ(out: string): { code: string; path: string; oldPath?: string }[] {
+  const parts = out.split('\0');
+  const res: { code: string; path: string; oldPath?: string }[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const status = parts[i];
+    if (!status) continue;
+    const code = status[0] ?? '?';
+    if (code === 'R' || code === 'C') {
+      res.push({ code, oldPath: parts[i + 1] ?? '', path: parts[i + 2] ?? '' });
+      i += 2;
+    } else {
+      res.push({ code, path: parts[i + 1] ?? '' });
+      i += 1;
+    }
+  }
+  return res;
+}
+
+/**
+ * `diff --numstat -z` 的解析：普通文件是 “增\t删\t路径\0”；改名/复制是 “增\t删\t\0旧路径\0新路径\0”。
+ * 结果以（新）路径为键；二进制文件（“-”）的行数为 null。
+ */
+export function parseNumstatZ(out: string): Map<string, [number | null, number | null]> {
+  const parts = out.split('\0');
+  const counts = new Map<string, [number | null, number | null]>();
+  for (let i = 0; i < parts.length; i++) {
+    const head = parts[i];
+    if (!head) continue;
+    const m = head.match(/^(-|\d+)\t(-|\d+)\t(.*)$/s);
+    if (!m) continue;
+    const pair: [number | null, number | null] = [m[1] === '-' ? null : Number(m[1]), m[2] === '-' ? null : Number(m[2])];
+    if (m[3] === '') {
+      counts.set(parts[i + 2] ?? '', pair); // 改名：head 后面是旧路径、新路径
+      i += 2;
+    } else counts.set(m[3]!, pair);
+  }
+  return counts;
+}
+
+/** 相对基线的改动清单（包含未提交与未跟踪文件）。文件名一律按 -z（NUL 分隔）解析。 */
 export async function diffSummary(wt: Worktree): Promise<FileChange[]> {
   await git(wt.path, ['add', '-A', '--intent-to-add']).catch(() => undefined);
-  const nameStatus = await git(wt.path, ['diff', '--name-status', '-M', wt.baseSha]);
-  const numstat = await git(wt.path, ['diff', '--numstat', '-M', wt.baseSha]);
-  const counts = new Map<string, [number | null, number | null]>();
-  for (const line of numstat.split('\n').filter(Boolean)) {
-    const [a, d, ...rest] = line.split('\t');
-    const p = rest[rest.length - 1] ?? '';
-    counts.set(p, [a === '-' ? null : Number(a), d === '-' ? null : Number(d)]);
-  }
+  const nameStatus = await git(wt.path, ['diff', '--name-status', '-z', '-M', wt.baseSha]);
+  const numstat = await git(wt.path, ['diff', '--numstat', '-z', '-M', wt.baseSha]);
+  const counts = parseNumstatZ(numstat);
   const map: Record<string, FileChange['status']> = { A: 'added', M: 'modified', D: 'deleted', R: 'renamed' };
-  return nameStatus
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const parts = line.split('\t');
-      const code = (parts[0] ?? '?')[0] ?? '?';
-      const p = parts[parts.length - 1] ?? '';
-      const [additions, deletions] = counts.get(p) ?? [null, null];
-      const change: FileChange = { status: map[code] ?? 'other', path: p, additions, deletions };
-      if (code === 'R' && parts.length > 2 && parts[1]) change.oldPath = parts[1];
-      return change;
-    });
+  return parseNameStatusZ(nameStatus).map((e) => {
+    const [additions, deletions] = counts.get(e.path) ?? [null, null];
+    const change: FileChange = { status: map[e.code] ?? 'other', path: e.path, additions, deletions };
+    if (e.code === 'R' && e.oldPath) change.oldPath = e.oldPath;
+    return change;
+  });
 }
 
 export async function diffText(wt: Worktree, maxBytes = 200_000): Promise<string> {

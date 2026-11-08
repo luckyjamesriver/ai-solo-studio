@@ -132,8 +132,14 @@ export async function importReport(i: { projectRoot: string; reportPath: string;
 
   // 4. 工作树当前未提交/未跟踪改动：如实列出（不改变结果档位）
   try {
-    const st = await git(repo, ['status', '--porcelain']);
-    for (const l of st.split('\n').filter(Boolean)) (l.startsWith('??') ? result.worktree.untracked : result.worktree.dirty).push(l.slice(3));
+    // -z：文件名按 NUL 分隔，中文与带空格的名字不会被转义；改名记录后面多跟一段原路径，跳过
+    const st = (await git(repo, ['status', '--porcelain=v1', '-z'])).split('\0');
+    for (let i = 0; i < st.length; i++) {
+      const l = st[i];
+      if (!l) continue;
+      if (/[RC]/.test(l.slice(0, 2))) i++;
+      (l.startsWith('??') ? result.worktree.untracked : result.worktree.dirty).push(l.slice(3));
+    }
     if (result.worktree.dirty.length || result.worktree.untracked.length) result.notes.push(`工作树当前有 ${result.worktree.dirty.length} 个未提交改动、${result.worktree.untracked.length} 个未跟踪文件（已如实列出）。`);
   } catch (e) {
     result.worktree.error = (e as Error).message;
