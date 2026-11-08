@@ -34,3 +34,20 @@ button { font: inherit; padding: .55rem 1rem; border-radius: 6px; border: 1px so
 button:focus-visible, a:focus-visible { outline: 3px solid var(--warn); outline-offset: 2px; }
 .error { color: var(--bad); }
 .consent { border: 1px solid var(--line); padding: 1rem; border-radius: 8px; }
+/* 任务区 */
+textarea { display: block; width: 100%; box-sizing: border-box; font: inherit; padding: .5rem; margin-top: .25rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+label { display: block; margin-top: .6rem; }
+label.check, label.choice { display: flex; gap: .5rem; align-items: flex-start; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0; padding: .6rem 1rem; }
+.tasklist { list-style: none; padding: 0; }
+.tasklist li { padding: .3rem 0; }
+.taskpane { border: 1px solid var(--line); border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+.badge-trust { background: var(--bad); color: #fff; font-size: .8rem; font-weight: 700; padding: .05rem .5rem; border-radius: 999px; margin-left: .5rem; }
+.risk { border-left: 4px solid var(--bad); padding-left: .8rem; font-weight: 600; }
+.perm { border: 1px solid var(--line); border-radius: 8px; padding: .5rem 1rem; }
+.progress { padding-left: 1.2rem; }
+.facts li[data-status="bad"] { color: var(--bad); }
+.facts li[data-status="unchecked"] { color: var(--warn); }
+.incomplete { border: 1px dashed var(--warn); border-radius: 8px; padding: .5rem 1rem; margin-top: 1rem; }
+blockquote { margin: .5rem 0; padding-left: .8rem; border-left: 3px solid var(--line); color: var(--muted); white-space: pre-wrap; }
+.headline { font-weight: 600; }

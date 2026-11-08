@@ -32,7 +32,21 @@ export interface DisclosureState {
   accepted: { acceptedAt: string; services: string[] } | null;
 }
 
+export type { TaskView, ResultView, FactView, ExtraDirView } from '../core/app/task-view.js';
+import type { TaskView } from '../core/app/task-view.js';
+/** 计划表单：只有文字、模式与布尔值，没有任何路径 */
+export interface PlanInput { goal: string; criteria: string[]; mode: 'standard' | 'full_trust'; network: boolean }
+export interface AddDirResult { view: TaskView; cancelled: boolean; rejected: string | null }
+
 interface StudioApi {
+  listTasks(): Promise<{ tasks: TaskView[]; preferredMode: 'standard' | 'full_trust' }>;
+  createTask(request: string): Promise<TaskView>;
+  getTask(id: string): Promise<TaskView>;
+  savePlan(id: string, plan: PlanInput): Promise<TaskView>;
+  addExtraDir(id: string): Promise<AddDirResult>;
+  removeExtraDir(id: string, key: string): Promise<TaskView>;
+  startTask(id: string, ack: boolean): Promise<TaskView>;
+  stopTask(id: string): Promise<TaskView>;
   detectEnvironment(): Promise<HealthReport>;
   chooseProject(): Promise<OpenResult>;
   recentProjects(): Promise<RecentProject[]>;

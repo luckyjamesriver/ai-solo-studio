@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Tasks } from './Tasks.js';
 import { studio, type DisclosureState, type HealthItem, type HealthReport, type LayerKey, type LayerState, type OpenResult, type ProjectStatus, type RecentProject } from './api.js';
 
 // M3-B1：入口与环境——打开项目、分层环境体检、首次外发告知。任务闭环界面在后续子任务实现。
@@ -165,6 +166,7 @@ export function App() {
             <ol className="saves">
               {project.savePoints.map((s) => <li key={s.sha}>{s.message} <span className="muted">{new Date(s.date).toLocaleString()}</span></li>)}
             </ol>
+            <Tasks key={project.path} />
             <button className="secondary" onClick={() => { setProject(null); refreshEnv(); }}>换一个项目</button>
           </div>
         )}
