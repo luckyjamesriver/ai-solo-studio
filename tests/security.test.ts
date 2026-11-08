@@ -143,6 +143,59 @@ describe('安全基线（防回归）', () => {
     expect("import { run } from '../proc/run.js';").toMatch(/import\s*\{[^}]*\brun\b[^}]*\}\s*from\s*['"][^'"]*proc\/run/);
   });
 
+  // ---------- M3-B3-2 新增（只增不减） ----------
+  const rendererFiles = walk('src/renderer').filter((f) => /\.(ts|tsx)$/.test(f));
+  /** 渲染层的“显示文字”：字符串字面量与 JSX 文本（不含注释、不含标识符） */
+  const displayStrings = (src: string): string[] => {
+    const code = stripComments(src);
+    const lits = [...code.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map((m) => m[2]!);
+    const jsx = [...code.matchAll(/>([^<>{}]*[^\s<>{}][^<>{}]*)</g)].map((m) => m[1]!);
+    return [...lits, ...jsx];
+  };
+  const INTERNAL_WORDS = /sandbox|\bnever\b|danger[-_ ]?full|full[-_]access|permission[ _-]?profile|approvalPolicy|default_permissions|execpolicy|workspace[-_ ]?write|seatbelt|acceptWith|studio_standard/i;
+
+  it('B3-2：渲染层的显示文字里不得出现内部名词（sandbox / never / danger-full-access / permission profile 等）', () => {
+    expect(rendererFiles.length).toBeGreaterThan(5);
+    for (const f of rendererFiles) {
+      for (const s of displayStrings(fs.readFileSync(f, 'utf8'))) expect(s, `${f}：“${s}”`).not.toMatch(INTERNAL_WORDS);
+    }
+    // 文案文件确实被检查到了
+    expect(rendererFiles.some((f) => f.endsWith('copy.ts'))).toBe(true);
+    // 断言自身有效：样例会被匹配；JSX 文本与字面量都能提取
+    expect('sandbox mode').toMatch(INTERNAL_WORDS);
+    expect('danger-full-access').toMatch(INTERNAL_WORDS);
+    expect('permission profile').toMatch(INTERNAL_WORDS);
+    expect(displayStrings("const a = 'x never y'; const b = <p>danger-full-access</p>;")).toEqual(expect.arrayContaining(['x never y', 'danger-full-access']));
+    // 任何位置不显示原始命令：渲染层没有读取“命令”字段的代码
+    for (const f of rendererFiles) expect(stripComments(fs.readFileSync(f, 'utf8')), f).not.toMatch(/\.command\b|\bargv\b/);
+  });
+
+  it('B3-2：施工视图组件只有“停止”一个按钮，不含任何“允许 / 批准 / 同意 / 授权 / 确认”类按钮或文字', () => {
+    const code = stripComments(read('src/renderer/RunView.tsx'));
+    const buttons = [...code.matchAll(/<button\b[\s\S]*?<\/button>/g)].map((m) => m[0]);
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toMatch(/>\{COPY\.stopButton\}</);
+    expect(read('src/renderer/copy.ts')).toMatch(/stopButton: '停止'/);
+    const words = /允许|批准|同意|授权|确认|accept|approve|allow|decline/i;
+    expect(code).not.toMatch(words);
+    expect(displayStrings(read('src/renderer/RunView.tsx')).join('')).not.toMatch(words);
+    // 施工视图不接收“决定”类回调：只有 onStop
+    expect(code).toMatch(/\{ task, onStop \}/);
+    // 断言自身有效
+    expect('<button>允许</button>').toMatch(words);
+    expect([...'<button a>1</button><button>2</button>'.matchAll(/<button\b[\s\S]*?<\/button>/g)]).toHaveLength(2);
+  });
+
+  it('B3-2：完全信任的开工入口只有一处——确认面板；“确认并开工”在未勾选时是禁用的', () => {
+    const plan = stripComments(read('src/renderer/PlanCard.tsx'));
+    // 渲染层只有 confirmTrust 会以 ack=true 开工，且它只挂在确认按钮上
+    expect(plan.match(/startTask\([^)]*true\)/g)).toHaveLength(1);
+    expect(plan).toMatch(/disabled=\{!ack\} onClick=\{onConfirm\}/);
+    // 标准模式开工传 false；任何地方都不得以偏好为由直接传 true
+    expect(plan.match(/startTask\([^)]*false\)/g)).toHaveLength(1);
+    expect(plan).not.toMatch(/preferredMode[^;\n]*startTask/);
+  });
+
   it('B3-1b（新增，只收紧）：标准模式的可写根中不得出现 .git 路径（含 .git/worktrees/<id>）；可写根只有副本与额外目录', async () => {
     const { codexLaunchConfig } = await import('../src/core/executor/adapters/codex.js');
     const { resolveCapabilities } = await import('../src/core/capabilities/model.js');
@@ -218,14 +271,28 @@ describe('安全基线（防回归）', () => {
   it('M3-B1：渲染进程 API 清单固定，且没有任何一个接受“路径”参数（只有编号或布尔值）', () => {
     const preload = read('src/preload/index.cts');
     const entries = [...preload.matchAll(/^\s{2}(\w+): \(([^)]*)\) =>\s*ipcRenderer\.invoke\('([^']+)'/gm)].map((m) => ({ name: m[1]!, params: m[2]!, channel: m[3]! }));
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure']);
-    for (const e of entries) expect(['', 'id: string', 'consent: boolean'], `${e.name}(${e.params})`).toContain(e.params);
-    // 每个 IPC 通道在主进程中都有处理函数，且主进程处理函数的参数只可能是 id / consent
+    // B3-2 修订（任务界面必需的新 API；原清单是前 8 项）：清单仍然固定，参数形态逐一列出——
+    // 只允许 编号 / 布尔 / 需求文字 / 计划表单（文字、模式、布尔）/ 选项键；任何参数都不得叫 path/dir/folder/file，
+    // 额外文件夹由主进程弹系统选择框取得，渲染进程不传路径。
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask']);
+    const SHAPES = ['', 'id: string', 'consent: boolean', 'request: string', 'id: string, plan: PlanInput', 'id: string, key: string', 'id: string, ack: boolean'];
+    for (const e of entries) {
+      expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
+      expect(e.params, `${e.name} 不得有路径类参数`).not.toMatch(/\b(?:path|paths|dir|dirs|folder|file|filename|cwd|url)\b\s*:/i);
+    }
+    // 计划表单类型里同样没有路径字段
+    const planType = /interface PlanInput \{([\s\S]*?)\}/.exec(preload)?.[1] ?? '';
+    expect(planType).toMatch(/goal: string/);
+    expect(planType).not.toMatch(/path|dir|folder|file|cwd|url/i);
+    // 每个 IPC 通道在主进程中都有处理函数，且主进程处理函数的参数形态同样固定
     const main = read('src/main/index.ts');
     for (const e of entries) expect(main, e.channel).toContain(`ipcMain.handle('${e.channel}'`);
+    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, consent: unknown', '_e, request: unknown', '_e, id: unknown, plan: unknown', '_e, id: unknown, key: unknown', '_e, id: unknown, ack: unknown'];
     for (const m of main.matchAll(/ipcMain\.handle\('[^']+',\s*(?:async\s*)?\(([^)]*)\)/g)) {
-      expect(['', '_e', '_e, id: unknown', '_e, consent: unknown'], m[1]).toContain(m[1]);
+      expect(MAIN_SHAPES, m[1]).toContain(m[1]);
     }
+    // 额外文件夹的路径只来自主进程里的系统选择框，且必须经 validateExtraDir 校验（在控制器里）
+    expect(read('src/core/app/task-controller.ts')).toMatch(/validateExtraDir\(picked/);
   });
 
   it('M3-B1：主进程只从系统对话框或最近项目列表（按编号）获得项目路径', () => {
