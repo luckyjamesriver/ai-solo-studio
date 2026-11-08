@@ -22,3 +22,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # Electron 端到端测试需要真实显示环境：只在 macOS 运行（Ubuntu 无显示，不运行）。
+      # npm 11 的 npm ci 不运行 Electron 安装脚本，这里手动安装二进制。
+      - name: Install Electron binary (macOS)
+        if: runner.os == 'macOS'
+        run: node node_modules/electron/install.js
+      - name: Electron end-to-end (macOS)
+        if: runner.os == 'macOS'
+        run: npx vitest run -c vitest.e2e.config.ts

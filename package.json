@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "npm run build && vitest run -c vitest.e2e.config.ts",
     "build:core": "tsc -p tsconfig.build.json",
     "build:renderer": "vite build",
     "build": "npm run build:core && npm run build:renderer",
@@ -28,6 +29,7 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "4.7.0",
     "electron": "45.0.0",
+    "playwright-core": "1.64.1",
     "typescript": "5.9.3",
     "vite": "6.4.5",
     "vitest": "5.0.5"
