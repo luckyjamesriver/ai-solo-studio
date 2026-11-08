@@ -1,14 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import * as G from '../src/core/git/git.js';
 import { applyPatch, diffRecord, RecordStore, CorruptRecordError, type CollectionDef } from '../src/core/persistence/index.js';
 import { TaskStore } from '../src/core/task/store.js';
 import { RecentProjects } from '../src/core/app/recent.js';
 import { DisclosureStore } from '../src/core/app/disclosure.js';
 import { TaskPrefs } from '../src/core/app/prefs.js';
 import type { Task } from '../src/core/task/model.js';
-import { tmpDir } from './helpers.js';
+import { makeRepo, tmpDir } from './helpers.js';
 
 /** 持久化服务的细节：日志补丁、迁移、校验、运行编号规则（ADR 0005 的场景在 adr-0005-scenarios.test.ts） */
 
@@ -81,6 +83,22 @@ describe('记录库', () => {
     expect((await s.events()).at(-1)).toMatchObject({ type: 'diagnostic', detail: { raw: 'fatal: boom' } });
     expect(() => s.recordFile('../x', 'a')).toThrow();
     expect(() => s.recordFile('items', '../../etc/passwd')).toThrow();
+  });
+});
+
+describe('打开项目不弄脏用户的 Git 状态', () => {
+  it('记录库一创建 .studio/，就已经被 .git/info/exclude 忽略：用户的 git status 里没有它；重复打开不重复写', async () => {
+    const repo = await makeRepo();
+    const ts = new TaskStore(repo);
+    await ts.list();
+    await ts.save({ id: 'x-1', request: 'r', state: 'draft', criteria: [], denied: [], deniedAcks: [], previewed: false, timeline: [], createdAt: 'a', updatedAt: 'a' });
+    expect(fsSync.existsSync(path.join(repo, '.studio', 'events.jsonl'))).toBe(true);
+    expect((await G.git(repo, ['status', '--porcelain', '--untracked-files=all'])).trim()).toBe('');
+    const exclude = await fs.readFile(path.join(repo, '.git', 'info', 'exclude'), 'utf8');
+    expect(exclude.split('\n').filter((l) => l === '.studio/')).toHaveLength(1);
+    await (await ts.recordStore()).close();
+    await new TaskStore(repo).list();
+    expect((await fs.readFile(path.join(repo, '.git', 'info', 'exclude'), 'utf8')).split('\n').filter((l) => l === '.studio/')).toHaveLength(1);
   });
 });
 

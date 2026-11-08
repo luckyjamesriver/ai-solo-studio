@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { migrateLegacyFiles, RecordStore, StaleRunError, StateConflictError, type CollectionDef, type OpenOptions, type RecordProblem, type Repository } from '../persistence/index.js';
+import { ensureStudioIgnored } from '../git/git.js';
 import { TASK_STATES } from './state.js';
 import type { Task } from './model.js';
 
@@ -56,6 +57,8 @@ export class TaskStore {
   /** 打开记录库（第一次用到时才打开）；顺便迁移旧版本的任务文件 */
   recordStore(): Promise<RecordStore> {
     this.storeP ??= (async () => {
+      // 记录库一创建就会出现 .studio/：先通过 .git/info/exclude 忽略它（不改用户的 .gitignore），免得用户的 git status 里多出一项
+      await ensureStudioIgnored(this.repo).catch(() => undefined); // 不是 Git 仓库时没有可写的 exclude，忽略
       const store = await RecordStore.open(path.join(this.repo, '.studio'), this.opts);
       await this.migrateLegacy(store);
       return store;

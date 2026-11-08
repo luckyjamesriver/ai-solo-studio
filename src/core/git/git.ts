@@ -183,7 +183,7 @@ export async function createWorktree(repo: string, taskId: string): Promise<Work
 }
 
 /** 通过 .git/info/exclude 忽略 .studio/，不修改用户的 .gitignore。 */
-async function ensureStudioIgnored(repo: string): Promise<void> {
+export async function ensureStudioIgnored(repo: string): Promise<void> {
   const gitDir = (await git(repo, ['rev-parse', '--git-common-dir'])).trim();
   const exclude = path.resolve(repo, gitDir, 'info', 'exclude');
   await makeDir(path.dirname(exclude));
