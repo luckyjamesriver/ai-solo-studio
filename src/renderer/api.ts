@@ -33,6 +33,11 @@ export interface DisclosureState {
 }
 
 export type { TaskView, ResultView, FactView, ExtraDirView } from '../core/app/task-view.js';
+export type { UserAcceptanceView, ViewItem, ViewChange, ActionState } from '../core/acceptance/view.js';
+export type { ChangePreview, Hunk } from '../core/acceptance/snippets.js';
+export type { AcceptanceActionResult } from '../core/app/task-controller.js';
+import type { UserAcceptanceView } from '../core/acceptance/view.js';
+import type { AcceptanceActionResult } from '../core/app/task-controller.js';
 import type { TaskView } from '../core/app/task-view.js';
 /** 计划表单：只有文字、模式与布尔值，没有任何路径 */
 export interface PlanInput { goal: string; criteria: string[]; mode: 'standard' | 'full_trust'; network: boolean }
@@ -47,6 +52,16 @@ interface StudioApi {
   removeExtraDir(id: string, key: string): Promise<TaskView>;
   startTask(id: string, ack: boolean): Promise<TaskView>;
   stopTask(id: string): Promise<TaskView>;
+  getAcceptanceView(id: string): Promise<UserAcceptanceView>;
+  confirmCriterion(id: string, itemId: string, version: string): Promise<AcceptanceActionResult>;
+  confirmOverall(id: string, version: string): Promise<AcceptanceActionResult>;
+  ackDenied(id: string, itemId: string, version: string): Promise<AcceptanceActionResult>;
+  recheck(id: string): Promise<AcceptanceActionResult>;
+  saveTask(id: string, version: string): Promise<AcceptanceActionResult>;
+  discardTask(id: string): Promise<AcceptanceActionResult>;
+  undoSave(id: string): Promise<AcceptanceActionResult>;
+  retryCleanup(id: string): Promise<AcceptanceActionResult>;
+  revealProject(): Promise<void>;
   detectEnvironment(): Promise<HealthReport>;
   chooseProject(): Promise<OpenResult>;
   recentProjects(): Promise<RecentProject[]>;

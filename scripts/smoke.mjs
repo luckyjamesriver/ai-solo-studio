@@ -12,7 +12,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const electronBin = createRequire(import.meta.url)('electron');
 const TOTAL_TIMEOUT_MS = 30_000;
 // B3-2：新增 8 个任务 API（编号 / 文字 / 计划表单 / 布尔值，没有任何路径参数）；清单仍然固定，多一个少一个都算失败
-const EXPECTED_API = ['acceptDisclosure', 'addExtraDir', 'chooseProject', 'createTask', 'detectEnvironment', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openRecent', 'projectStatus', 'recentProjects', 'removeExtraDir', 'savePlan', 'startTask', 'stopTask'];
+// B4-2：新增 9 个验收操作（参数只有编号、条目编号、验收版本）+ 1 个无参数的 revealProject（异常态“在访达中显示项目”）
+const EXPECTED_API = ['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'startTask', 'stopTask', 'undoSave'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

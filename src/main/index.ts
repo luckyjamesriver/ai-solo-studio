@@ -121,10 +121,12 @@ async function disclosure() {
  * 任务控制器：每个打开的项目一个。执行体用 Codex（路径来自环境体检的发现结果）。
  * 额外可写目录只能通过这里弹出的系统选择框取得，渲染进程不传任何路径。
  */
-let tasksFor: { dir: string; ctl: TaskController } | null = null;
+// 每个项目保留自己的控制器（切换项目再切回来时沿用同一个：它记着哪些任务正在操作，启动核对也只做一次）
+const controllers = new Map<string, TaskController>();
 async function tasks(): Promise<TaskController> {
   const dir = requireProject();
-  if (tasksFor?.dir === dir) return tasksFor.ctl;
+  const existing = controllers.get(dir);
+  if (existing) return existing;
   const found = await resolveHostTools(TOOLS);
   setSupplementalPath(found.supplementalDirs);
   const codexPath = found.tools.codex?.path ?? 'codex';
@@ -137,7 +139,7 @@ async function tasks(): Promise<TaskController> {
     },
     prefs: new TaskPrefs(dataDir()),
   });
-  tasksFor = { dir, ctl };
+  controllers.set(dir, ctl);
   return ctl;
 }
 
@@ -150,6 +152,20 @@ ipcMain.handle('tasks:addExtraDir', async (_e, id: unknown) => (await tasks()).a
 ipcMain.handle('tasks:removeExtraDir', async (_e, id: unknown, key: unknown) => (await tasks()).removeExtraDir(id, key));
 ipcMain.handle('tasks:start', async (_e, id: unknown, ack: unknown) => (await tasks()).start(id, ack));
 ipcMain.handle('tasks:stop', async (_e, id: unknown) => (await tasks()).stop(id));
+// B4-2：验收、保存、放弃、撤销。参数只有任务编号、条目编号（c0 / d0）与验收版本；格式由控制器校验，伪造参数一律拒绝。
+ipcMain.handle('acceptance:get', async (_e, id: unknown) => (await tasks()).getAcceptanceView(id));
+ipcMain.handle('acceptance:confirmCriterion', async (_e, id: unknown, itemId: unknown, version: unknown) => (await tasks()).confirmCriterion(id, itemId, version));
+ipcMain.handle('acceptance:confirmOverall', async (_e, id: unknown, version: unknown) => (await tasks()).confirmOverall(id, version));
+ipcMain.handle('acceptance:ackDenied', async (_e, id: unknown, itemId: unknown, version: unknown) => (await tasks()).ackDenied(id, itemId, version));
+ipcMain.handle('acceptance:recheck', async (_e, id: unknown) => (await tasks()).recheck(id));
+ipcMain.handle('acceptance:save', async (_e, id: unknown, version: unknown) => (await tasks()).saveTask(id, version));
+ipcMain.handle('acceptance:discard', async (_e, id: unknown) => (await tasks()).discardTask(id));
+ipcMain.handle('acceptance:undo', async (_e, id: unknown) => (await tasks()).undoSave(id));
+ipcMain.handle('acceptance:retryCleanup', async (_e, id: unknown) => (await tasks()).retryCleanup(id));
+// 项目状态异常时的只读出口：在访达中显示当前项目。没有参数——位置永远是用户选定的项目，渲染进程不能指定。
+ipcMain.handle('project:reveal', () => {
+  shell.showItemInFolder(requireProject());
+});
 ipcMain.handle('project:choose', async (): Promise<OpenResult> => {
   const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: '选择你的项目文件夹' });
   if (r.canceled || !r.filePaths[0]) return { kind: 'cancelled' };

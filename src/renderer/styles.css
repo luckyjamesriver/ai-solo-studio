@@ -51,3 +51,14 @@ fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0; pa
 .incomplete { border: 1px dashed var(--warn); border-radius: 8px; padding: .5rem 1rem; margin-top: 1rem; }
 blockquote { margin: .5rem 0; padding-left: .8rem; border-left: 3px solid var(--line); color: var(--muted); white-space: pre-wrap; }
 .headline { font-weight: 600; }
+/* B4-2 验收区 */
+.badge-checked { border: 1px solid var(--ok); color: var(--ok); font-size: .8rem; font-weight: 600; padding: .05rem .5rem; border-radius: 999px; margin-left: .5rem; }
+.snippet { margin: .25rem 0; padding: .4rem .6rem; border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap; word-break: break-word; font: .85rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.hunk { margin: .5rem 0 .8rem; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+.col h5 { margin: 0; color: var(--muted); font-weight: 600; }
+.changes { padding-left: 1.2rem; }
+.confirm-panel { border: 2px solid var(--warn); border-radius: 8px; padding: .6rem 1rem; margin-top: 1rem; }
+.readonly { border: 2px solid var(--bad); border-radius: 8px; padding: .6rem 1rem; }
+.notice.error { border-left-color: var(--bad); }
+[data-testid="recheck-button"][data-highlight="true"] { outline: 3px solid var(--warn); outline-offset: 2px; }

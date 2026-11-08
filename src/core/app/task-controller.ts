@@ -1,3 +1,10 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import * as G from '../git/git.js';
+import { GitError } from '../git/git.js';
+import { MESSAGES } from '../task/messages.js';
+import { buildPreviews } from '../acceptance/snippets.js';
+import { acceptanceVersion, isVersionFormat, mapFailure, okMessage, toUserView, VIEW_TEXT, type UserAcceptanceView, type ViewContext } from '../acceptance/view.js';
 import { TaskRunner } from '../task/runner.js';
 import { detectScripts } from '../checks/scripts.js';
 import { resolveCapabilities } from '../capabilities/model.js';
@@ -70,6 +77,7 @@ export class TaskController {
   }
 
   async list(): Promise<{ tasks: TaskView[]; preferredMode: ModePreference }> {
+    await this.ready(); // 启动核对在第一次使用前完成，列表里才会看到“已核对”
     const tasks = await this.r().store.list();
     return { tasks: await Promise.all(tasks.map((t) => this.view(t))), preferredMode: await this.preferredMode() };
   }
@@ -81,6 +89,7 @@ export class TaskController {
   }
 
   async get(id: unknown): Promise<TaskView> {
+    await this.ready();
     return this.view(await this.load(id));
   }
 
@@ -163,4 +172,207 @@ export class TaskController {
     await this.r().stop(t.id);
     return this.view((await this.r().store.get(t.id)) ?? t);
   }
+
+  // ───────────────────────── 验收、保存、放弃、撤销（B4-2） ─────────────────────────
+  // 渲染进程只传：任务编号、条目编号（c0 / d0）、验收版本、（无参数的操作）。返回给它的只有 UserAcceptanceView 与固定文案。
+
+  private reconcileDone: Promise<void> | undefined;
+  /** 同一任务正在执行的操作（同步登记，重复点击只生效一次；核心层另有互斥作为第二道） */
+  private readonly ops = new Set<string>();
+
+  /**
+   * 启动核对：每个控制器只做一次。第一步识别、第二步安全收尾都在核心层；这里只负责在第一次使用前完成它，
+   * 出错时原始内容写进受保护的诊断记录，界面不读。
+   */
+  private ready(): Promise<void> {
+    this.reconcileDone ??= this.r()
+      .reconcileTasks()
+      .then(() => undefined)
+      .catch((e: unknown) => this.diagnose(undefined, '启动核对失败', e));
+    return this.reconcileDone;
+  }
+
+  /** 原始错误只写进 <项目>/.studio/diagnostics.log（受保护的诊断记录），界面不读取 */
+  private async diagnose(taskId: string | undefined, what: string, e: unknown): Promise<void> {
+    try {
+      const dir = path.join(this.o.repo, '.studio');
+      await fs.mkdir(dir, { recursive: true });
+      const raw = e instanceof Error ? `${e.message}${e instanceof GitError ? `\n${e.stderr}` : ''}` : String(e);
+      await fs.appendFile(path.join(dir, 'diagnostics.log'), `${new Date().toISOString()} ${taskId ?? '-'} ${what}: ${raw}\n`);
+    } catch {
+      // 诊断记录写不进去也不能影响界面
+    }
+  }
+
+  private checkArg(re: RegExp, v: unknown): string {
+    if (typeof v !== 'string' || !re.test(v)) throw new Error(VIEW_TEXT.invalidArgument);
+    return v;
+  }
+  private checkVersion(v: unknown): string {
+    if (!isVersionFormat(v)) throw new Error(VIEW_TEXT.invalidArgument);
+    return v;
+  }
+
+  /** 用户验收视图：计算实时判定（保存前提、撤销条件、改动片段），再交给 view.ts 生成 */
+  private async acceptanceView(t: Task): Promise<UserAcceptanceView> {
+    const runner = this.r();
+    const busy = this.ops.has(t.id) || runner.isBusy(t.id);
+    const ctx: ViewContext = { busy };
+    if (!busy && !t.manualReview) {
+      try {
+        if (t.state === 'reviewing' && t.card) ctx.saveCheck = await runner.previewSave(t);
+        if (t.state === 'saved' || t.state === 'undo_failed') {
+          ctx.undoCheck = await runner.previewUndo(t);
+          ctx.otherUndoableSave = false;
+        }
+        if ((t.state === 'reviewing' || t.state === 'save_failed_unmerged') && t.card) {
+          ctx.previews = await buildPreviews(this.o.repo, t);
+          const head = await G.headSha(this.o.repo);
+          ctx.otherUndoableSave = (await runner.store.list()).some((x) => x.id !== t.id && x.state === 'saved' && x.saveRecord?.mergeCommit === head);
+        }
+      } catch (e) {
+        await this.diagnose(t.id, '计算验收视图', e);
+        if (t.state === 'reviewing') ctx.saveCheck = { ok: false, reason: 'failed', detail: '' };
+      }
+    }
+    return toUserView(t, ctx);
+  }
+
+  async getAcceptanceView(id: unknown): Promise<UserAcceptanceView> {
+    await this.ready();
+    return this.acceptanceView(await this.load(id));
+  }
+
+  private async result(id: string, r: { ok: boolean; message: string; files?: string[] | undefined }): Promise<AcceptanceActionResult> {
+    const t = await this.load(id);
+    return { ok: r.ok, message: r.message, ...(r.files?.length ? { files: r.files } : {}), view: await this.acceptanceView(t) };
+  }
+
+  /**
+   * 执行一个会改动任务的操作：同步登记（重复点击 → busy）→ 异常写诊断并返回固定文案 → 返回刷新后的视图。
+   * 异常状态（需要人工查看）的任务一律不接受写操作。
+   */
+  private async act(id: string, work: (t: Task) => Promise<{ ok: boolean; message: string; files?: string[] | undefined }>): Promise<AcceptanceActionResult> {
+    await this.ready();
+    if (this.ops.has(id) || this.r().isBusy(id)) return this.result(id, { ok: false, message: MESSAGES.busy });
+    this.ops.add(id);
+    let outcome: { ok: boolean; message: string; files?: string[] | undefined };
+    try {
+      const t = await this.load(id);
+      if (t.manualReview) outcome = { ok: false, message: MESSAGES.abnormal };
+      else {
+        try {
+          outcome = await work(t);
+        } catch (e) {
+          await this.diagnose(id, '操作失败', e);
+          outcome = { ok: false, message: e instanceof Error && e.message === MESSAGES.busy ? MESSAGES.busy : MESSAGES.unknownError };
+        }
+      }
+    } finally {
+      this.ops.delete(id); // 先释放，再生成返回给界面的视图（否则视图会把自己当成“操作进行中”）
+    }
+    return this.result(id, outcome);
+  }
+
+  /** 确认类请求：版本必须与当前验收版本一致，且任务在验收阶段（recheck 之后旧版本全部失效） */
+  private confirmWork(version: string, apply: (t: Task) => Promise<void>) {
+    return async (t: Task) => {
+      if (version !== acceptanceVersion(t)) return { ok: false, message: MESSAGES.acceptanceInvalid };
+      if (t.state !== 'reviewing') return { ok: false, message: MESSAGES.notReady };
+      await apply(t);
+      return { ok: true, message: '' };
+    };
+  }
+
+  async confirmCriterion(id: unknown, criterionId: unknown, version: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    const cid = this.checkArg(/^c\d{1,2}$/, criterionId);
+    const v = this.checkVersion(version);
+    if (Number(cid.slice(1)) >= (await this.load(tid)).criteria.length) throw new Error(VIEW_TEXT.invalidArgument); // 不存在的条目：伪造参数，直接拒绝
+    return this.act(tid, this.confirmWork(v, async (t) => {
+      const index = Number(cid.slice(1));
+      if (index >= t.criteria.length) throw new Error(VIEW_TEXT.invalidArgument);
+      await this.r().confirm(t.id, { criterion: index, decision: 'confirmed' });
+    }));
+  }
+
+  async confirmOverall(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    const v = this.checkVersion(version);
+    await this.load(tid);
+    return this.act(tid, this.confirmWork(v, async (t) => {
+      await this.r().confirm(t.id, { overall: true });
+    }));
+  }
+
+  async ackDenied(id: unknown, deniedId: unknown, version: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    const did = this.checkArg(/^d\d{1,3}$/, deniedId);
+    const v = this.checkVersion(version);
+    if (Number(did.slice(1)) >= (await this.load(tid)).denied.length) throw new Error(VIEW_TEXT.invalidArgument);
+    return this.act(tid, this.confirmWork(v, async (t) => {
+      const index = Number(did.slice(1));
+      if (index >= t.denied.length) throw new Error(VIEW_TEXT.invalidArgument);
+      await this.r().confirm(t.id, { deniedAck: index });
+    }));
+  }
+
+  async recheck(id: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    await this.load(tid);
+    return this.act(tid, async (t) => {
+      if (t.state !== 'reviewing') return { ok: false, message: MESSAGES.notReady };
+      await this.r().recheck(t.id);
+      return { ok: true, message: VIEW_TEXT.rechecked };
+    });
+  }
+
+  async saveTask(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    const v = this.checkVersion(version);
+    await this.load(tid);
+    return this.act(tid, async (t) => {
+      // 用户看到并确认的就是这一版：版本不一致（例如另一处已重新检查）一律不保存
+      if (v !== acceptanceVersion(t)) return { ok: false, message: MESSAGES.acceptanceInvalid };
+      const r = await this.r().save(t.id);
+      return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
+    });
+  }
+
+  async discardTask(id: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    await this.load(tid);
+    return this.act(tid, async (t) => {
+      const r = await this.r().discard(t.id);
+      return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
+    });
+  }
+
+  async undoSave(id: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    await this.load(tid);
+    return this.act(tid, async (t) => {
+      const r = await this.r().undo(t.id);
+      return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
+    });
+  }
+
+  async retryCleanup(id: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    await this.load(tid);
+    return this.act(tid, async (t) => {
+      const r = await this.r().retryCleanup(t.id);
+      return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
+    });
+  }
+}
+
+const TASK_ID = /^[a-z0-9-]{1,64}$/;
+
+/** 验收阶段各操作的返回：ok、固定文案、需要先处理的文件（相对路径）、刷新后的视图 */
+export interface AcceptanceActionResult {
+  ok: boolean;
+  message: string;
+  files?: string[];
+  view: UserAcceptanceView;
 }

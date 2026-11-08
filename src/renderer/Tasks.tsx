@@ -3,7 +3,7 @@ import { studio, type TaskView } from './api.js';
 import { COPY } from './copy.js';
 import { PlanCard } from './PlanCard.js';
 import { RunView } from './RunView.js';
-import { Result } from './Result.js';
+import { Acceptance } from './Acceptance.js';
 
 /** 施工中，以及 AI 刚结束、验收卡还在生成的状态：需要持续刷新 */
 const BUSY = ['running', 'exec_succeeded', 'exec_failed', 'stopped', 'timed_out'];
@@ -56,6 +56,7 @@ export function Tasks() {
               <button className="link" onClick={() => setSelected(t.id)}>{t.goal}</button>
               {t.fullTrust && <span className="badge-trust" data-testid="fulltrust-badge-list">{COPY.fullTrustBadge}</span>}
               <span className="muted"> {t.stateText}</span>
+              {t.reconciled && <span className="badge-checked" data-testid="reconciled-badge-list">{COPY.reconciledBadge}</span>}
             </li>
           ))}
         </ul>
@@ -67,7 +68,7 @@ export function Tasks() {
             ? <RunView task={current} onStop={stop} />
             : ['draft', 'planned', 'approved'].includes(current.state)
               ? <PlanCard key={current.id} task={current} preferredMode={preferred} onChanged={(t) => { upsert(t); refresh(); }} />
-              : <Result task={current} />}
+              : <Acceptance key={current.id} task={current} onChanged={refresh} />}
         </div>
       )}
     </section>
