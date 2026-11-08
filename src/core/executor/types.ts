@@ -28,6 +28,8 @@ export interface DeniedOperation {
   /** 展示用描述 */
   description: string;
   risk: 'low' | 'medium' | 'high';
+  /** 施工模式下不应出现的审批请求（已自动拒绝）；界面据此显示“意外的权限请求” */
+  anomaly?: true;
 }
 
 /** 启动后核验通过时报告的实际生效情况（供时间线/验收卡记录） */

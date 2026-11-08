@@ -8,6 +8,7 @@ import type { Decision, Executor, ExecutorRun, PermissionRequest } from '../exec
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
 import { runCheck, scriptsDigest, type CheckResult, type SandboxCommandRunner } from '../checks/scripts.js';
 import { buildCard } from '../acceptance/card.js';
+import { validateExtraDir } from '../executor/extra-dirs.js';
 
 export interface PendingPermission {
   taskId: string;
@@ -46,8 +47,8 @@ export class TaskRunner extends EventEmitter {
     this.store = new TaskStore(opts.repo);
   }
 
-  private log(task: Task, kind: TimelineEntry['kind'], text: string) {
-    task.timeline.push({ at: new Date().toISOString(), kind, text });
+  private log(task: Task, kind: TimelineEntry['kind'], text: string, source?: 'host') {
+    task.timeline.push({ at: new Date().toISOString(), kind, text, ...(source ? { source } : {}) });
   }
 
   private async fire(task: Task, ev: TaskEvent) {
@@ -93,8 +94,17 @@ export class TaskRunner extends EventEmitter {
 
   async setPlan(id: string, input: Omit<Plan, 'capabilities'> & { capabilities?: Partial<Capabilities> }): Promise<Task> {
     const t = await this.load(id);
-    const plan: Plan = { ...input, capabilities: resolveCapabilities(input.capabilities) };
+    const capabilities = resolveCapabilities(input.capabilities);
+    // 额外可写目录的完整校验（存在、是目录、真实路径同样合规、不在 .studio 内、不含项目本身）；通过后保存真实路径
+    const dirs: string[] = [];
+    for (const d of capabilities.extraWritableDirs) {
+      const r = await validateExtraDir(d, { repo: this.opts.repo });
+      if (!r.ok) throw new Error(`不能让 AI 修改“${d}”：${r.reason}`);
+      dirs.push(r.dir);
+    }
+    const plan: Plan = { ...input, capabilities: { ...capabilities, extraWritableDirs: [...new Set(dirs)] } };
     t.plan = plan;
+    delete t.fullTrustConfirmedAt; // 确认只对“被批准的那一版计划”有效：计划一改就必须重新确认
     t.criteria = plan.criteria.map((text) => ({ text }));
     await this.fire(t, t.state === 'draft' || t.state === 'clarifying' ? 'plan' : 'edit_plan');
     return t;
@@ -142,7 +152,14 @@ export class TaskRunner extends EventEmitter {
   private async runTask(id: string, prompt?: string): Promise<Task> {
     const t = await this.load(id);
     if (t.state !== 'approved') throw new Error('任务必须先经你批准才能开工。');
+    // 完全信任：本任务没有确认标记就不开工（核心层门禁；执行体适配器里还有第二道 requireFullTrustConfirmed）
+    if (t.plan?.capabilities.constructionMode === 'full_trust' && !t.fullTrustConfirmedAt) throw new Error('这个任务选择了完全信任模式，必须先确认风险才能开工。');
     if (!t.worktree) t.worktree = await G.createWorktree(this.opts.repo, t.id);
+    // 开工前再校验一次额外目录：这时已经知道任务副本的位置
+    for (const d of t.plan?.capabilities.extraWritableDirs ?? []) {
+      const r = await validateExtraDir(d, { repo: this.opts.repo, worktree: t.worktree.path });
+      if (!r.ok) throw new Error(`不能让 AI 修改“${d}”：${r.reason}`);
+    }
     t.executorId = this.opts.executor.id;
     // 报告绑定 Git 状态：记录开始时的主线 HEAD、工作树路径与其 HEAD
     t.gitStart = {
@@ -176,7 +193,7 @@ export class TaskRunner extends EventEmitter {
     const rule = this.opts.autoApprove ?? { autoLow: false };
 
     for await (const ev of run.events) {
-      if (ev.type === 'message') this.log(t, 'message', ev.text);
+      if (ev.type === 'message') this.log(t, 'message', ev.text, ev.source);
       else if (ev.type === 'isolation') {
         if (ev.info.permissions) t.effectivePermissions = ev.info.permissions; // 以启动后核验得到的实际生效权限为准
         this.log(t, 'isolation', `隔离已核验：审批=${ev.info.approvalPolicy}，沙箱=${ev.info.sandbox}，模型=${ev.info.model ?? '未知'}，授予的 MCP=${ev.info.grantedMcp.join('、') || '无'}，指令来源=${ev.info.instructionSources.join('、') || '无'}${ev.info.permissions ? `；权限：${ev.info.permissions.summary}` : ''}${ev.info.warnings.length ? `；警告：${ev.info.warnings.join('；')}` : ''}`);

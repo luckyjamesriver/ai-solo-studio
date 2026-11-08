@@ -22,7 +22,7 @@ export function readOnlyLaunch(cwd: string): ReadOnlyLaunch {
     args: ['-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="on-request"'],
     threadStart: { cwd, approvalPolicy: 'untrusted', sandbox: 'read-only' },
     turnOverrides: { cwd, approvalPolicy: 'untrusted', sandboxPolicy: { type: 'readOnly' } },
-    expected: { mode: 'read_only', approvalPolicy: 'untrusted', sandboxType: 'readOnly', networkEnabled: false, allowedDomains: [] },
+    expected: { mode: 'read_only', approvalPolicy: 'untrusted', sandboxType: 'readOnly', networkEnabled: false, allowedDomains: [], writableRoots: [] },
     describe: '只读（思考层）：沙箱只读；每条命令询问；网络关闭',
   };
 }

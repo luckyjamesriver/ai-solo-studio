@@ -1,3 +1,5 @@
+import { checkExtraDir } from '../executor/extra-dirs.js';
+
 /**
  * 能力模型（需求 v1.5 第 5.1 节；B3 起按“施工模式”调整）：
  * 默认值就是最小权限；放宽必须在计划里显式写出，由用户批准。
@@ -51,6 +53,11 @@ export function resolveCapabilities(input?: Partial<Capabilities> | null): Capab
   if (!['standard', 'full_trust'].includes(c.constructionMode)) throw new Error(`无效的施工模式：${String(c.constructionMode)}`);
   if (!Array.isArray(c.grantedMcp) || c.grantedMcp.some((n) => typeof n !== 'string' || !n)) throw new Error('无效的 MCP 授予列表。');
   if (!Array.isArray(c.extraWritableDirs) || c.extraWritableDirs.some((d) => typeof d !== 'string' || !d.startsWith('/'))) throw new Error('额外可写目录必须是绝对路径。');
+  // 核心层的纯规则（不依赖文件系统）：根目录/主目录及上级、.git、敏感清单；存在性与任务副本相关规则在 TaskRunner 里补充
+  for (const d of c.extraWritableDirs) {
+    const bad = checkExtraDir(d);
+    if (bad) throw new Error(`不能让 AI 修改“${d}”：${bad}`);
+  }
   if (!Array.isArray(c.allowedNetworkDomains) || c.allowedNetworkDomains.some((d) => typeof d !== 'string' || !/^[a-z0-9*.-]+$/i.test(d))) throw new Error('无效的网络域名列表。');
   if (c.allowedNetworkDomains.length && c.externalNetwork !== 'on') throw new Error('指定放行域名必须同时开启联网。');
   return { ...c, grantedMcp: [...new Set(c.grantedMcp)], extraWritableDirs: [...new Set(c.extraWritableDirs)], allowedNetworkDomains: [...new Set(c.allowedNetworkDomains)] };

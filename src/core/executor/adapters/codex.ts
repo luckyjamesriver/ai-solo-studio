@@ -546,7 +546,7 @@ export class CodexExecutor implements Executor {
       write({ id: m.id, result: { decision: 'decline' } });
       const what = isCmd ? `命令：${parseCommand(String(p.command ?? '')).inner || String(p.command ?? '')}` : `修改文件：${(fileItems.get(String(p.itemId)) ?? []).map((c) => c.path).join('、') || '（未提供文件列表）'}`;
       anomalies.push(what);
-      denied.push({ kind: isCmd ? 'run_command' : 'write_file', ...(isCmd ? { command: parseCommand(String(p.command ?? '')).argv } : {}), description: `异常的审批请求（施工模式不应出现，已拒绝）：${what}`, risk: 'high' });
+      denied.push({ kind: isCmd ? 'run_command' : 'write_file', ...(isCmd ? { command: parseCommand(String(p.command ?? '')).argv } : {}), description: `异常的审批请求（施工模式不应出现，已拒绝）：${what}`, risk: 'high', anomaly: true });
       ch.push({ type: 'log', stream: 'stderr', text: `异常：施工模式下收到审批请求，已拒绝。${what}\n` });
     };
 

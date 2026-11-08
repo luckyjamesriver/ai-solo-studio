@@ -11,6 +11,8 @@ import { DEV_PERSONAL_ENV } from '../core/thinking/claude-cli.js';
 import { RecentProjects } from '../core/app/recent.js';
 import { DisclosureStore, buildDisclosure } from '../core/app/disclosure.js';
 import { TaskStore } from '../core/task/store.js';
+import { TaskController } from '../core/app/task-controller.js';
+import { TaskPrefs } from '../core/app/prefs.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 let win: BrowserWindow | null = null;
@@ -115,7 +117,39 @@ async function disclosure() {
   return { content, accepted: await disclosureStore().get() };
 }
 
+/**
+ * 任务控制器：每个打开的项目一个。执行体用 Codex（路径来自环境体检的发现结果）。
+ * 额外可写目录只能通过这里弹出的系统选择框取得，渲染进程不传任何路径。
+ */
+let tasksFor: { dir: string; ctl: TaskController } | null = null;
+async function tasks(): Promise<TaskController> {
+  const dir = requireProject();
+  if (tasksFor?.dir === dir) return tasksFor.ctl;
+  const found = await resolveHostTools(TOOLS);
+  setSupplementalPath(found.supplementalDirs);
+  const codexPath = found.tools.codex?.path ?? 'codex';
+  const ctl = new TaskController({
+    repo: dir,
+    makeExecutor: () => new CodexExecutor({ command: codexPath }),
+    pickDirectory: async () => {
+      const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: '选择允许 AI 修改的另一个文件夹' });
+      return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+    },
+    prefs: new TaskPrefs(dataDir()),
+  });
+  tasksFor = { dir, ctl };
+  return ctl;
+}
+
 ipcMain.handle('env:detect', () => health());
+ipcMain.handle('tasks:list', async () => (await tasks()).list());
+ipcMain.handle('tasks:create', async (_e, request: unknown) => (await tasks()).create(request));
+ipcMain.handle('tasks:get', async (_e, id: unknown) => (await tasks()).get(id));
+ipcMain.handle('tasks:savePlan', async (_e, id: unknown, plan: unknown) => (await tasks()).savePlan(id, plan));
+ipcMain.handle('tasks:addExtraDir', async (_e, id: unknown) => (await tasks()).addExtraDir(id));
+ipcMain.handle('tasks:removeExtraDir', async (_e, id: unknown, key: unknown) => (await tasks()).removeExtraDir(id, key));
+ipcMain.handle('tasks:start', async (_e, id: unknown, ack: unknown) => (await tasks()).start(id, ack));
+ipcMain.handle('tasks:stop', async (_e, id: unknown) => (await tasks()).stop(id));
 ipcMain.handle('project:choose', async (): Promise<OpenResult> => {
   const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: '选择你的项目文件夹' });
   if (r.canceled || !r.filePaths[0]) return { kind: 'cancelled' };

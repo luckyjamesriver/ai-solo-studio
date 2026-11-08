@@ -36,6 +36,8 @@ export interface ModeExpectation {
   sandboxType?: 'dangerFullAccess' | 'readOnly';
   /** 期望的网络状态（标准模式：权限配置档里的 network.enabled） */
   networkEnabled: boolean;
+  /** 可修改的位置（标准：任务副本 + 额外目录；完全信任 / 只读不适用，为空） */
+  writableRoots: string[];
   /** 域名级限制（只放行这些域名）；空表示不限制域名 */
   allowedDomains: string[];
 }
@@ -129,7 +131,7 @@ export function buildStandardMode(o: StandardModeOptions): ModeLaunch {
     // 不传旧式 sandbox / sandboxPolicy：线程与回合沿用权限配置档（实测见 B3-1 报告）
     threadStart: { cwd: o.cwd, approvalPolicy: 'never' },
     turnOverrides: { cwd: o.cwd, approvalPolicy: 'never' },
-    expected: { mode: 'standard', approvalPolicy: 'never', profileId: id, networkEnabled: network, allowedDomains: domains },
+    expected: { mode: 'standard', approvalPolicy: 'never', profileId: id, networkEnabled: network, allowedDomains: domains, writableRoots: [o.cwd, ...extra] },
     describe: `标准模式：可写 ${[o.cwd, ...extra].join('、')}；读取拒绝 ${deny.join('、') || '无'}；网络${network ? (domains.length ? `开启（仅 ${domains.join('、')}）` : '开启（不限域名）') : '关闭'}；审批 never`,
   };
 }
@@ -145,7 +147,7 @@ export async function buildFullTrustMode(taskId: string, cwd: string, records: F
     args: [],
     threadStart: { cwd, approvalPolicy: 'never', sandbox: 'danger-full-access' },
     turnOverrides: { cwd, approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } },
-    expected: { mode: 'full_trust', approvalPolicy: 'never', sandboxType: 'dangerFullAccess', networkEnabled: true, allowedDomains: [] },
+    expected: { mode: 'full_trust', approvalPolicy: 'never', sandboxType: 'dangerFullAccess', networkEnabled: true, allowedDomains: [], writableRoots: [] },
     describe: '完全信任模式：AI 拥有你账户的全部权限（读写任意文件、联网）；审批 never',
   };
 }
@@ -176,8 +178,24 @@ export interface EffectivePermissions {
   networkAccess?: boolean;
   networkEnabled: boolean;
   allowedDomains: string[];
+  /** 可修改的位置（来自我们生成并已核验的配置） */
+  writableRoots: string[];
   /** 本次期望的可写根与读取拒绝（来自我们生成的配置，便于对照） */
   summary: string;
+}
+
+/**
+ * 给测试替身执行体（FakeExecutor）用：不启动任何进程，按能力直接生成“如果核验通过会得到的”生效权限记录，
+ * 让界面与端到端测试能显示它。真实适配器从不使用它——真实记录只来自 thread/start 的响应。
+ */
+export function simulatedPermissions(c: { constructionMode: ConstructionMode; externalNetwork: 'on' | 'off'; extraWritableDirs: string[]; allowedNetworkDomains: string[] }, cwd: string): EffectivePermissions {
+  if (c.constructionMode === 'full_trust') {
+    return { mode: 'full_trust', approvalPolicy: 'never', networkEnabled: true, allowedDomains: [], writableRoots: [], summary: '完全信任模式（模拟）' };
+  }
+  const net = c.externalNetwork === 'on';
+  const m = buildStandardMode({ cwd, extraWritable: c.extraWritableDirs, network: net, allowedDomains: c.allowedNetworkDomains });
+  const thread = { approvalPolicy: 'never', activePermissionProfile: { id: STANDARD_PROFILE_ID, extends: ':workspace' }, sandbox: { type: 'workspaceWrite', networkAccess: net } };
+  return effectivePermissionsOf(m.expected, thread, m.describe);
 }
 
 export function effectivePermissionsOf(exp: ModeExpectation, t: any, summary: string): EffectivePermissions {
@@ -189,6 +207,7 @@ export function effectivePermissionsOf(exp: ModeExpectation, t: any, summary: st
     ...(typeof t?.sandbox?.networkAccess === 'boolean' ? { networkAccess: t.sandbox.networkAccess } : {}),
     networkEnabled: exp.networkEnabled,
     allowedDomains: exp.allowedDomains,
+    writableRoots: exp.writableRoots,
     summary,
   };
 }

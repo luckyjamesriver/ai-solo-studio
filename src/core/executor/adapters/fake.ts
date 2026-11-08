@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Channel } from '../channel.js';
 import { assess } from '../../policy/risk.js';
+import { resolveCapabilities } from '../../capabilities/model.js';
+import { simulatedPermissions } from '../modes.js';
 import type { DeniedOperation, Decision, Executor, ExecutorEvent, ExecutorRun, PermissionRequest, StartOptions } from '../types.js';
 
 /**
@@ -20,7 +22,8 @@ export class FakeExecutor implements Executor {
   readonly id = 'fake';
   readonly displayName = '模拟执行体（测试用）';
   readonly capabilities = { permissionPrompts: true, resumeAfterStop: false };
-  constructor(private readonly script: FakeStep[] | ((prompt: string) => FakeStep[])) {}
+  /** emitPermissions：像真实适配器一样，开工后先报告“实际生效的权限”（模拟值），供界面显示 */
+  constructor(private readonly script: FakeStep[] | ((prompt: string) => FakeStep[]), private readonly options: { emitPermissions?: boolean } = {}) {}
 
   async detect() {
     return { installed: true, loggedIn: 'yes' as const, version: 'fake' };
@@ -62,6 +65,14 @@ export class FakeExecutor implements Executor {
       ch.push(e);
       ch.close();
     };
+
+    if (this.options.emitPermissions) {
+      const permissions = simulatedPermissions(resolveCapabilities(opts.capabilities), opts.cwd);
+      ch.push({
+        type: 'isolation',
+        info: { model: 'fake', instructionSources: [], approvalPolicy: permissions.approvalPolicy, sandbox: 'simulated', permissions, grantedMcp: [], warnings: [] },
+      });
+    }
 
     (async () => {
       let timer: NodeJS.Timeout | undefined;

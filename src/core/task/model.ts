@@ -22,6 +22,8 @@ export interface TimelineEntry {
   at: string;
   kind: 'state' | 'message' | 'tool' | 'permission' | 'check' | 'error' | 'isolation';
   text: string;
+  /** message 的来源：host = 应用自己加的说明；缺省 = AI 自己说的话 */
+  source?: 'host';
 }
 
 export interface Task {
