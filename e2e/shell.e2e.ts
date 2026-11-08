@@ -233,6 +233,10 @@ describe('环境体检', () => {
     expect(seen).toBe(minimal);
     await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
     await a.page.locator('ul.env li').first().waitFor({ timeout: 60_000 });
+    // 原始结果（供任务报告第 4 节引用）：应用看到的 PATH 与每个工具的发现方式
+    const found = await a.page.locator('ul.env li').evaluateAll((els) => els.map((e) => ({ id: e.getAttribute('data-id'), overall: e.getAttribute('data-overall'), via: e.querySelector('[data-testid^="via-"]')?.textContent ?? '在应用看到的 PATH 中找到或未找到', installed: e.querySelector('[data-layer="installed"] dd')?.textContent })));
+    console.info(`PATH-PROBE processPath=${seen}`);
+    console.info(`PATH-PROBE items=${JSON.stringify(found)}`);
     if (brewNode) {
       expect(await a.page.getByTestId('via-node').innerText()).toContain('通过补全路径找到');
       expect(await a.app.evaluate(() => process.env.PATH)).toBe(minimal);
