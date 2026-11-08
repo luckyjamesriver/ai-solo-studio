@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { git } from '../../git/git.js';
-import { run } from '../../proc/run.js';
+import { git, isAncestor } from '../../git/git.js';
 import { atomicWrite } from '../flow/store.js';
 import type { Thinker, ThinkResult } from '../types.js';
 import type { TaskManifest } from './export.js';
@@ -125,8 +124,7 @@ export async function importReport(i: { projectRoot: string; reportPath: string;
     if (!endFull) check('结束 HEAD', false, `报告的结束 HEAD ${fields.endHead} 在仓库中不存在`);
     else {
       // 以清单的起始 HEAD 为准判断后代关系（不信任报告自填的开始 HEAD）
-      const anc = await run('git', ['merge-base', '--is-ancestor', manifest.startHead, endFull], { cwd: repo, timeoutMs: 30_000 });
-      const isAnc = anc.outcome.kind === 'exited' && anc.outcome.code === 0;
+      const isAnc = await isAncestor(repo, manifest.startHead, endFull);
       check('结束 HEAD', isAnc, isAnc ? `${endFull} 是清单开始 HEAD ${manifest.startHead} 的后代` : `${endFull} 不是清单开始 HEAD ${manifest.startHead} 的后代`);
       if (isAnc && endFull === manifest.startHead) result.notes.push('结束 HEAD 与开始 HEAD 相同：本任务没有新提交（git 的后代关系包含自身）。');
     }
