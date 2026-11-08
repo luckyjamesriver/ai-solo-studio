@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const electronBin = createRequire(import.meta.url)('electron');
 const TOTAL_TIMEOUT_MS = 30_000;
-const EXPECTED_API = ['acceptDisclosure', 'chooseProject', 'detectEnvironment', 'getDisclosure', 'initProject', 'openRecent', 'projectStatus', 'recentProjects'];
+// B3-2：新增 8 个任务 API（编号 / 文字 / 计划表单 / 布尔值，没有任何路径参数）；清单仍然固定，多一个少一个都算失败
+const EXPECTED_API = ['acceptDisclosure', 'addExtraDir', 'chooseProject', 'createTask', 'detectEnvironment', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openRecent', 'projectStatus', 'recentProjects', 'removeExtraDir', 'savePlan', 'startTask', 'stopTask'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
