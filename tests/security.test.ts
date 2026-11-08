@@ -515,6 +515,28 @@ describe('安全基线（防回归）', () => {
       }
     });
 
+    it('重试清理（B4-2-fix）：retryCleanup 不直接删除，必须经 reconcileCleanup（归属 → verifyNoLiveExecutor → removeWorktree）', () => {
+      const r = read('src/core/task/runner.ts');
+      const retry = methodBody(r, 'async retryCleanup(');
+      expect(retry).toContain('this.reconcileCleanup(');
+      expect(retry).not.toContain('removeWorktree(');
+      const clean = methodBody(r, 'private async reconcileCleanup(');
+      expect(clean.indexOf('verifyNoLiveExecutor(')).toBeGreaterThanOrEqual(0);
+      expect(clean.indexOf('verifyNoLiveExecutor(')).toBeLessThan(clean.indexOf('G.removeWorktree('));
+      // runner 中所有 removeWorktree 调用点固定为三处：reconcileCleanup、用户确认放弃（discard）、用户确认保存后的正常收尾（finishSave 的非核对分支）
+      expect([...r.matchAll(/G\.removeWorktree\(/g)].length).toBe(3);
+      expect(methodBody(r, 'async discard(')).toContain('G.removeWorktree(');
+      expect(methodBody(r, 'private async finishSave(')).toContain('G.removeWorktree(');
+    });
+
+    it('B4-2-fix：解析 Git 文件名输出一律用 -z（diffSummary、import 的 status）；不再按行拆分带引号的文件名', () => {
+      const g = read('src/core/git/git.ts');
+      expect(g).toContain("['diff', '--name-status', '-z', '-M'");
+      expect(g).toContain("['diff', '--numstat', '-z', '-M'");
+      expect(read('src/core/thinking/handoff/import.ts')).toContain("'status', '--porcelain=v1', '-z'");
+      for (const [f, s] of sources) expect(s, f).not.toMatch(/'--name-status'(?!,\s*'-z')|'--numstat'(?!,\s*'-z')|'status',\s*'--porcelain'\]/);
+    });
+
     it('view.ts 不引用命令、Git 原文类型：不读取 evidence / command / stderr 字段', () => {
       const v = stripComments(read('src/core/acceptance/view.ts'));
       expect(v).not.toMatch(/\.command\b|\.stderr\b|\.stdout\b|\bcleanup\b\.steps|\.steps\b/);
