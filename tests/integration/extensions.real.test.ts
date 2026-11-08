@@ -4,12 +4,13 @@ import path from 'node:path';
 import { codexLaunchConfig } from '../../src/core/executor/adapters/codex.js';
 import { AppServerClient } from './appserver-client.js';
 import { tmpDir } from '../helpers.js';
+import { realEnabled } from './gate.js';
 
 /**
- * 扩展隔离（hooks / notify / memories 等）。默认跳过：STUDIO_REAL_CODEX=1 npx vitest run tests/integration/extensions.real.test.ts
+ * 扩展隔离（hooks / notify / memories 等）。默认跳过：开关见 gate.ts（套件名 extensions）。
  * 正控会用本机已有的 Codex 登录发起一次极小的真实回合（只回复 ok）；不读取、不转发任何凭证。
  */
-const enabled = process.env.STUDIO_REAL_CODEX === '1';
+const enabled = realEnabled('extensions');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe.skipIf(!enabled)('扩展隔离：hooks / notify / memories', () => {

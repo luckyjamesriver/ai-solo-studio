@@ -5,12 +5,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CodexExecutor } from '../../src/core/executor/adapters/codex.js';
 import { tmpDir } from '../helpers.js';
+import { realEnabled } from './gate.js';
 
 /**
  * 哨兵测试（默认跳过）：用一个临时 CODEX_HOME（不碰用户的 ~/.codex）配置“哨兵 MCP”，
- * 它一旦被启动就写标记文件。运行：STUDIO_REAL_CODEX=1 npx vitest run tests/integration/sentinel.real.test.ts
+ * 它一旦被启动就写标记文件。开关见 gate.ts（套件名 sentinel）。
  */
-const enabled = process.env.STUDIO_REAL_CODEX === '1';
+const enabled = realEnabled('sentinel');
 const SENTINEL = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'sentinel-mcp.mjs');
 
 async function sentinelHome() {

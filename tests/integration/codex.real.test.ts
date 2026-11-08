@@ -6,13 +6,14 @@ import { TaskRunner, type PendingPermission } from '../../src/core/task/runner.j
 import { CodexExecutor, codexLaunchConfig } from '../../src/core/executor/adapters/codex.js';
 import * as G from '../../src/core/git/git.js';
 import { makeRepo, tmpDir } from '../helpers.js';
+import { realEnabled } from './gate.js';
 
 /**
- * 真实 Codex 集成测试：默认跳过（CI 不跑）。运行方式：
- *   STUDIO_REAL_CODEX=1 npx vitest run tests/integration/codex.real.test.ts
+ * 真实 Codex 集成测试：默认跳过（CI 不跑）。开关见 gate.ts（套件名 codex-loop）。
  * 需要本机已安装并登录 Codex（codex login），会调用真实模型。
+ * 注意：本套件写于 B3 之前，依赖旧的审批询问流程；B3 起施工中不再有审批，重新启用前需要改写。
  */
-const enabled = process.env.STUDIO_REAL_CODEX === '1';
+const enabled = realEnabled('codex-loop');
 
 describe.skipIf(!enabled)('真实 Codex：TaskRunner 完整闭环', () => {
   const executor = new CodexExecutor();

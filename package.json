@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:real": "STUDIO_REAL_CODEX=1 vitest run tests/integration --silent=false",
     "test:e2e": "npm run build && vitest run -c vitest.e2e.config.ts",
     "build:core": "tsc -p tsconfig.build.json",
     "build:renderer": "vite build",

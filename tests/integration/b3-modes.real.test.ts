@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { codexLaunchConfig, CodexExecutor } from '../../src/core/executor/adapters/codex.js';
 import { AppServerClient } from './appserver-client.js';
+import { realEnabled } from './gate.js';
 
 /**
  * M3-B3-0：Codex 施工模式实测（只验证、只报告；不改产品逻辑）。默认跳过；STUDIO_REAL_CODEX=1 运行，会发起约 10 次极小的真实回合。
@@ -15,7 +16,7 @@ import { AppServerClient } from './appserver-client.js';
  *
  * 本测试是“观察”性质：只断言回合有结果（完成或被如实标记为挂起），观察到的审批事件、命令与结果写入摘要，由报告解读。
  */
-const enabled = process.env.STUDIO_REAL_CODEX === '1';
+const enabled = realEnabled('b3-0');
 const only = process.env.STUDIO_B3_ONLY; // 逗号分隔的场景名，便于单项重跑
 const logDir = process.env.STUDIO_B3_LOG_DIR ?? path.join(os.tmpdir(), 'studio-b3-0-logs');
 

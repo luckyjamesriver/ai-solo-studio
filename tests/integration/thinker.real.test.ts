@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { CodexThinker, ClaudeCliThinker, type OutputSchema, type ThinkRequest } from '../../src/core/thinking/index.js';
+import { realEnabled } from './gate.js';
 
 /**
  * 真实思考者集成（默认跳过）：
- *   STUDIO_REAL_CODEX=1 npx vitest run tests/integration/thinker.real.test.ts
+ *   Codex 部分的开关见 gate.ts（套件名 thinker）
  *   STUDIO_DEV_PERSONAL_CLAUDE=1 STUDIO_REAL_CLAUDE=1 npx vitest run tests/integration/thinker.real.test.ts
  * 各发起一次极小的真实调用：固定小问题，要求返回合法结构。
  */
@@ -17,7 +18,7 @@ const request: ThinkRequest = {
   timeoutMs: 120_000,
 };
 
-describe.skipIf(process.env.STUDIO_REAL_CODEX !== '1')('真实 CodexThinker', () => {
+describe.skipIf(!realEnabled('thinker'))('真实 CodexThinker', () => {
   it('回答固定小问题并返回合法结构；没有请求任何工具', async () => {
     const t = new CodexThinker();
     const d = await t.detect();

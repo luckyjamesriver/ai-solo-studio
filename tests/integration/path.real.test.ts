@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { codexLaunchConfig } from '../../src/core/executor/adapters/codex.js';
 import { AppServerClient } from './appserver-client.js';
 import { tmpDir } from '../helpers.js';
+import { realEnabled } from './gate.js';
 
-/** 关闭登录 shell 后，真实回合里的命令能否找到 node / npm？（默认跳过） */
-const enabled = process.env.STUDIO_REAL_CODEX === '1';
+/** 关闭登录 shell 后，真实回合里的命令能否找到 node / npm？（默认跳过；开关见 gate.ts，套件名 path） */
+const enabled = realEnabled('path');
 
 describe.skipIf(!enabled)('PATH：关闭登录 shell 后', () => {
   it('真实回合中运行 node --version 与 npm --version', async () => {
