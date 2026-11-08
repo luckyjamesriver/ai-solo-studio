@@ -155,7 +155,7 @@ export function mapFailure(f: OpFail): { message: string; files?: string[] } {
     case 'conflict': return withFiles(MESSAGES.conflict);
     case 'abnormal': return withFiles(MESSAGES.abnormal);
     case 'undo_refused': return withFiles(MESSAGES.undoRefused);
-    case 'cleanup_pending': return withFiles(f.detail === MESSAGES.saveCleanupPending || f.detail === MESSAGES.discardCleanupPending ? f.detail : VIEW_TEXT.cleanupNeeded);
+    case 'cleanup_pending': return withFiles(f.detail === MESSAGES.saveCleanupPending || f.detail === MESSAGES.discardCleanupPending || f.detail === MESSAGES.cleanupBusy ? f.detail : VIEW_TEXT.cleanupNeeded);
     case 'failed': return withFiles(MESSAGES.opFailed);
     default: return withFiles(MESSAGES.unknownError);
   }

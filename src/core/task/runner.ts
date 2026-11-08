@@ -675,7 +675,15 @@ export class TaskRunner extends EventEmitter {
       if (!['saved_cleanup_pending', 'discard_cleanup_pending'].includes(t.state) || !t.worktree) return { ok: false, reason: 'not_allowed', detail: '这个任务没有需要清理的临时文件。' };
       const saving = t.state === 'saved_cleanup_pending';
       this.beginOp(t, 'cleanup');
-      const cleanup = await G.removeWorktree(this.opts.repo, t.worktree);
+      // 与启动核对同一条安全路径：归属 → 执行体进程核实 → removeWorktree（内含路径校验）；核实不了就不删除
+      const guarded = await this.reconcileCleanup(t);
+      if ('blocked' in guarded) {
+        this.opStep(t, '清理前核实未通过，没有删除', false, guarded.blocked);
+        this.endOp(t, 'interrupted');
+        await this.persist(t);
+        return { ok: false, reason: 'cleanup_pending', detail: MESSAGES.cleanupBusy };
+      }
+      const cleanup = guarded.cleanup;
       this.recordCleanup(t, cleanup);
       if (!cleanup.ok) {
         this.endOp(t, 'interrupted');
