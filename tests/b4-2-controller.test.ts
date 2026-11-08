@@ -42,7 +42,8 @@ async function setup(o: { script?: FakeStep[]; files?: Record<string, string>; c
   await ctl.start(t.id, o.mode === 'full_trust');
   const view = await until(async () => {
     const v = await ctl.getAcceptanceView(t.id);
-    return v.state === 'reviewing' ? v : false;
+    // 记录刚显示“等待验收”时编排器可能还在收尾（视图会标 busy）：等它真正空闲再继续
+    return v.state === 'reviewing' && !v.busy ? v : false;
   });
   return { repo, data, ctl, id: t.id, view, make };
 }
@@ -118,7 +119,7 @@ describe('保存与撤销', () => {
     await a.ctl.start(t2.id, false);
     const v2 = await until(async () => {
       const v = await a.ctl.getAcceptanceView(t2.id);
-      return v.state === 'reviewing' ? v : false;
+      return v.state === 'reviewing' && !v.busy ? v : false;
     });
     expect(v2.confirmTexts.save).toBe('保存后，上一次保存就不能单独撤销了。');
   });
@@ -305,7 +306,7 @@ describe('重复点击、伪造参数、异常态', () => {
     await ctl.start(t.id, false);
     const v = await until(async () => {
       const x = await ctl.getAcceptanceView(t.id);
-      return x.state === 'reviewing' ? x : false;
+      return x.state === 'reviewing' && !x.busy ? x : false;
     });
     expect(v.denied.map((d) => d.text)).toEqual(['想运行一条命令，已拦下', '想读取任务副本以外的位置，已拦下']);
     expect(JSON.stringify(v)).not.toMatch(/npm install|\.ssh|\/Users/);

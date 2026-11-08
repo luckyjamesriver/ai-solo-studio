@@ -87,7 +87,7 @@ describe('首次外发告知', () => {
     await shot(a.page, '1-首次外发告知');
     await acceptDisclosure(a.page);
     expect(await a.page.getByTestId('outbound-status').innerText()).toContain('已确认');
-    expect(fs.existsSync(path.join(data, 'disclosure.json'))).toBe(true);
+    expect(fs.existsSync(path.join(data, 'records', 'app', 'disclosure.json'))).toBe(true);
     await a.app.close();
 
     const b = await launch(data);
@@ -106,7 +106,7 @@ describe('首次外发告知', () => {
     await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
     expect(await a.page.getByTestId('outbound-status').innerText()).toContain('尚未确认');
     await a.page.locator('ul.env li').first().waitFor({ timeout: 60_000 }); // 体检仍可浏览
-    expect(fs.existsSync(path.join(data, 'disclosure.json'))).toBe(false);
+    expect(fs.existsSync(path.join(data, 'records', 'app', 'disclosure.json'))).toBe(false);
     await a.app.close();
     const b = await launch(data);
     await b.page.getByTestId('disclosure').waitFor({ timeout: 20_000 });
@@ -124,7 +124,7 @@ describe('打开项目', () => {
     await a.page.getByTestId('project').waitFor();
     expect(await a.page.getByTestId('project').innerText()).toContain('my-site');
     expect(await a.page.getByTestId('dirty').count()).toBe(0);
-    const stored = JSON.parse(fs.readFileSync(path.join(data, 'recent-projects.json'), 'utf8'));
+    const stored = JSON.parse(fs.readFileSync(path.join(data, 'records', 'app', 'recent-projects.json'), 'utf8')).data; // 记录库的外层是修订号等元数据，内容在 data 里
     expect(stored.entries).toHaveLength(1);
     expect(stored.entries[0].path).toBe(proj);
     await a.app.close();
@@ -169,7 +169,7 @@ describe('打开项目', () => {
     await a.page.getByTestId('notice').waitFor();
     expect(fs.existsSync(path.join(proj, '.git'))).toBe(false);
     expect(await a.page.getByTestId('project').count()).toBe(0);
-    expect(fs.existsSync(path.join(data, 'recent-projects.json'))).toBe(false);
+    expect(fs.existsSync(path.join(data, 'records', 'app', 'recent-projects.json'))).toBe(false);
 
     await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
     await a.page.getByTestId('init-consent').waitFor();
@@ -229,10 +229,23 @@ async function newTask(page: Page, text: string) {
   await page.getByTestId('create-task').click();
   await page.getByTestId('plan-card').waitFor();
 }
+// 任务记录在记录库里：<项目>/.studio/records/tasks/<id>.json，外层是修订号等元数据，任务内容在 data 里（ADR 0005）
 const taskFiles = (proj: string) => {
-  const dir = path.join(proj, '.studio', 'tasks');
-  return fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Record<string, any>) : [];
+  const dir = path.join(proj, '.studio', 'records', 'tasks');
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).data as Record<string, any>) : [];
 };
+/**
+ * 修改任务记录必须经持久化服务（应用已关闭、租约已释放之后）：直接改磁盘文件会被启动对账按事件日志改回去。
+ * 用已构建的 TaskStore（dist-electron），带 CAS 提交。
+ */
+async function editTask(proj: string, id: string, mutate: (t: Record<string, any>) => void) {
+  const { TaskStore } = (await import(distUrl('task/store.js'))) as { TaskStore: new (repo: string, o: object) => { get(id: string): Promise<Record<string, any> | null>; save(t: Record<string, any>): Promise<void>; recordStore(): Promise<{ close(): Promise<void> }> } };
+  const ts = new TaskStore(proj, { lockWaitMs: 20_000 });
+  const t = (await ts.get(id))!;
+  mutate(t);
+  await ts.save(t);
+  await (await ts.recordStore()).close();
+}
 
 describe('施工模式界面', () => {
   it('标准模式：计划卡默认标准 → 开工 → 施工视图只有“停止” → 停止后结果区显示事实与“AI 自己的说法”', async () => {
@@ -625,11 +638,10 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     const data = mk('data');
     const a = await toReview(proj, WRITE, data);
     await a.app.close();
-    const file = path.join(proj, '.studio', 'tasks', `${taskFiles(proj)[0]!.id}.json`);
-    const t = JSON.parse(fs.readFileSync(file, 'utf8'));
-    t.manualReview = { reason: '合并失败后，主项目的版本或文件与合并前不一致。', at: new Date().toISOString() };
-    t.op = { kind: 'save', startedAt: 'x', phase: 'interrupted', steps: [{ at: 'x', name: '核验', ok: false, detail: 'fatal: CONFLICT npm run x' }] };
-    fs.writeFileSync(file, JSON.stringify(t));
+    await editTask(proj, taskFiles(proj)[0]!.id, (t) => {
+      t.manualReview = { reason: '合并失败后，主项目的版本或文件与合并前不一致。', at: new Date().toISOString() };
+      t.op = { kind: 'save', startedAt: 'x', phase: 'interrupted', steps: [{ at: 'x', name: '核验', ok: false, detail: 'fatal: CONFLICT npm run x' }] };
+    });
     const b = await launch(data);
     await b.page.getByRole('button', { name: '暂不同意，先看看' }).click().catch(() => undefined);
     await stubDialog(b.app, proj);
@@ -651,13 +663,13 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     const a = await toReview(proj, WRITE, data);
     await a.app.close();
     const task = taskFiles(proj)[0]!;
-    const file = path.join(proj, '.studio', 'tasks', `${task.id}.json`);
     const preHead = git(proj, 'rev-parse', 'HEAD').toString().trim();
     const wt = task.worktree.path as string;
     const commit = git(wt, 'commit-tree', task.acceptedTree, '-p', task.worktree.baseSha, '-m', 'studio: x').toString().trim();
     git(proj, 'merge', '--no-ff', '-m', 'studio: 保存', commit);
-    task.op = { kind: 'save', startedAt: 'x', phase: 'task_committed', preHead, taskCommit: commit, steps: [] };
-    fs.writeFileSync(file, JSON.stringify(task));
+    await editTask(proj, task.id, (t) => {
+      t.op = { kind: 'save', startedAt: 'x', phase: 'task_committed', preHead, taskCommit: commit, steps: [] };
+    });
     const b = await launch(data);
     await b.page.getByRole('button', { name: '暂不同意，先看看' }).click().catch(() => undefined);
     await stubDialog(b.app, proj);

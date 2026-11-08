@@ -545,4 +545,76 @@ describe('安全基线（防回归）', () => {
       expect(rest).not.toMatch(/\bevidence\b/);
     });
   });
+
+  /**
+   * ADR 0005 / 0006（新增，只收紧）：依赖边界检查——状态文件只能经持久化层写入，UI 与 Agent 绕不过 Repository。
+   * 豁免清单只许减少、不许增加；每条规则都带“应当命中”的反例样本，证明检查本身有效。
+   */
+  describe('ADR 0006：持久化依赖边界', () => {
+    const rel = (f: string) => f.split(path.sep).join('/');
+    const inPersistence = (f: string) => rel(f).startsWith('src/core/persistence/');
+    const FS_WRITE = /\b(?:fs|fsp|fsSync|promises)\.(?:writeFile|appendFile|rename|rm|rmdir|mkdir|link|truncate|unlink|copyFile|cp|createWriteStream|mkdtemp|symlink|chmod|writeFileSync|appendFileSync|mkdirSync|rmSync|renameSync|unlinkSync)\(|(?<![.\w])(?:writeFile|appendFile|mkdir|rm|rename|mkdtemp|unlink|truncate)\(/;
+    /** 豁免：模拟执行体把文件写进“任务副本”（它是测试用执行体，写的是被施工的源码，不是状态） */
+    const FS_WRITE_EXEMPT = ['src/core/executor/adapters/fake.ts'];
+    const importsOf = (code: string) => [...code.matchAll(/(?:import|export)\s[^;]*?from\s+['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1] ?? m[2]!);
+    const PERSIST_API = /persistence\/(?:index|store|update|legacy|errors|patch)(?:\.js)?$/;
+    const PERSIST_FILES = /persistence\/files(?:\.js)?$/;
+
+    it('src 里只有 src/core/persistence/ 可以直接写文件（writeFile / rename / mkdir / rm / appendFile …）；豁免清单固定；断言自身有效', () => {
+      const offenders = sources.filter(([f, s]) => !inPersistence(f) && FS_WRITE.test(stripComments(s))).map(([f]) => rel(f));
+      expect(offenders).toEqual(FS_WRITE_EXEMPT);
+      for (const sample of ['await fs.writeFile(p, x)', 'await fs.promises.rename(a, b)', 'await mkdir(dir)', 'fsSync.rmSync(d)', 'await fs.appendFile(f, t)']) expect(sample, sample).toMatch(FS_WRITE);
+      for (const ok of ['await fs.readFile(p)', 'const x = form(a)', 'array.rm', 'term(x)']) expect(ok, ok).not.toMatch(FS_WRITE);
+    });
+
+    it('持久化服务与 Repository（persistence/index、store …）只能被任务存储、编排器、应用存储与控制层、主进程引用；UI 与 Agent 不得引用', () => {
+      const ALLOWED = [
+        'src/core/app/app-store.ts',
+        'src/core/app/disclosure.ts',
+        'src/core/app/prefs.ts',
+        'src/core/app/recent.ts',
+        'src/core/app/task-controller.ts',
+        'src/core/task/runner.ts',
+        'src/core/task/store.ts',
+        'src/main/index.ts',
+      ];
+      const users = sources.filter(([f, s]) => !inPersistence(f) && importsOf(stripComments(s)).some((i) => PERSIST_API.test(i))).map(([f]) => rel(f));
+      expect(users.sort()).toEqual(ALLOWED);
+      // UI（renderer）、Agent（executor、thinking）、git、checks 等一律不在其中
+      for (const f of users) expect(f, f).not.toMatch(/^src\/(?:renderer|preload)\/|^src\/core\/(?:executor|thinking|git|checks|policy|proc|env|capabilities|acceptance)\//);
+      // 反例样本
+      expect(importsOf("import { RecordStore } from '../persistence/index.js';")).toEqual(['../persistence/index.js']);
+      expect('../persistence/store.js').toMatch(PERSIST_API);
+      expect('../persistence/files.js').not.toMatch(PERSIST_API);
+    });
+
+    it('持久化文件原语（persistence/files）只能被这几个模块引用（清单只许减少）', () => {
+      const ALLOWED = ['src/core/checks/scripts.ts', 'src/core/git/git.ts', 'src/core/thinking/claude-cli.ts', 'src/core/thinking/codex.ts', 'src/core/thinking/flow/store.ts'];
+      const users = sources.filter(([f, s]) => !inPersistence(f) && importsOf(stripComments(s)).some((i) => PERSIST_FILES.test(i))).map(([f]) => rel(f));
+      expect(users.sort()).toEqual(ALLOWED);
+      expect('../../persistence/files.js').toMatch(PERSIST_FILES);
+    });
+
+    it('write-file-atomic 与 proper-lockfile 只在持久化层使用；zod 只在持久化层与存储模块使用', () => {
+      for (const [f, s] of sources) {
+        const imps = importsOf(stripComments(s));
+        if (!inPersistence(f)) {
+          expect(imps.filter((i) => /^(?:write-file-atomic|proper-lockfile)$/.test(i)), f).toEqual([]);
+          if (!['src/core/task/store.ts', 'src/core/app/app-store.ts'].includes(rel(f))) expect(imps.filter((i) => i === 'zod'), f).toEqual([]);
+        }
+      }
+    });
+
+    it('所有写记录的入口都带 runId、attemptId、expectedRevision（CAS）：commit 的命令类型必填这三项，TaskStore.save 总是传齐', () => {
+      const store = read('src/core/persistence/store.ts');
+      const cmdType = /export interface CommitCmd \{([\s\S]*?)\n\}/.exec(store)?.[1] ?? '';
+      for (const field of ['runId: string', 'attemptId: string', 'expectedRevision: number']) expect(cmdType).toContain(field);
+      const ts = read('src/core/task/store.ts');
+      expect(ts).toMatch(/runId: runId \?\? 'init', attemptId: opts\.attemptId \?\? RecordStore\.newAttemptId\(\), expectedRevision: revision \?\? 0/);
+      // 提交顺序：先追加日志，后写汇总（出现顺序）
+      const body = store.slice(store.indexOf('private async commitLocked'));
+      expect(body.indexOf('await this.logEvent(ev)')).toBeGreaterThan(0);
+      expect(body.indexOf('await this.logEvent(ev)')).toBeLessThan(body.indexOf('await atomicWrite(file'));
+    });
+  });
 });

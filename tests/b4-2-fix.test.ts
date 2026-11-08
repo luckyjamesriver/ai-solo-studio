@@ -140,9 +140,11 @@ describe('重试清理也要核实进程', () => {
     expect(await s.runner.retryCleanup(s.id)).toMatchObject({ ok: false, detail: MESSAGES.cleanupBusy });
     expect(await exists(s.wt.path)).toBe(true);
 
-    delete t.execProc;
-    t.worktree = { ...t.worktree!, branch: 'studio/task-someone-else' };
-    await s.runner.store.save(t);
+    // 上一次 retryCleanup 已经提交过（修订号前进了）：必须重新读取再改，旧副本提交会被 CAS 拒绝
+    const t2 = (await s.runner.store.get(s.id))!;
+    delete t2.execProc;
+    t2.worktree = { ...t2.worktree!, branch: 'studio/task-someone-else' };
+    await s.runner.store.save(t2);
     expect(await s.runner.retryCleanup(s.id)).toMatchObject({ ok: false, detail: MESSAGES.cleanupBusy });
     expect(await exists(s.wt.path)).toBe(true);
   });

@@ -278,7 +278,8 @@ describe('最近项目', () => {
     expect(list.map((x) => x.path)).toEqual([p1, p2]);
     expect(list[0]).toMatchObject({ name: 'a', exists: true, lastOpened: '2026-01-03T00:00:00.000Z' });
     expect(await r.resolve(e1.id)).toEqual({ ok: true, path: p1 });
-    const stored = JSON.parse(fs.readFileSync(path.join(data, 'recent-projects.json'), 'utf8'));
+    // B4 持久化：记录库里的 app/recent-projects（外层是修订号等元数据，内容在 data 里）
+    const stored = JSON.parse(fs.readFileSync(path.join(data, 'records', 'app', 'recent-projects.json'), 'utf8')).data;
     expect(Object.keys(stored.entries[0]).sort()).toEqual(['id', 'lastOpened', 'path']);
   });
   it('路径失效或编号不存在 → 拒绝；被删除/变成非目录后 exists=false；传路径当编号无效', async () => {
