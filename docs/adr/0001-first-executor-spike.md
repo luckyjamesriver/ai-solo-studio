@@ -165,3 +165,27 @@
 5. **Antigravity** 在获得官方书面确认前不接入。
 
 原则（保留）：第 2、3、6 项任一不满足的候选不得作为第一个执行体。Codex 的 app-server 被官方标注为 experimental，协议可能变化，适配器必须显式传参并有版本回归测试。
+
+## 修订记录
+
+### 2026-11-08（M3-B3-1）：审批策略改为 never，改用权限配置档
+
+**1. 审批策略：untrusted → never。**
+- 原因（B3-0 实测，见 docs/plans/2026-11-08-B3.md 第 0 节）：越界审批的“批准”不是“多给一点权限”，而是**这条命令整条脱离沙箱运行**（审批原因原文为 “rerunning … outside the sandbox”），且可选决定里带着“以后都允许”（`acceptWithExecpolicyAmendment`，把命令加入执行策略白名单）。用户无法被告知“批准”的确切范围，也不能收窄，所以施工中不再有任何审批；所有授权在开工前一次完成，施工中碰到边界就失败，并如实写进结果。
+- 普通任务（改标题并跑测试）实测越界 0 次，审批并不是日常路径。
+- 代价：never 下的失败**不一定有结构化事件**（B3-0 两次、B3-1 两次，均只有 userMessage 与 agentMessage；turn 的 status=completed、error=null）。因此验收卡里“未完成的操作”必须写成“AI 自述”，并配宿主可验证的事实（检查是否通过、改了哪些文件），不得把命令事件当作完整记录。
+- 适配器处理：施工模式下万一收到审批请求，一律回 decline、记为异常并进入被拒绝记录；任何模式都不回复 acceptWithExecpolicyAmendment。**never 与完全信任沙箱字样只允许出现在 `src/core/executor/modes.ts`**，由 tests/security.test.ts 的新断言守住。
+
+**2. 沙箱：旧式 `sandbox_mode` + 回合 `sandboxPolicy` → 权限配置档（Beta）。**
+- 写法：`-c default_permissions="studio_standard"` + `-c 'permissions.studio_standard={extends=":workspace", filesystem={…}, network={…}}'`（内联表；官方文档只写了 TOML 文件形式，`-c` 内联在 0.166.0 可行是实测所得）。官方明确：与 `sandbox_mode` 不能并用。线程与回合不再传旧式 sandbox / sandboxPolicy。
+- 为什么改：只有权限配置档能“事前阻止读取”（deny 由 macOS Seatbelt 强制，用不经模型的 `command/exec` 证实：`Operation not permitted`），旧式沙箱对读取不设限（B3-0：诱饵文件七种读法全部成功，内容进入了模型回复）。
+- 风险与版本依赖：
+  - 官方文档标注 **Beta**，语法与行为可能随版本变化；VERIFIED_CODEX_VERSION 仍是 0.166.0，升级版本必须重跑 `npm run test:real`（b3-1 套件）。
+  - 核验改看 `activePermissionProfile`（id 与 extends）和网络状态；`thread/start` 响应里的 `sandbox` 是兼容投影（例如 writableRoots 只列额外目录、副本不在其中），**不能据此判断生效范围**，要看行为实测。
+  - 实测发现 `:workspace` 默认允许写 `/tmp` 与 `$TMPDIR`，会让 AI 在副本之外落盘；已用 `":slash_tmp"="read"`、`":tmpdir"="read"` 显式收回并实测（写入 `Operation not permitted`）。
+  - **整个主目录 deny 在 macOS 上不可用于真实项目**（实测）：node 解析脚本路径要 lstat 主目录本身，`npm test` 与 `node <脚本>` 均 `EPERM`；git 读不到 `~/.gitconfig`；用 `HOME` 指向副本内可救 git，但 `--preserve-symlinks-main` 会让 npm 自身无法加载。因此默认采用**固定敏感清单**（~/.ssh、~/.aws、~/.gnupg、~/.codex/auth.json 与 skills、钥匙串、浏览器资料等）。界面必须如实写“已阻止读取这些敏感位置；其他位置 AI 仍可读取”，不得称“已隔离”。deny 清单永远不可能完整。
+  - 域名级网络限制可行（`network.domains` + `features.network_proxy=true`，实测只放行 example.com 时 example.org 为 `CONNECT tunnel failed, response 403`），但官方说明代理只过滤沙箱内命令的流量，不覆盖模型侧联网搜索、MCP、连接器；开启“不限域名”的联网时如实写“可访问任意网站”。
+  - 沙箱内能否监听本机端口取决于网络：网络关闭时 `listen` 报 EPERM，网络开启时可监听并自连（预览需要网络开启，B4 再处理）。
+- 完全信任：`danger-full-access` + never，只能经 `requireFullTrustConfirmed(taskId)`（读取任务记录中本任务的确认标记，没有就抛错）进入；该模式不承诺“推送只由你做”“凭证不发给 AI”。
+
+**3. 项目脚本（build/test）进同一沙箱。** 宿主不再自己运行 `npm run`，改用 app-server 的 `command/exec`（同一权限配置档，先建临时线程核验生效权限）。环境变量最小化（PATH/HOME/LANG 等白名单 + 副本内 TMPDIR + CI）；授权绑定 package.json 中 build/test（含 pre/post）脚本的内容摘要，摘要变化则授权失效；受限环境不可用 → “未检查”，不回退到宿主运行。Apple git 的 xcrun 报错只有同时设置 `TMPDIR`（副本内）与 `DEVELOPER_DIR=/Library/Developer/CommandLineTools` 才会消失；只设 TMPDIR 会换成 xcodebuild 的另一类噪音。
