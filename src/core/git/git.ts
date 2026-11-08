@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { run, isSuccess } from '../proc/run.js';
+import { hostEnv } from '../env/host-env.js';
 
 export class GitError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -8,10 +9,10 @@ export class GitError extends Error {
   }
 }
 
-const ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
+const hostGitEnv = () => ({ ...hostEnv(), GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' });
 
 export async function git(cwd: string, args: string[]): Promise<string> {
-  const r = await run('git', args, { cwd, env: ENV, timeoutMs: 60_000 });
+  const r = await run('git', args, { cwd, env: hostGitEnv(), timeoutMs: 60_000 });
   if (!isSuccess(r)) throw new GitError(`git ${args[0]} 失败`, r.stderr || r.stdout);
   return r.stdout;
 }
@@ -56,6 +57,22 @@ export async function headSha(dir: string): Promise<string> {
 
 export async function isClean(dir: string): Promise<boolean> {
   return (await git(dir, ['status', '--porcelain'])).trim() === '';
+}
+
+/** 仓库根目录的真实路径；dir 不在任何仓库内则返回 null。 */
+export async function repoRoot(dir: string): Promise<string | null> {
+  try {
+    const out = (await git(dir, ['rev-parse', '--show-toplevel'])).trim();
+    return out ? await fs.realpath(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 未提交改动的文件数（含未跟踪文件；忽略 .studio/ 内部目录）。 */
+export async function uncommittedCount(dir: string): Promise<number> {
+  const out = await git(dir, ['status', '--porcelain']);
+  return out.split('\n').filter((l) => l.trim() && !/^\S*\s+"?\.studio\//.test(l)).length;
 }
 
 export interface Worktree {

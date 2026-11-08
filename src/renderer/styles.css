@@ -6,10 +6,30 @@ h1 { font-size: 1.75rem; margin: 0 0 .25rem; }
 .lede, .muted { color: var(--muted); }
 section { margin-top: 2.5rem; }
 .env { list-style: none; padding: 0; }
-.env li { display: grid; grid-template-columns: 7rem 1fr auto; gap: 1rem; padding: .6rem 0 .6rem .9rem; border-left: 4px solid var(--line); margin-bottom: .4rem; }
-.env li[data-light="green"] { border-color: var(--ok); }
-.env li[data-light="yellow"] { border-color: var(--warn); }
-.env li[data-light="red"] { border-color: var(--bad); }
+.env li { padding: .6rem 0 .6rem .9rem; border-left: 4px solid var(--line); margin-bottom: .8rem; }
+.env li[data-overall="pass"] { border-color: var(--ok); }
+.env li[data-overall="unknown"] { border-color: var(--warn); }
+.env li[data-overall="fail"] { border-color: var(--bad); }
+.head { display: flex; gap: .8rem; align-items: baseline; }
+.overall { font-size: .85rem; font-weight: 600; }
+.overall[data-overall="pass"] { color: var(--ok); }
+.overall[data-overall="unknown"] { color: var(--warn); }
+.overall[data-overall="fail"] { color: var(--bad); }
+.layers { margin: .4rem 0; display: grid; gap: .15rem; }
+.layers > div { display: grid; grid-template-columns: 9rem 1fr; }
+.layers dt { color: var(--muted); }
+.layers dd { margin: 0; }
+.layers [data-state="fail"] dd { color: var(--bad); }
+.layers [data-state="unknown"] dd { color: var(--warn); }
+.advice, .notice { border-left: 3px solid var(--warn); padding-left: .7rem; }
+.limits { border: 1px solid var(--line); border-radius: 8px; padding: .6rem 1rem; margin: 1rem 0; }
+.row { display: flex; gap: .8rem; flex-wrap: wrap; margin-top: 1rem; }
+button.secondary { background: transparent; color: var(--ink); }
+button.link { background: none; border: none; color: var(--ink); text-decoration: underline; padding: 0; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.recent { list-style: none; padding: 0; }
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; padding: 1rem; }
+.dialog { background: var(--bg); color: var(--ink); max-width: 36rem; max-height: 90vh; overflow: auto; border-radius: 10px; padding: 1.5rem; border: 1px solid var(--line); }
 button { font: inherit; padding: .55rem 1rem; border-radius: 6px; border: 1px solid var(--ink); background: var(--ink); color: var(--bg); cursor: pointer; }
 button:focus-visible, a:focus-visible { outline: 3px solid var(--warn); outline-offset: 2px; }
 .error { color: var(--bad); }

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { hostEnv } from '../env/host-env.js';
 
 /** 进程的真实结束方式。只有 exited && code === 0 才算正常成功。 */
 export type ProcOutcome =
@@ -72,7 +73,7 @@ export function runProcess(command: string, args: readonly string[], opts: RunOp
     try {
       child = spawn(command, [...args], {
         cwd: opts.cwd,
-        env: opts.env ?? process.env,
+        env: opts.env ?? hostEnv(),
         shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
       });

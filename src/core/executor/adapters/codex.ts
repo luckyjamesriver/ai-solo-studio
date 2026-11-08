@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Channel } from '../channel.js';
 import { run } from '../../proc/run.js';
+import { hostEnv } from '../../env/host-env.js';
 import type { DeniedOperation, DetectResult, Decision, Executor, ExecutorEvent, ExecutorRun, ExitOutcome, PermissionRequest, StartOptions } from '../types.js';
 import { resolveCapabilities, type Capabilities } from '../../capabilities/model.js';
 import { assess } from '../../policy/risk.js';
@@ -228,7 +229,7 @@ export class CodexExecutor implements Executor {
    */
   private async discoverMcpServers(cwd: string): Promise<string[]> {
     if (this.options.discoverMcpServers) return this.options.discoverMcpServers(cwd);
-    const env = { ...process.env, ...this.options.env };
+    const env = { ...hostEnv(), ...this.options.env };
     return new Promise<string[]>((resolve, reject) => {
       let child: ChildProcess;
       try {
@@ -295,9 +296,20 @@ export class CodexExecutor implements Executor {
     return notes;
   }
 
+  /**
+   * 体检用的启动前自检（只读，不启动任务）：读取用户配置里的 MCP 名称（官方 config/read），
+   * 按默认能力构建与任务相同的启动参数，再跑 selfCheckLaunch。返回问题清单；读取配置失败则抛错（调用方显示“未知”）。
+   */
+  async preflight(cwd: string): Promise<{ problems: string[]; mcpServers: string[] }> {
+    const configured = await this.discoverMcpServers(cwd);
+    const caps = resolveCapabilities();
+    const cfg = codexLaunchConfig(cwd, { mcpServers: configured, capabilities: caps });
+    return { problems: selfCheckLaunch(cfg, caps, configured), mcpServers: configured };
+  }
+
   async detect(): Promise<DetectResult> {
     const cwd = process.cwd();
-    const env = { ...process.env, ...this.options.env };
+    const env = { ...hostEnv(), ...this.options.env };
     const v = await run(this.command, [...this.prefix, '--version'], { cwd, env, timeoutMs: 15_000, killGraceMs: 500 });
     if (v.outcome.kind === 'spawn_error') return { installed: false, loggedIn: 'unknown', note: '没有找到 Codex，请先安装。' };
     if (v.outcome.kind !== 'exited' || v.outcome.code !== 0) return { installed: false, loggedIn: 'unknown', note: 'Codex 无法运行。' };
@@ -535,7 +547,7 @@ export class CodexExecutor implements Executor {
     try {
       child = spawn(this.command, [...this.prefix, ...cfg.args], {
         cwd,
-        env: { ...process.env, ...this.options.env },
+        env: { ...hostEnv(), ...this.options.env },
         shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
       });

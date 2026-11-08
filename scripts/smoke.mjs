@@ -2,14 +2,16 @@
 // 用法：npm run smoke（会先 build）。任何断言失败或超过 30 秒，以非零退出码结束。
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { mkdtempSync } from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const electronBin = createRequire(import.meta.url)('electron');
 const TOTAL_TIMEOUT_MS = 30_000;
-const EXPECTED_API = ['chooseProject', 'detectEnvironment', 'initProject', 'projectStatus'];
+const EXPECTED_API = ['acceptDisclosure', 'chooseProject', 'detectEnvironment', 'getDisclosure', 'initProject', 'openRecent', 'projectStatus', 'recentProjects'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -76,7 +78,9 @@ function check(name, ok, detail) {
 async function main() {
   const deadline = Date.now() + TOTAL_TIMEOUT_MS;
   const port = await freePort();
-  const app = spawn(electronBin, [`--remote-debugging-port=${port}`, '.'], { cwd: root, stdio: 'ignore' });
+  // 用临时的应用数据目录，避免污染真实的最近项目与外发确认记录
+  const userData = mkdtempSync(path.join(os.tmpdir(), 'studio-smoke-'));
+  const app = spawn(electronBin, [`--remote-debugging-port=${port}`, `--user-data-dir=${userData}`, '.'], { cwd: root, stdio: 'ignore' });
   let exited = false;
   const exitP = new Promise((resolve) => app.once('exit', (code, signal) => { exited = true; resolve({ code, signal }); }));
   let cdp;
@@ -90,7 +94,8 @@ async function main() {
     await cdp.opened;
 
     // 等环境体检列表渲染完成
-    await waitFor(() => cdp.evaluate("document.querySelectorAll('ul.env li[data-light]').length > 0"), '环境体检列表渲染', deadline);
+    // 体检含 Codex 只读自检，最多可能需要十几秒；冒烟总时限仍是 30 秒
+    await waitFor(() => cdp.evaluate("document.querySelectorAll('ul.env li[data-overall]').length > 0"), '环境体检列表渲染', deadline);
 
     const title = await cdp.evaluate('document.title');
     check('document.title === "AI Solo Studio"', title === 'AI Solo Studio', JSON.stringify(title));
@@ -107,10 +112,10 @@ async function main() {
       JSON.stringify(keys),
     );
 
-    const git = await cdp.evaluate(
-      "(()=>{const li=[...document.querySelectorAll('ul.env li')].find(l=>l.querySelector('strong')?.textContent==='Git');return li?li.getAttribute('data-light'):null})()",
-    );
-    check('环境体检中 Git 为 green', git === 'green', JSON.stringify(git));
+    const git = await cdp.evaluate("document.querySelector('ul.env li[data-id=\"git\"]')?.getAttribute('data-overall') ?? null");
+    check('环境体检中 Git 为 pass', git === 'pass', JSON.stringify(git));
+    const layers = await cdp.evaluate("document.querySelectorAll('ul.env li[data-id=\"codex\"] [data-layer]').length");
+    check('Codex 体检项有五层状态', layers === 5, JSON.stringify(layers));
   } catch (e) {
     check('冒烟流程', false, e.message);
   } finally {

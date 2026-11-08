@@ -88,7 +88,64 @@ describe('安全基线（防回归）', () => {
     }
   });
 
-  it('M3-A1 遗留：src/main 中每个 ClaudeCliThinker 构造点都必须显式传入 isPackaged', () => {
+  // ---------- M3-B1 新增（只增不减） ----------
+  const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+  const envAppFiles = [...walk('src/core/env'), ...walk('src/core/app')].filter((x) => /\.ts$/.test(x));
+
+  it('M3-B1：渲染进程 API 清单固定，且没有任何一个接受“路径”参数（只有编号或布尔值）', () => {
+    const preload = read('src/preload/index.cts');
+    const entries = [...preload.matchAll(/^\s{2}(\w+): \(([^)]*)\) =>\s*ipcRenderer\.invoke\('([^']+)'/gm)].map((m) => ({ name: m[1]!, params: m[2]!, channel: m[3]! }));
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure']);
+    for (const e of entries) expect(['', 'id: string', 'consent: boolean'], `${e.name}(${e.params})`).toContain(e.params);
+    // 每个 IPC 通道在主进程中都有处理函数，且主进程处理函数的参数只可能是 id / consent
+    const main = read('src/main/index.ts');
+    for (const e of entries) expect(main, e.channel).toContain(`ipcMain.handle('${e.channel}'`);
+    for (const m of main.matchAll(/ipcMain\.handle\('[^']+',\s*(?:async\s*)?\(([^)]*)\)/g)) {
+      expect(['', '_e', '_e, id: unknown', '_e, consent: unknown'], m[1]).toContain(m[1]);
+    }
+  });
+
+  it('M3-B1：主进程只从系统对话框或最近项目列表（按编号）获得项目路径', () => {
+    const main = read('src/main/index.ts');
+    const calls = [...main.matchAll(/openValidated\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(calls.sort()).toEqual(['input: string', 'r.filePaths[0]', 'r.path']);
+    expect(main).toMatch(/dialog\.showOpenDialog\(/);
+  });
+
+  it('M3-B1：PATH 补全不读取、不执行用户 shell 配置文件，不启动登录 shell，不改 process.env', () => {
+    const rc = /\.zshrc|\.zprofile|\.zshenv|\.zlogin|\.bashrc|\.bash_profile|\.bash_login|\.profile\b|path_helper|\bsource\s|\/etc\/(?:zsh|bash|profile|paths)/;
+    const shells = /['"`](?:\/bin\/)?(?:zsh|bash|sh|fish|dash)['"`]|\s-l(?:c)?\s|login shell|--login/;
+    for (const f of envAppFiles) {
+      const s = stripComments(fs.readFileSync(f, 'utf8'));
+      expect(s, f).not.toMatch(rc);
+      expect(s, f).not.toMatch(shells);
+      expect(s, f).not.toMatch(/process\.env(?:\.\w+|\[[^\]]+\])?\s*=[^=]/);
+    }
+    // 全部源码都不得改写 process.env（补全只进入子进程环境副本）
+    for (const [f, s] of sources) expect(stripComments(s), f).not.toMatch(/process\.env(?:\.\w+|\[[^\]]+\])?\s*=[^=]/);
+    // 断言自身有效：样例确实会被匹配
+    expect('source ~/.zshrc').toMatch(rc);
+    expect("spawn('zsh', ['-lc', 'echo $PATH'])").toMatch(shells);
+    expect('process.env.PATH = x').toMatch(/process\.env(?:\.\w+|\[[^\]]+\])?\s*=[^=]/);
+  });
+
+  it('M3-B1：体检与应用数据模块不读取登录凭证文件，也不写死个人路径', () => {
+    for (const f of envAppFiles) {
+      const s = stripComments(fs.readFileSync(f, 'utf8'));
+      expect(s, f).not.toMatch(/auth\.json|\.credentials|keychain|security find-|\.ssh\b|\.netrc/i);
+      expect(s, f).not.toMatch(/\/Users\/[a-z]|\/home\/[a-z]/i);
+    }
+  });
+
+  it('M3-B1：外发入口必须经过“已确认外发说明”检查；确认记录只在主进程写入', () => {
+    const d = read('src/core/app/disclosure.ts');
+    expect(d).toMatch(/async requireAccepted\(\)/);
+    expect(d).toMatch(/throw new Error\('你还没有确认外发说明/);
+    // 渲染进程 API 里没有“写入确认记录”之外的外发能力；acceptDisclosure 不接受参数
+    expect(read('src/preload/index.cts')).toMatch(/acceptDisclosure: \(\) =>/);
+  });
+
+  it('M3-B1 遗留：src/main 中每个 ClaudeCliThinker 构造点都必须显式传入 isPackaged', () => {
     for (const f of walk('src/main').filter((x) => /\.(c?ts|tsx)$/.test(x))) {
       const s = read(f);
       for (const m of s.matchAll(/new\s+ClaudeCliThinker\s*\(([\s\S]*?)\)\s*[;,)\n]/g)) {
