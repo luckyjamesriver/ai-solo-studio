@@ -273,7 +273,7 @@ describe('施工模式界面', () => {
     expect(result).toContain('AI 报告以下操作未能完成');
     expect(result).toContain('这是 AI 自己的说法');
     expect(result).toContain('你停止了本次执行');
-    expect(result).toContain('检查「构建」');
+    expect(result).toContain('项目能成功构建'); // B4-2：验收区使用主进程的用户验收视图，检查项的名称随之统一
     expect(result).toContain('未检查');
     expect(await a.page.getByTestId('changes').innerText()).toContain('index.html');
     // AI 自述的失败被提取并标注
@@ -292,7 +292,7 @@ describe('施工模式界面', () => {
     await a.page.getByTestId('start-button').click();
     await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
     expect(await a.page.getByTestId('changes').innerText()).toContain('index.html');
-    expect(await a.page.getByTestId('facts').innerText()).toContain('AI 执行过程是否正常结束：正常结束');
+    expect(await a.page.getByTestId('facts').innerText()).toContain('AI 执行过程正常结束：正常结束');
     expect(await a.page.getByTestId('incomplete').innerText()).toContain('AI 没有报告未完成的操作');
     expect(await a.page.getByTestId('unexpected').count()).toBe(0);
   });
@@ -416,7 +416,255 @@ describe('施工模式界面', () => {
     expect(r.badMode).toContain('无效的模式');
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'addExtraDir', 'chooseProject', 'createTask', 'detectEnvironment', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openRecent', 'projectStatus', 'recentProjects', 'removeExtraDir', 'savePlan', 'startTask', 'stopTask']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'startTask', 'stopTask', 'undoSave']);
+  });
+});
+
+/**
+ * M3-B4-2：保存 / 放弃 / 撤销接到界面（操作闭环）。执行体仍是 FakeExecutor（0 次真实调用）。
+ * 【待维护者运行】这些用例需要真实窗口，执行会话的沙箱里跑不了；控制器层的同一批流程在 tests/b4-2-controller.test.ts 里已验证。
+ */
+const inState = (page: Page, state: string) => page.locator(`[data-testid="result"][data-state="${state}"]`).waitFor({ timeout: 30_000 });
+const enabled = (page: Page, testId: string) => page.getByTestId(testId).isEnabled();
+async function toReview(proj: string, script: unknown[], data = mk('data')) {
+  const a = await openProjectWithFake(proj, script, data);
+  await newTask(a.page, '改标题');
+  await a.page.getByTestId('start-button').click();
+  await inState(a.page, 'reviewing');
+  return { ...a, data };
+}
+async function confirmThenSave(page: Page) {
+  await page.getByTestId('confirm-overall').click();
+  await page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+  await page.getByTestId('save-button').click();
+  await inState(page, 'saved');
+}
+const WRITE = [{ do: 'write', path: 'index.html', content: '<h1>new</h1>\n' }];
+const readProj = (proj: string) => fs.readFileSync(path.join(proj, 'index.html'), 'utf8');
+
+describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () => {
+  it('保存成功 → 主项目里能看到；成果片段显示“原来 / 现在”；撤销 → 恢复（撤销入口始终可见）', async () => {
+    const proj = gitProject('save-site', { 'index.html': '<h1>old</h1>\n' });
+    const a = await toReview(proj, WRITE);
+    expect(await a.page.getByTestId('hunk-before').first().innerText()).toContain('<h1>old</h1>');
+    expect(await a.page.getByTestId('hunk-after').first().innerText()).toContain('<h1>new</h1>');
+    expect(await a.page.getByTestId('result').innerText()).toContain('尚未提供预览，保存后自己打开看看，不满意可以撤销');
+    expect(await enabled(a.page, 'save-button')).toBe(false); // 还没确认
+    expect(await a.page.getByTestId('save-reason').innerText()).toContain('请先确认');
+    await shot(a.page, '8-验收卡');
+    await confirmThenSave(a.page);
+    expect(await a.page.getByTestId('verdict').innerText()).toContain('已保存到项目');
+    expect(readProj(proj)).toBe('<h1>new</h1>\n');
+    expect(await enabled(a.page, 'undo-button')).toBe(true);
+    await a.page.getByTestId('undo-button').click();
+    expect(await a.page.getByTestId('confirm-text').innerText()).not.toContain('任务副本以外'); // 标准模式没有外部影响
+    await a.page.getByTestId('confirm-yes').click();
+    await inState(a.page, 'undone');
+    expect(await a.page.getByTestId('verdict').innerText()).toContain('已撤销');
+    expect(readProj(proj)).toBe('<h1>old</h1>\n');
+  });
+
+  it('撤销条件不满足：按钮仍可见，置灰并写明原因', async () => {
+    const proj = gitProject('undo-grey', { 'index.html': '<h1>old</h1>\n' });
+    const a = await toReview(proj, WRITE);
+    await confirmThenSave(a.page);
+    fs.writeFileSync(path.join(proj, 'later.txt'), 'x');
+    // 撤销条件由主进程实时判定：直接向主进程取最新视图
+    const v = await a.page.evaluate(async () => {
+      const s = (window as unknown as { studio: { listTasks: () => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (id: string) => Promise<{ actions: { undo: { enabled: boolean; reason?: string } } }> } }).studio;
+      const t = (await s.listTasks()).tasks[0]!;
+      return s.getAcceptanceView(t.id);
+    });
+    expect(v.actions.undo.enabled).toBe(false);
+    expect(v.actions.undo.reason).toBe('这次保存之后项目还有其他修改，暂时不能只撤销这一项');
+  });
+
+  it('放弃：二次确认；完全信任任务的确认框先显示“无法撤销”的说明；项目不变', async () => {
+    const proj = gitProject('discard-site', { 'index.html': '<h1>old</h1>\n' });
+    const a = await openProjectWithFake(proj, WRITE);
+    await newTask(a.page, '改标题');
+    await a.page.getByTestId('mode-full-trust').check();
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('trust-ack').check();
+    await a.page.getByTestId('trust-confirm').click();
+    await inState(a.page, 'reviewing');
+    await a.page.getByTestId('discard-button').click();
+    const text = await a.page.getByTestId('confirm-text').innerText();
+    expect(text).toContain('AI 在任务副本以外做过的修改（如额外文件夹、联网操作）工作台无法撤销。');
+    await a.page.getByTestId('confirm-no').click(); // 取消：什么都没发生
+    expect(await a.page.getByTestId('confirm-panel').count()).toBe(0);
+    expect(taskFiles(proj)[0]?.state).toBe('reviewing');
+    await a.page.getByTestId('discard-button').click();
+    await a.page.getByTestId('confirm-yes').click();
+    await inState(a.page, 'discarded');
+    expect(readProj(proj)).toBe('<h1>old</h1>\n');
+  });
+
+  it('检查失败时保存置灰；执行体失败也不能保存', async () => {
+    const proj = gitProject('fail-site', { 'index.html': '<h1>old</h1>\n' });
+    const a = await toReview(proj, [...WRITE, { do: 'exit', code: 2 }]);
+    expect(await a.page.getByTestId('verdict').innerText()).toContain('还不能保存');
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForTimeout(500);
+    expect(await enabled(a.page, 'save-button')).toBe(false);
+    expect(readProj(proj)).toBe('<h1>old</h1>\n');
+  });
+
+  it('验收失效 → 保存被拦下并突出“重新检查” → 重新检查后确认清空', async () => {
+    const proj = gitProject('stale-site', { 'index.html': '<h1>old</h1>\n' });
+    const a = await toReview(proj, WRITE);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    fs.writeFileSync(path.join(taskFiles(proj)[0]!.worktree.path, 'index.html'), '<h1>sneaky</h1>\n'); // 确认之后副本内容变了
+    await a.page.getByTestId('save-button').click();
+    await a.page.getByTestId('action-message').waitFor();
+    expect(await a.page.getByTestId('action-message').innerText()).toContain('原来的验收已失效');
+    expect(await a.page.getByTestId('recheck-button').getAttribute('data-highlight')).toBe('true');
+    expect(readProj(proj)).toBe('<h1>old</h1>\n');
+    await a.page.getByTestId('recheck-button').click();
+    await a.page.waitForFunction(() => !!document.querySelector('[data-testid="confirm-overall"]'));
+    expect(await enabled(a.page, 'save-button')).toBe(false); // 确认已清空，需要重新确认
+  });
+
+  it('主项目有未保存修改：列出文件，不提供“帮我提交”', async () => {
+    const proj = gitProject('dirty-main', { 'index.html': '<h1>old</h1>\n' });
+    const a = await toReview(proj, WRITE);
+    fs.writeFileSync(path.join(proj, 'notes.txt'), 'mine');
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.getByTestId('save-reason').waitFor();
+    const r = await a.page.evaluate(async () => {
+      const s = (window as unknown as { studio: { listTasks: () => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (id: string) => Promise<{ actions: { save: { enabled: boolean; files?: string[] } } }> } }).studio;
+      const t = (await s.listTasks()).tasks[0]!;
+      return s.getAcceptanceView(t.id);
+    });
+    expect(r.actions.save.enabled).toBe(false);
+    expect(r.actions.save.files).toEqual(['notes.txt']);
+    expect(await a.page.getByRole('button', { name: /提交/ }).count()).toBe(0);
+  });
+
+  it('冲突：只有“放弃”和“暂不处理”，没有保存与任何让 AI 继续修改的入口；成果仍保留', async () => {
+    const proj = gitProject('conflict-site', { 'index.html': '<h1>old</h1>\n' });
+    const a = await toReview(proj, WRITE);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    fs.writeFileSync(path.join(proj, 'index.html'), '<h1>other</h1>\n');
+    git(proj, 'commit', '-q', '-am', 'other change');
+    await a.page.getByTestId('save-button').click();
+    await inState(a.page, 'save_failed_unmerged');
+    expect(await a.page.getByTestId('verdict').innerText()).toContain('AI 的修改与项目当前版本有冲突');
+    expect(await a.page.getByTestId('actions').locator('button').allInnerTexts()).toEqual(['放弃', '暂不处理']);
+    expect(await a.page.getByTestId('result').innerText()).not.toMatch(/让 ?AI|仍然保存|强制保存/);
+    expect(fs.existsSync(taskFiles(proj)[0]!.worktree.path)).toBe(true);
+    await a.page.getByTestId('defer-button').click();
+    expect(await a.page.getByTestId('deferred-note').innerText()).toContain('仍然保留');
+    await a.page.getByTestId('discard-button').click();
+    await a.page.getByTestId('confirm-yes').click();
+    await inState(a.page, 'discarded');
+  });
+
+  it('清理失败 → “需要处理”并给出“重试清理” → 重试成功', async () => {
+    const proj = gitProject('cleanup-site', { 'index.html': '<h1>old</h1>\n' });
+    const a = await toReview(proj, WRITE);
+    const wt = taskFiles(proj)[0]!.worktree.path as string;
+    git(proj, 'worktree', 'lock', wt);
+    await a.page.getByTestId('discard-button').click();
+    await a.page.getByTestId('confirm-yes').click();
+    await inState(a.page, 'discard_cleanup_pending');
+    expect(await a.page.getByTestId('result').innerText()).toContain('需要处理');
+    expect(await a.page.getByTestId('result').innerText()).not.toMatch(/locked|fatal/);
+    git(proj, 'worktree', 'unlock', wt);
+    await a.page.getByTestId('retry-cleanup-button').click();
+    await inState(a.page, 'discarded');
+  });
+
+  it('重复点击只生效一次；伪造参数被主进程拒绝', async () => {
+    const proj = gitProject('dup-site', { 'index.html': '<h1>old</h1>\n' });
+    const a = await toReview(proj, WRITE);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    const r = await a.page.evaluate(async () => {
+      type Fn = (...x: unknown[]) => Promise<{ ok: boolean; message: string; view: { version: string } }>;
+      const s = (window as unknown as { studio: { listTasks: () => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (id: string) => Promise<{ version: string }>; saveTask: Fn; confirmCriterion: Fn } }).studio;
+      const id = (await s.listTasks()).tasks[0]!.id;
+      const version = (await s.getAcceptanceView(id)).version;
+      const both = await Promise.all([s.saveTask(id, version), s.saveTask(id, version)]);
+      const bad = (f: () => Promise<unknown>) => f().then(() => 'ok', (e: Error) => e.message);
+      return {
+        oks: both.filter((x) => x.ok).length,
+        others: both.filter((x) => !x.ok).map((x) => x.message),
+        forgedVersion: await bad(() => s.saveTask(id, 'latest')),
+        forgedId: await bad(() => s.saveTask('../x', version)),
+        forgedItem: await bad(() => s.confirmCriterion(id, 'exit', version)),
+      };
+    });
+    expect(r.oks).toBe(1);
+    expect(r.forgedVersion).toContain('无效的参数');
+    expect(r.forgedId).toContain('无效的参数');
+    expect(r.forgedItem).toContain('无效的参数');
+    expect(git(proj, 'rev-list', '--count', 'HEAD').toString().trim()).toBe('3'); // 初始 + 任务提交 + 合并提交，只保存了一次
+  });
+
+  it('重启后：已保存任务的状态与撤销按钮一致', async () => {
+    const proj = gitProject('restart-site', { 'index.html': '<h1>old</h1>\n' });
+    const data = mk('data');
+    const a = await toReview(proj, WRITE, data);
+    await confirmThenSave(a.page);
+    await a.app.close();
+    const b = await launch(data);
+    await b.page.getByRole('button', { name: '暂不同意，先看看' }).click().catch(() => undefined);
+    await stubDialog(b.app, proj);
+    await b.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await b.page.getByTestId('task-list').waitFor();
+    await b.page.getByTestId('task-list').getByRole('button').first().click();
+    await inState(b.page, 'saved');
+    expect(await enabled(b.page, 'undo-button')).toBe(true);
+  });
+
+  it('异常态：只读；没有保存/放弃/撤销按钮；有“在访达中显示项目”与“复制诊断摘要”；摘要不含命令与 Git 原文', async () => {
+    const proj = gitProject('abnormal-site', { 'index.html': '<h1>old</h1>\n' });
+    const data = mk('data');
+    const a = await toReview(proj, WRITE, data);
+    await a.app.close();
+    const file = path.join(proj, '.studio', 'tasks', `${taskFiles(proj)[0]!.id}.json`);
+    const t = JSON.parse(fs.readFileSync(file, 'utf8'));
+    t.manualReview = { reason: '合并失败后，主项目的版本或文件与合并前不一致。', at: new Date().toISOString() };
+    t.op = { kind: 'save', startedAt: 'x', phase: 'interrupted', steps: [{ at: 'x', name: '核验', ok: false, detail: 'fatal: CONFLICT npm run x' }] };
+    fs.writeFileSync(file, JSON.stringify(t));
+    const b = await launch(data);
+    await b.page.getByRole('button', { name: '暂不同意，先看看' }).click().catch(() => undefined);
+    await stubDialog(b.app, proj);
+    await b.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await b.page.getByTestId('task-list').waitFor();
+    await b.page.getByTestId('task-list').getByRole('button').first().click();
+    await b.page.getByTestId('readonly-panel').waitFor();
+    expect(await b.page.getByTestId('readonly-panel').locator('button').allInnerTexts()).toEqual(['在访达中显示项目', '复制诊断摘要']);
+    for (const id of ['save-button', 'discard-button', 'undo-button', 'recheck-button', 'retry-cleanup-button']) expect(await b.page.getByTestId(id).count()).toBe(0);
+    const summary = await b.page.getByTestId('summary-text').innerText();
+    expect(summary).toContain('项目状态异常，请不要继续操作');
+    expect(summary).not.toMatch(/fatal|CONFLICT|npm run|git /);
+    expect(await b.page.getByTestId('result').innerText()).not.toMatch(/fatal|CONFLICT|npm run/);
+  });
+
+  it('启动核对：保存中断后重启，任务在列表里标“已核对”并有一句话说明', async () => {
+    const proj = gitProject('reconcile-site', { 'index.html': '<h1>old</h1>\n' });
+    const data = mk('data');
+    const a = await toReview(proj, WRITE, data);
+    await a.app.close();
+    const task = taskFiles(proj)[0]!;
+    const file = path.join(proj, '.studio', 'tasks', `${task.id}.json`);
+    const preHead = git(proj, 'rev-parse', 'HEAD').toString().trim();
+    const wt = task.worktree.path as string;
+    const commit = git(wt, 'commit-tree', task.acceptedTree, '-p', task.worktree.baseSha, '-m', 'studio: x').toString().trim();
+    git(proj, 'merge', '--no-ff', '-m', 'studio: 保存', commit);
+    task.op = { kind: 'save', startedAt: 'x', phase: 'task_committed', preHead, taskCommit: commit, steps: [] };
+    fs.writeFileSync(file, JSON.stringify(task));
+    const b = await launch(data);
+    await b.page.getByRole('button', { name: '暂不同意，先看看' }).click().catch(() => undefined);
+    await stubDialog(b.app, proj);
+    await b.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await b.page.getByTestId('reconciled-badge-list').waitFor();
+    await b.page.getByTestId('task-list').getByRole('button').first().click();
+    expect(await b.page.getByTestId('reconciled-note').innerText()).toMatch(/^已核对：/);
   });
 });
 

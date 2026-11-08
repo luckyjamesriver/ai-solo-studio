@@ -274,8 +274,10 @@ describe('安全基线（防回归）', () => {
     // B3-2 修订（任务界面必需的新 API；原清单是前 8 项）：清单仍然固定，参数形态逐一列出——
     // 只允许 编号 / 布尔 / 需求文字 / 计划表单（文字、模式、布尔）/ 选项键；任何参数都不得叫 path/dir/folder/file，
     // 额外文件夹由主进程弹系统选择框取得，渲染进程不传路径。
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask']);
-    const SHAPES = ['', 'id: string', 'consent: boolean', 'request: string', 'id: string, plan: PlanInput', 'id: string, key: string', 'id: string, ack: boolean'];
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'getAcceptanceView', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
+    // B4-2 修订（只增不减）：新增 10 个方法（9 个验收操作 + 1 个无参数的 revealProject）；新增的参数形态只有
+    // “编号 / 条目编号 / 验收版本（字符串）”，原有形态一个不变。
+    const SHAPES = ['', 'id: string', 'consent: boolean', 'request: string', 'id: string, plan: PlanInput', 'id: string, key: string', 'id: string, ack: boolean', 'id: string, version: string', 'id: string, itemId: string, version: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
       expect(e.params, `${e.name} 不得有路径类参数`).not.toMatch(/\b(?:path|paths|dir|dirs|folder|file|filename|cwd|url)\b\s*:/i);
@@ -287,7 +289,7 @@ describe('安全基线（防回归）', () => {
     // 每个 IPC 通道在主进程中都有处理函数，且主进程处理函数的参数形态同样固定
     const main = read('src/main/index.ts');
     for (const e of entries) expect(main, e.channel).toContain(`ipcMain.handle('${e.channel}'`);
-    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, consent: unknown', '_e, request: unknown', '_e, id: unknown, plan: unknown', '_e, id: unknown, key: unknown', '_e, id: unknown, ack: unknown'];
+    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, consent: unknown', '_e, request: unknown', '_e, id: unknown, plan: unknown', '_e, id: unknown, key: unknown', '_e, id: unknown, ack: unknown', '_e, id: unknown, version: unknown', '_e, id: unknown, itemId: unknown, version: unknown'];
     for (const m of main.matchAll(/ipcMain\.handle\('[^']+',\s*(?:async\s*)?\(([^)]*)\)/g)) {
       expect(MAIN_SHAPES, m[1]).toContain(m[1]);
     }
@@ -416,6 +418,109 @@ describe('安全基线（防回归）', () => {
       expect(fnBody(g, 'function checkOwnWorktree(')).toContain('.studio');
       // 断言自身有效
       expect("await git(a).catch(() => undefined)").toMatch(/\.catch\(\s*\(\)\s*=>\s*undefined\s*\)/);
+    });
+  });
+
+  /**
+   * M3-B4-2（新增，只收紧）：渲染层隔离、新增 IPC 的参数形态、启动核对必须先核实进程。
+   */
+  describe('B4-2：验收界面与启动核对', () => {
+    const rendererFiles = walk('src/renderer').filter((f) => /\.(ts|tsx)$/.test(f));
+    const methodBody = (src: string, start: string): string => {
+      const i = src.indexOf(start);
+      expect(i, `找不到 ${start}`).toBeGreaterThanOrEqual(0);
+      const j = src.indexOf('\n  }\n', i);
+      return src.slice(i, j === -1 ? undefined : j);
+    };
+
+    it('渲染层源码不得引用 AcceptanceCard 类型或 evidence 字段；断言自身有效', () => {
+      expect(rendererFiles.length).toBeGreaterThan(5);
+      for (const f of rendererFiles) {
+        const s = read(f);
+        expect(s, f).not.toMatch(/AcceptanceCard/);
+        expect(s, f).not.toMatch(/\bevidence\b/i);
+      }
+      expect('import type { AcceptanceCard } from "x"').toMatch(/AcceptanceCard/);
+      expect('card.items[0].evidence').toMatch(/\bevidence\b/i);
+    });
+
+    it('渲染层不得出现“仍然保存”“强制保存”“全部确认”“让 AI 修改”；断言自身有效', () => {
+      const banned = /仍然保存|强制保存|全部确认|让 ?AI ?修改/;
+      for (const f of rendererFiles) expect(read(f), f).not.toMatch(banned);
+      for (const sample of ['仍然保存', '强制保存', '全部确认', '让 AI 修改', '让AI修改']) expect(sample).toMatch(banned);
+    });
+
+    it('渲染层对 core 只有类型引用（import type / export type），不引用任何运行时代码', () => {
+      for (const f of rendererFiles) {
+        for (const m of read(f).matchAll(/^\s*(import|export)\s+(type\s+)?[^;]*?from\s+['"]([^'"]+)['"]/gm)) {
+          if (/\/core\//.test(m[3]!)) expect(m[2], `${f}: 对 ${m[3]} 必须是 type 引用`).toBeTruthy();
+        }
+      }
+    });
+
+    it('新增 IPC 的 preload 方法：参数只有 id / itemId / version（字符串），revealProject 无参数；主进程处理函数与通道一一对应', () => {
+      const preload = read('src/preload/index.cts');
+      const NEW: Record<string, string> = {
+        getAcceptanceView: 'id: string',
+        confirmCriterion: 'id: string, itemId: string, version: string',
+        confirmOverall: 'id: string, version: string',
+        ackDenied: 'id: string, itemId: string, version: string',
+        recheck: 'id: string',
+        saveTask: 'id: string, version: string',
+        discardTask: 'id: string',
+        undoSave: 'id: string',
+        retryCleanup: 'id: string',
+        revealProject: '',
+      };
+      for (const [name, params] of Object.entries(NEW)) {
+        const m = new RegExp(`^\\s{2}${name}: \\(([^)]*)\\) =>\\s*ipcRenderer\\.invoke\\('([^']+)'`, 'm').exec(preload);
+        expect(m, `preload 缺少 ${name}`).toBeTruthy();
+        expect(m![1], name).toBe(params);
+        expect(read('src/main/index.ts'), name).toContain(`ipcMain.handle('${m![2]}'`);
+      }
+      // 控制器对条目编号与版本做格式校验（伪造参数拒绝）
+      const c = read('src/core/app/task-controller.ts');
+      expect(c).toMatch(/const TASK_ID = \/\^\[a-z0-9-\]\{1,64\}\$\//);
+      expect(c).toContain('/^c\\d{1,2}$/');
+      expect(c).toContain('/^d\\d{1,3}$/');
+      expect(c).toContain('isVersionFormat(v)');
+      // revealProject 的位置只来自主进程里的当前项目
+      expect(read('src/main/index.ts')).toMatch(/ipcMain\.handle\('project:reveal',\s*\(\)\s*=>\s*\{\s*shell\.showItemInFolder\(requireProject\(\)\)/);
+    });
+
+    it('启动核对：reconcile 路径上 removeWorktree 之前必须先有进程核实；reconcileTasks 本身不直接删除；强制删除只在 git.ts', () => {
+      const r = read('src/core/task/runner.ts');
+      const clean = methodBody(r, 'private async reconcileCleanup(');
+      const verify = clean.indexOf('verifyNoLiveExecutor(');
+      const remove = clean.indexOf('G.removeWorktree(');
+      expect(verify, 'reconcileCleanup 必须调用 verifyNoLiveExecutor').toBeGreaterThanOrEqual(0);
+      expect(remove, 'reconcileCleanup 必须调用 removeWorktree').toBeGreaterThan(verify);
+      expect(clean.indexOf('worktreeOwnershipProblem(')).toBeGreaterThanOrEqual(0);
+      expect(clean.indexOf('worktreeOwnershipProblem(')).toBeLessThan(remove);
+      // reconcileTasks / inspectTask / identifyTasks 里不得直接调用 removeWorktree
+      for (const name of ['async reconcileTasks(', 'async inspectTask(', 'async identifyTasks(']) {
+        expect(methodBody(r, name), name).not.toContain('removeWorktree(');
+      }
+      // 启动核对的保存收尾必须走 reconcileCleanup
+      const fin = methodBody(r, 'private async finishSave(');
+      expect(fin).toContain('this.reconcileCleanup(');
+      // identifyTasks / inspectTask 是只读的：不得写任务记录或改状态
+      for (const name of ['async inspectTask(', 'async identifyTasks(']) {
+        expect(methodBody(r, name), name).not.toMatch(/this\.persist\(|this\.fire\(|this\.store\.save\(|this\.opStep\(|this\.endOp\(/);
+      }
+      // 强制删除副本的参数只出现在 git.ts 一处
+      for (const [f, s] of sources) {
+        if (f.endsWith(path.join('core', 'git', 'git.ts'))) continue;
+        expect(s, f).not.toMatch(/worktree['"],\s*['"]remove['"]/);
+      }
+    });
+
+    it('view.ts 不引用命令、Git 原文类型：不读取 evidence / command / stderr 字段', () => {
+      const v = stripComments(read('src/core/acceptance/view.ts'));
+      expect(v).not.toMatch(/\.command\b|\.stderr\b|\.stdout\b|\bcleanup\b\.steps|\.steps\b/);
+      // 证据文字只允许两种用法：取秒数（只取数字）、按类别选固定文案；不得被拼进视图
+      const rest = v.replace(/it\.evidence\.match\(/g, '').replace(/notCheckedText\(it\.key, it\.evidence\)/g, '');
+      expect(rest).not.toMatch(/\bevidence\b/);
     });
   });
 });
