@@ -429,7 +429,7 @@ describe('施工模式界面', () => {
     expect(r.badMode).toContain('无效的模式');
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'startTask', 'stopTask', 'undoSave']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'confirmPreview', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'startTask', 'stopTask', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
@@ -514,7 +514,13 @@ async function toReview(proj: string, script: unknown[], data = mk('data')) {
   await inState(a.page, 'reviewing');
   return { ...a, data };
 }
+const confirmStep1 = async (page: Page) => {
+  const b = page.getByTestId('confirm-preview');
+  if (await b.isVisible()) await b.click();
+};
+
 async function confirmThenSave(page: Page) {
+  await confirmStep1(page);
   await page.getByTestId('confirm-overall').click();
   await page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
   await page.getByTestId('save-button').click();
@@ -585,6 +591,7 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     const proj = gitProject('fail-site', { 'index.html': '<h1>old</h1>\n' });
     const a = await toReview(proj, [...WRITE, { do: 'exit', code: 2 }]);
     expect(await a.page.getByTestId('verdict').innerText()).toContain('还不能保存');
+    await confirmStep1(a.page);
     await a.page.getByTestId('confirm-overall').click();
     await a.page.waitForTimeout(500);
     expect(await enabled(a.page, 'save-button')).toBe(false);
@@ -594,6 +601,7 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
   it('验收失效 → 保存被拦下并突出“重新检查” → 重新检查后确认清空', async () => {
     const proj = gitProject('stale-site', { 'index.html': '<h1>old</h1>\n' });
     const a = await toReview(proj, WRITE);
+    await confirmStep1(a.page);
     await a.page.getByTestId('confirm-overall').click();
     await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
     fs.writeFileSync(path.join(taskFiles(proj)[0]!.worktree.path, 'index.html'), '<h1>sneaky</h1>\n'); // 确认之后副本内容变了
@@ -611,6 +619,7 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     const proj = gitProject('dirty-main', { 'index.html': '<h1>old</h1>\n' });
     const a = await toReview(proj, WRITE);
     fs.writeFileSync(path.join(proj, 'notes.txt'), 'mine');
+    await confirmStep1(a.page);
     await a.page.getByTestId('confirm-overall').click();
     await a.page.getByTestId('save-files').waitFor();
     const r = await a.page.evaluate(async () => {
@@ -626,6 +635,7 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
   it('冲突：只有“放弃”和“暂不处理”，没有保存与任何让 AI 继续修改的入口；成果仍保留', async () => {
     const proj = gitProject('conflict-site', { 'index.html': '<h1>old</h1>\n' });
     const a = await toReview(proj, WRITE);
+    await confirmStep1(a.page);
     await a.page.getByTestId('confirm-overall').click();
     await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
     fs.writeFileSync(path.join(proj, 'index.html'), '<h1>other</h1>\n');
@@ -661,6 +671,7 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
   it('重复点击只生效一次；伪造参数被主进程拒绝', async () => {
     const proj = gitProject('dup-site', { 'index.html': '<h1>old</h1>\n' });
     const a = await toReview(proj, WRITE);
+    await confirmStep1(a.page);
     await a.page.getByTestId('confirm-overall').click();
     await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
     const r = await a.page.evaluate(async () => {
@@ -745,6 +756,86 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     await b.page.getByTestId('reconciled-badge-list').waitFor();
     await b.page.getByTestId('task-list').getByRole('button').first().click();
     expect(await b.page.getByTestId('reconciled-note').innerText()).toMatch(/^已核对：/);
+  });
+});
+
+describe('验收流程可用性改进（执行者显示、分步验收与成果预览）', () => {
+  it('显示执行者：在计划卡、施工中与验收区显示实际执行者名称与模型（动态读取）', async () => {
+    const proj = gitProject('executor-display-site', { 'index.html': '<h1>init</h1>\n' });
+    const a = await openProjectWithFake(proj, [{ do: 'say', text: '工作中' }, ...WRITE], mk('data'));
+    await newTask(a.page, '修改标题为新版本');
+    // 计划卡展示执行者信息（开工前展示执行者名称）
+    expect(await a.page.getByTestId('executor-info').innerText()).toBe('执行者：Codex');
+
+    await a.page.getByTestId('start-button').click();
+    // 施工中展示执行者信息与实际运行模型（Codex · fake）
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="executor-info"]')?.textContent?.includes('fake'));
+    expect(await a.page.getByTestId('executor-info').innerText()).toBe('执行者：Codex · fake');
+
+    // 验收阶段展示执行者信息与模型
+    await inState(a.page, 'reviewing');
+    expect(await a.page.getByTestId('executor-info').innerText()).toBe('执行者：Codex · fake');
+  });
+
+  it('理顺验收步骤：① 查看成果 → ② 确认验收标准 → ③ 保存到项目，按序门禁且每次点击有即时反馈', async () => {
+    const proj = gitProject('steps-gating-site', { 'index.html': '<h1>init</h1>\n' });
+    const a = await toReview(proj, WRITE);
+
+    // 步骤结构完整存在
+    expect(await a.page.getByTestId('step-1').isVisible()).toBe(true);
+    expect(await a.page.getByTestId('step-2').isVisible()).toBe(true);
+    expect(await a.page.getByTestId('step-3').isVisible()).toBe(true);
+
+    // 未完成步骤 ① 前：步骤 ② 按钮不可点，并有一句话说明
+    expect(await enabled(a.page, 'confirm-overall')).toBe(false);
+    expect(await a.page.getByTestId('step2-reason').innerText()).toBe('请先完成「① 查看成果」，才能确认验收标准。');
+
+    // 未完成步骤 ① 前：步骤 ③ 保存按钮不可点，并有一句话说明
+    expect(await enabled(a.page, 'save-button')).toBe(false);
+    expect(await a.page.getByTestId('save-reason').innerText()).toContain('请先确认已查看成果');
+
+    // 点击完成步骤 ①：产生即时反馈，并使步骤 ② 可点击
+    await a.page.getByTestId('confirm-preview').click();
+    await a.page.waitForFunction(() => !!document.querySelector('[data-testid="step1-status"]'));
+    expect(await a.page.getByTestId('step1-status').innerText()).toContain('已查看成果');
+    expect(await a.page.getByTestId('step2-reason').count()).toBe(0);
+
+    // 此时步骤 ② 可点击，但步骤 ③ 保存按钮仍不可点（提示确认标准）
+    expect(await enabled(a.page, 'confirm-overall')).toBe(true);
+    expect(await enabled(a.page, 'save-button')).toBe(false);
+    expect(await a.page.getByTestId('save-reason').innerText()).toContain('请先确认“我已看过改动，结果符合我的要求”');
+
+    // 截图保存修改后的分步验收界面
+    await shot(a.page, '9-理顺验收步骤');
+
+    // 点击步骤 ② 确认：步骤 ③ 变为可点击
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    expect(await enabled(a.page, 'save-button')).toBe(true);
+
+    // 点击保存：成功保存
+    await a.page.getByTestId('save-button').click();
+    await inState(a.page, 'saved');
+  });
+
+  it('成果预览：网页提供“在浏览器中打开预览”且保存前可用；非网页产物提供“在 Finder 中显示”', async () => {
+    // 1. 网页（含 index.html）
+    const webProj = gitProject('preview-web-site', { 'index.html': '<h1>init</h1>\n' });
+    const a = await toReview(webProj, [{ do: 'write', path: 'index.html', content: '<h1>web preview</h1>\n' }]);
+    expect(await a.page.getByTestId('preview-button').innerText()).toBe('在浏览器中打开预览');
+    // 在保存前点击预览
+    await a.page.getByTestId('preview-button').click();
+    await a.page.waitForFunction(() => !!document.querySelector('[data-testid="step1-status"]'));
+    expect(await a.page.getByTestId('step1-status').innerText()).toContain('已查看成果');
+
+    // 2. 非网页产物（不含 index.html）
+    const docProj = gitProject('preview-finder-site', { 'README.md': 'init' });
+    const b = await openProjectWithFake(docProj, [{ do: 'write', path: 'README.md', content: 'new content\n' }], mk('data'));
+    await newTask(b.page, '更新说明文档');
+    await b.page.getByTestId('start-button').click();
+    await inState(b.page, 'reviewing');
+    expect(await b.page.getByTestId('preview-button').innerText()).toBe('在 Finder 中显示');
+    await shot(b.page, '10-Finder预览验收');
   });
 });
 
