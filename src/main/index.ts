@@ -155,6 +155,13 @@ async function tasks(): Promise<TaskController> {
     },
     prefs: new TaskPrefs(dataDir(), STORE_OPTS),
     storeOptions: STORE_OPTS,
+    openPreview: async ({ kind, targetPath }) => {
+      if (kind === 'web') {
+        await shell.openExternal(`file://${targetPath}`);
+      } else {
+        await shell.openPath(targetPath);
+      }
+    },
   });
   controllers.set(dir, ctl);
   return ctl;
@@ -171,6 +178,8 @@ ipcMain.handle('tasks:start', async (_e, id: unknown, ack: unknown) => (await ta
 ipcMain.handle('tasks:stop', async (_e, id: unknown) => (await tasks()).stop(id));
 // B4-2：验收、保存、放弃、撤销。参数只有任务编号、条目编号（c0 / d0）与验收版本；格式由控制器校验，伪造参数一律拒绝。
 ipcMain.handle('acceptance:get', async (_e, id: unknown) => (await tasks()).getAcceptanceView(id));
+ipcMain.handle('acceptance:openPreview', async (_e, id: unknown, version: unknown) => (await tasks()).openPreview(id, version));
+ipcMain.handle('acceptance:confirmPreview', async (_e, id: unknown, version: unknown) => (await tasks()).confirmPreview(id, version));
 ipcMain.handle('acceptance:confirmCriterion', async (_e, id: unknown, itemId: unknown, version: unknown) => (await tasks()).confirmCriterion(id, itemId, version));
 ipcMain.handle('acceptance:confirmOverall', async (_e, id: unknown, version: unknown) => (await tasks()).confirmOverall(id, version));
 ipcMain.handle('acceptance:ackDenied', async (_e, id: unknown, itemId: unknown, version: unknown) => (await tasks()).ackDenied(id, itemId, version));

@@ -274,7 +274,7 @@ describe('安全基线（防回归）', () => {
     // B3-2 修订（任务界面必需的新 API；原清单是前 8 项）：清单仍然固定，参数形态逐一列出——
     // 只允许 编号 / 布尔 / 需求文字 / 计划表单（文字、模式、布尔）/ 选项键；任何参数都不得叫 path/dir/folder/file，
     // 额外文件夹由主进程弹系统选择框取得，渲染进程不传路径。
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'getAcceptanceView', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'getAcceptanceView', 'openPreview', 'confirmPreview', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
     // B4-2 修订（只增不减）：新增 10 个方法（9 个验收操作 + 1 个无参数的 revealProject）；新增的参数形态只有
     // “编号 / 条目编号 / 验收版本（字符串）”，原有形态一个不变。
     const SHAPES = ['', 'id: string', 'consent: boolean', 'request: string', 'id: string, plan: PlanInput', 'id: string, key: string', 'id: string, ack: boolean', 'id: string, version: string', 'id: string, itemId: string, version: string'];
@@ -462,6 +462,8 @@ describe('安全基线（防回归）', () => {
       const preload = read('src/preload/index.cts');
       const NEW: Record<string, string> = {
         getAcceptanceView: 'id: string',
+        openPreview: 'id: string, version: string',
+        confirmPreview: 'id: string, version: string',
         confirmCriterion: 'id: string, itemId: string, version: string',
         confirmOverall: 'id: string, version: string',
         ackDenied: 'id: string, itemId: string, version: string',

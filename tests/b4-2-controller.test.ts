@@ -28,13 +28,13 @@ async function until<T>(f: () => Promise<T | undefined | false>, ms = 15_000): P
   }
 }
 
-async function setup(o: { script?: FakeStep[]; files?: Record<string, string>; criteria?: string[]; mode?: 'standard' | 'full_trust'; sandbox?: boolean } = {}) {
+async function setup(o: { script?: FakeStep[]; files?: Record<string, string>; criteria?: string[]; mode?: 'standard' | 'full_trust'; sandbox?: boolean; openPreview?: (t: { kind: 'web' | 'finder'; targetPath: string }) => Promise<void> } = {}) {
   const repo = await makeRepo(o.files ?? { 'index.html': '<h1>old</h1>\n' });
   const data = await tmpDir('data-');
   const make = () => {
     const ex = new FakeExecutor(o.script ?? WRITE_TITLE, { emitPermissions: true });
     if (o.sandbox) (ex as unknown as { sandboxRunner: unknown }).sandboxRunner = testSandboxRunner();
-    return new TaskController({ repo, makeExecutor: () => ex, pickDirectory: async () => null, prefs: new TaskPrefs(data) });
+    return new TaskController({ repo, makeExecutor: () => ex, pickDirectory: async () => null, prefs: new TaskPrefs(data), openPreview: o.openPreview });
   };
   const ctl = make();
   const t = await ctl.create('改标题');
@@ -385,5 +385,61 @@ describe('重启后状态一致、成果片段、启动核对', () => {
     expect(v.reconciled).toMatch(/^已核对：/);
     expect(v.state).toBe('saved');
     expect(await exists(t.worktree!.path)).toBe(false);
+  });
+
+  describe('成果预览（网页在浏览器打开，其他在访达显示）', () => {
+    it('产物含 index.html → preview.kind 为 web，按钮为“在浏览器中打开预览”；调用 openPreview 触发浏览器回调并标记完成', async () => {
+      let opened: { kind: string; targetPath: string } | null = null;
+      const { id, ctl } = await setup({
+        script: [{ do: 'write', path: 'index.html', content: '<h1>web</h1>' }],
+        files: { 'index.html': '<h1>init</h1>' },
+        openPreview: async (t) => { opened = t; },
+      });
+      const v = await ctl.getAcceptanceView(id);
+      expect(v.preview.kind).toBe('web');
+      expect(v.preview.buttonText).toBe('在浏览器中打开预览');
+      expect(v.preview.completed).toBe(false);
+
+      const r = await ctl.openPreview(id, v.version);
+      expect(r.ok).toBe(true);
+      expect(r.message).toContain('在浏览器中打开预览');
+      expect(r.view.preview.completed).toBe(true);
+      expect(opened).toMatchObject({ kind: 'web' });
+      expect((opened as { kind: string; targetPath: string } | null)?.targetPath).toMatch(/index\.html$/);
+    });
+
+    it('产物不含 index.html → preview.kind 为 finder，按钮为“在 Finder 中显示”；调用 openPreview 打开目录', async () => {
+      let opened: { kind: string; targetPath: string } | null = null;
+      const { id, ctl } = await setup({
+        script: [{ do: 'write', path: 'readme.txt', content: 'hello' }],
+        files: { 'readme.txt': 'init' },
+        openPreview: async (t) => { opened = t; },
+      });
+      const v = await ctl.getAcceptanceView(id);
+      expect(v.preview.kind).toBe('finder');
+      expect(v.preview.buttonText).toBe('在 Finder 中显示');
+      expect(v.preview.completed).toBe(false);
+
+      const r = await ctl.openPreview(id, v.version);
+      expect(r.ok).toBe(true);
+      expect(r.message).toContain('在访达中显示');
+      expect(r.view.preview.completed).toBe(true);
+      expect(opened).toMatchObject({ kind: 'finder' });
+    });
+
+    it('直接调用 confirmPreview → 同样能标记预览完成，无需触发外部打开', async () => {
+      let called = false;
+      const { id, ctl } = await setup({
+        script: [{ do: 'write', path: 'readme.txt', content: 'hello' }],
+        files: { 'readme.txt': 'init' },
+        openPreview: async () => { called = true; },
+      });
+      const v = await ctl.getAcceptanceView(id);
+      const r = await ctl.confirmPreview(id, v.version);
+      expect(r.ok).toBe(true);
+      expect(r.message).toContain('已确认查看成果');
+      expect(r.view.preview.completed).toBe(true);
+      expect(called).toBe(false);
+    });
   });
 });

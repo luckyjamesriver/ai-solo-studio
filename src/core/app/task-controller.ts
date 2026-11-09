@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { StaleRunError, StateConflictError, WriterLockedError, type OpenOptions } from '../persistence/index.js';
 import * as G from '../git/git.js';
 import { GitError } from '../git/git.js';
@@ -37,6 +39,8 @@ export interface ControllerOptions {
   prefs: TaskPrefs;
   /** 记录库的打开选项（主进程里传入：数据目录所在卷检查、租约等待） */
   storeOptions?: OpenOptions;
+  /** 外部打开预览的回调（主进程中调用 Electron shell；测试中可注入模拟） */
+  openPreview?: (target: { kind: 'web' | 'finder'; targetPath: string }) => Promise<void>;
 }
 
 const EDITABLE = ['draft', 'clarifying', 'planned', 'approved'];
@@ -227,6 +231,22 @@ export class TaskController {
     const runner = this.r();
     const busy = this.ops.has(t.id) || runner.isBusy(t.id);
     const ctx: ViewContext = { busy };
+    if (t.worktree?.path) {
+      try {
+        const indexPath = path.join(t.worktree.path, 'index.html');
+        const s = await fs.promises.stat(indexPath);
+        if (s.isFile()) {
+          ctx.previewKind = 'web';
+          ctx.previewButtonText = '在浏览器中打开预览';
+        } else {
+          ctx.previewKind = 'finder';
+          ctx.previewButtonText = '在 Finder 中显示';
+        }
+      } catch {
+        ctx.previewKind = 'finder';
+        ctx.previewButtonText = '在 Finder 中显示';
+      }
+    }
     if (!busy && !t.manualReview) {
       try {
         if (t.state === 'reviewing' && t.card) ctx.saveCheck = await runner.previewSave(t);
@@ -284,13 +304,45 @@ export class TaskController {
   }
 
   /** 确认类请求：版本必须与当前验收版本一致，且任务在验收阶段（recheck 之后旧版本全部失效） */
-  private confirmWork(version: string, apply: (t: Task) => Promise<void>) {
+  private confirmWork(version: string, apply: (t: Task) => Promise<string | void>) {
     return async (t: Task) => {
       if (version !== acceptanceVersion(t)) return { ok: false, message: MESSAGES.acceptanceInvalid };
       if (t.state !== 'reviewing') return { ok: false, message: MESSAGES.notReady };
-      await apply(t);
-      return { ok: true, message: '' };
+      const msg = await apply(t);
+      return { ok: true, message: typeof msg === 'string' ? msg : '' };
     };
+  }
+
+  async openPreview(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    const v = this.checkVersion(version);
+    return this.act(tid, this.confirmWork(v, async (t) => {
+      if (!t.worktree?.path) throw new Error('任务没有工作树。');
+      const indexPath = path.join(t.worktree.path, 'index.html');
+      let isWeb = false;
+      try {
+        const s = await fs.promises.stat(indexPath);
+        isWeb = s.isFile();
+      } catch {
+        isWeb = false;
+      }
+      const targetPath = isWeb ? indexPath : t.worktree.path;
+      const kind: 'web' | 'finder' = isWeb ? 'web' : 'finder';
+      if (this.o.openPreview) {
+        await this.o.openPreview({ kind, targetPath });
+      }
+      await this.r().confirm(t.id, { previewed: true });
+      return isWeb ? '已在浏览器中打开预览' : '已在访达中显示';
+    }));
+  }
+
+  async confirmPreview(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    const v = this.checkVersion(version);
+    return this.act(tid, this.confirmWork(v, async (t) => {
+      await this.r().confirm(t.id, { previewed: true });
+      return '已确认查看成果';
+    }));
   }
 
   async confirmCriterion(id: unknown, criterionId: unknown, version: unknown): Promise<AcceptanceActionResult> {

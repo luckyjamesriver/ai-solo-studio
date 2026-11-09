@@ -66,6 +66,12 @@ export interface UserAcceptanceView {
   diagnosticSummary: string;
   /** 验收版本：确认、保存等请求必须带上它，不一致一律拒绝 */
   version: string;
+  /** 成果预览信息（步骤 ①） */
+  preview: {
+    kind: 'web' | 'finder' | null;
+    buttonText: string;
+    completed: boolean;
+  };
 }
 
 /** view.ts 新增文案（待规划会话审定）。其余文案取自 messages.ts。 */
@@ -187,6 +193,10 @@ export interface ViewContext {
   undoCheck?: OpFail | null;
   /** 同项目还有其他已保存、仍可单独撤销的任务 */
   otherUndoableSave?: boolean;
+  /** 成果预览类型（web 或 finder） */
+  previewKind?: 'web' | 'finder' | null;
+  /** 成果预览按钮文案 */
+  previewButtonText?: string;
 }
 
 const off = (reason: string, extra: Partial<ActionState> = {}): ActionState => ({ enabled: false, reason, ...extra });
@@ -345,5 +355,10 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     reconciled: t.reconciled ? `已核对：${t.reconciled.note}` : null,
     diagnosticSummary: summary,
     version: acceptanceVersion(t),
+    preview: {
+      kind: ctx.previewKind !== undefined ? ctx.previewKind : (t.worktree?.path ? 'finder' : null),
+      buttonText: ctx.previewButtonText ?? ((ctx.previewKind ?? (t.worktree?.path ? 'finder' : null)) === 'web' ? '在浏览器中打开预览' : '在 Finder 中显示'),
+      completed: !!t.previewed,
+    },
   };
 }
