@@ -408,7 +408,7 @@ describe('重启后状态一致、成果片段、启动核对', () => {
       expect((opened as { kind: string; targetPath: string } | null)?.targetPath).toMatch(/index\.html$/);
     });
 
-    it('产物不含 index.html → preview.kind 为 finder，按钮为“在 Finder 中显示”；调用 openPreview 打开目录', async () => {
+    it('产物不含 index.html → preview.kind 为 finder，按钮为“在访达中显示”；调用 openPreview 打开目录', async () => {
       let opened: { kind: string; targetPath: string } | null = null;
       const { id, ctl } = await setup({
         script: [{ do: 'write', path: 'readme.txt', content: 'hello' }],
@@ -417,7 +417,7 @@ describe('重启后状态一致、成果片段、启动核对', () => {
       });
       const v = await ctl.getAcceptanceView(id);
       expect(v.preview.kind).toBe('finder');
-      expect(v.preview.buttonText).toBe('在 Finder 中显示');
+      expect(v.preview.buttonText).toBe('在访达中显示');
       expect(v.preview.completed).toBe(false);
 
       const r = await ctl.openPreview(id, v.version);
@@ -427,19 +427,24 @@ describe('重启后状态一致、成果片段、启动核对', () => {
       expect(opened).toMatchObject({ kind: 'finder' });
     });
 
-    it('直接调用 confirmPreview → 同样能标记预览完成，无需触发外部打开', async () => {
+    it('直接调用 skipPreview → 标记为已跳过查看并完成步骤 ①，无需触发外部打开', async () => {
       let called = false;
-      const { id, ctl } = await setup({
+      const { id, ctl, repo } = await setup({
         script: [{ do: 'write', path: 'readme.txt', content: 'hello' }],
         files: { 'readme.txt': 'init' },
         openPreview: async () => { called = true; },
       });
       const v = await ctl.getAcceptanceView(id);
-      const r = await ctl.confirmPreview(id, v.version);
+      const r = await ctl.skipPreview(id, v.version);
       expect(r.ok).toBe(true);
-      expect(r.message).toContain('已确认查看成果');
+      expect(r.message).toContain('已跳过查看成果');
       expect(r.view.preview.completed).toBe(true);
+      expect(r.view.preview.skipped).toBe(true);
       expect(called).toBe(false);
+
+      const t = await taskOf(repo, id);
+      expect(t.previewed).toBe(false);
+      expect(t.previewSkipped).toBe(true);
     });
 
     it('模拟打开失败 → previewed 仍为 false，第 ② 步仍锁定', async () => {

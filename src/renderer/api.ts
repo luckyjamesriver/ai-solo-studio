@@ -54,7 +54,7 @@ interface StudioApi {
   stopTask(id: string): Promise<TaskView>;
   getAcceptanceView(id: string): Promise<UserAcceptanceView>;
   openPreview(id: string, version: string): Promise<AcceptanceActionResult>;
-  confirmPreview(id: string, version: string): Promise<AcceptanceActionResult>;
+  skipPreview(id: string, version: string): Promise<AcceptanceActionResult>;
   confirmCriterion(id: string, itemId: string, version: string): Promise<AcceptanceActionResult>;
   confirmOverall(id: string, version: string): Promise<AcceptanceActionResult>;
   ackDenied(id: string, itemId: string, version: string): Promise<AcceptanceActionResult>;

@@ -78,6 +78,7 @@ export interface Task {
   deniedAcks: boolean[];
   criteria: CriterionState[];
   previewed: boolean;
+  previewSkipped?: boolean;
   card?: AcceptanceCard;
   /** 批准时授权的检查脚本内容摘要（package.json 的 build/test 及 pre/post 脚本）；摘要变化则授权失效 */
   checkAuth?: { digest: string; at: string };

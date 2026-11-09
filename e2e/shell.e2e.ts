@@ -58,8 +58,9 @@ const stubDialog = (app: ElectronApplication, folder: string | null) =>
   }, folder);
 const shot = async (page: Page, name: string) => {
   if (!shotDir) return;
-  fs.mkdirSync(shotDir, { recursive: true });
-  await page.screenshot({ path: path.join(shotDir, `${name}.png`) });
+  const target = path.join(shotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
 };
 const acceptDisclosure = async (page: Page) => {
   await page.getByRole('button', { name: '我了解了，同意' }).click();
@@ -429,7 +430,7 @@ describe('施工模式界面', () => {
     expect(r.badMode).toContain('无效的模式');
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'confirmPreview', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'startTask', 'stopTask', 'undoSave']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'skipPreview', 'startTask', 'stopTask', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
@@ -515,8 +516,12 @@ async function toReview(proj: string, script: unknown[], data = mk('data')) {
   return { ...a, data };
 }
 const confirmStep1 = async (page: Page) => {
-  const b = page.getByTestId('confirm-preview');
-  if (await b.isVisible()) await b.click();
+  const b = page.getByTestId('skip-preview');
+  if (await b.isVisible()) {
+    await b.click();
+    await page.getByTestId('confirm-yes').click();
+    await page.waitForFunction(() => !!document.querySelector('[data-testid="step1-status"]'));
+  }
 };
 
 async function confirmThenSave(page: Page) {
@@ -795,7 +800,7 @@ describe('验收流程可用性改进（执行者显示、分步验收与成果�
     expect(await a.page.getByTestId('save-reason').innerText()).toContain('请先确认已查看成果');
 
     // 点击完成步骤 ①：产生即时反馈，并使步骤 ② 可点击
-    await a.page.getByTestId('confirm-preview').click();
+    await a.page.getByTestId('preview-button').click();
     await a.page.waitForFunction(() => !!document.querySelector('[data-testid="step1-status"]'));
     expect(await a.page.getByTestId('step1-status').innerText()).toContain('已查看成果');
     expect(await a.page.getByTestId('step2-reason').count()).toBe(0);
@@ -818,7 +823,7 @@ describe('验收流程可用性改进（执行者显示、分步验收与成果�
     await inState(a.page, 'saved');
   });
 
-  it('成果预览：网页提供“在浏览器中打开预览”且保存前可用；非网页产物提供“在 Finder 中显示”', async () => {
+  it('成果预览：网页提供“在浏览器中打开预览”且保存前可用；非网页产物提供“在访达中显示”', async () => {
     // 1. 网页（含 index.html）
     const webProj = gitProject('preview-web-site', { 'index.html': '<h1>init</h1>\n' });
     const a = await toReview(webProj, [{ do: 'write', path: 'index.html', content: '<h1>web preview</h1>\n' }]);
@@ -834,8 +839,80 @@ describe('验收流程可用性改进（执行者显示、分步验收与成果�
     await newTask(b.page, '更新说明文档');
     await b.page.getByTestId('start-button').click();
     await inState(b.page, 'reviewing');
-    expect(await b.page.getByTestId('preview-button').innerText()).toBe('在 Finder 中显示');
+    expect(await b.page.getByTestId('preview-button').innerText()).toBe('在访达中显示');
     await shot(b.page, '10-Finder预览验收');
+  });
+
+  it('跳过查看成果：点击“不查看成果，直接验收”弹确认框，确认后解锁第 ② 步并明确显示“已跳过查看”', async () => {
+    const proj = gitProject('skip-preview-site', { 'index.html': '<h1>skip</h1>\n' });
+    const a = await toReview(proj, WRITE);
+
+    // 未完成步骤 ① 前，第 ② 步锁定
+    expect(await enabled(a.page, 'confirm-overall')).toBe(false);
+    expect(await a.page.getByTestId('step2-reason').innerText()).toBe('请先完成「① 查看成果」，才能确认验收标准。');
+    expect(await a.page.getByTestId('skip-preview').isVisible()).toBe(true);
+
+    // 点击“不查看成果，直接验收”，弹确认框
+    await a.page.getByTestId('skip-preview').click();
+    await a.page.getByTestId('confirm-panel').waitFor();
+    expect(await a.page.getByTestId('confirm-text').innerText()).toBe('你还没有查看 AI 做出的成果，确定直接进入验收吗？');
+
+    // 截图保存确认框
+    await shot(a.page, 'acceptance-fix/skip-confirm');
+
+    // 点击取消：确认框消失，第 ② 步保持锁定
+    await a.page.getByTestId('confirm-no').click();
+    expect(await a.page.getByTestId('confirm-panel').count()).toBe(0);
+    expect(await enabled(a.page, 'confirm-overall')).toBe(false);
+
+    // 再次点击并确认跳过
+    await a.page.getByTestId('skip-preview').click();
+    await a.page.getByTestId('confirm-yes').click();
+    await a.page.waitForFunction(() => !!document.querySelector('[data-testid="step1-status"]'));
+
+    // 步骤 ① 明确显示“已跳过查看”（不显示为“已查看”），步骤 ② 解锁
+    expect(await a.page.getByTestId('step1-status').innerText()).toBe('已跳过查看');
+    expect(await a.page.getByTestId('preview-done').innerText()).toBe('已跳过查看');
+    expect(await enabled(a.page, 'confirm-overall')).toBe(true);
+    expect(await a.page.getByTestId('step2-reason').count()).toBe(0);
+
+    // 截图保存跳过后界面
+    await shot(a.page, 'acceptance-fix/skipped-step1');
+
+    // 能正常推进到步骤 ② 与 ③ 并保存
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    expect(await enabled(a.page, 'save-button')).toBe(true);
+    await a.page.getByTestId('save-button').click();
+    await inState(a.page, 'saved');
+  });
+
+  it('预览打开失败：不标记为已查看，第 ② 步保持锁定，展示友好重试或跳过提示', async () => {
+    const proj = gitProject('preview-fail-site', { 'index.html': '<h1>fail</h1>\n' });
+    const a = await toReview(proj, WRITE);
+
+    // 模拟预览打开失败
+    await a.app.evaluate(({ shell }) => {
+      shell.openExternal = async () => {
+        throw new Error('simulated browser launch failure');
+      };
+    });
+
+    // 点击打开预览
+    await a.page.getByTestId('preview-button').click();
+
+    // 收到失败提示
+    await a.page.getByTestId('action-message').waitFor();
+    expect(await a.page.getByTestId('action-message').innerText()).toBe('无法打开成果，请重试，或选择不查看直接验收');
+
+    // 第 ① 步未标记为已查看，第 ② 步保持锁定
+    expect(await a.page.getByTestId('step1-status').count()).toBe(0);
+    expect(await a.page.getByTestId('preview-button').isVisible()).toBe(true);
+    expect(await enabled(a.page, 'confirm-overall')).toBe(false);
+    expect(await a.page.getByTestId('step2-reason').innerText()).toBe('请先完成「① 查看成果」，才能确认验收标准。');
+
+    // 截图保存打开失败提示
+    await shot(a.page, 'acceptance-fix/open-failure');
   });
 });
 

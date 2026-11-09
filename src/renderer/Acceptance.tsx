@@ -50,7 +50,7 @@ function Preview({ p }: { p: ChangePreview }) {
   );
 }
 
-type Dialog = 'discard' | 'undo' | null;
+type Dialog = 'discard' | 'undo' | 'skipPreview' | null;
 
 /**
  * 验收与结果：只使用主进程给的用户验收视图（UserAcceptanceView）。
@@ -170,12 +170,15 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
               <section data-testid="step-1">
                 <div className="head">
                   <h3>① 查看成果</h3>
-                  {step1Completed && <span className="badge-checked" data-testid="step1-status">✓ 已查看成果</span>}
+                  {step1Completed && (
+                    <span className="badge-checked" data-testid="step1-status">
+                      {v.preview?.skipped ? '已跳过查看' : '✓ 已查看成果'}
+                    </span>
+                  )}
                 </div>
-                <div className="row" style={{ marginTop: '0.25rem', marginBottom: '0.75rem' }}>
-                  {v.preview?.kind && (
+                <div className="row" style={{ marginTop: '0.25rem', marginBottom: '0.75rem', flexDirection: 'column', alignItems: 'flex-start', gap: '0.35rem' }}>
+                  {v.preview?.kind && !v.preview?.completed && (
                     <button
-                      className="secondary"
                       data-testid="preview-button"
                       disabled={pending}
                       onClick={() => run((s) => s.openPreview(v.taskId, v.version))}
@@ -184,16 +187,20 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                     </button>
                   )}
                   {!v.preview?.completed ? (
-                    <button
-                      className="secondary"
-                      data-testid="confirm-preview"
-                      disabled={pending}
-                      onClick={() => run((s) => s.confirmPreview(v.taskId, v.version))}
-                    >
-                      确认已查看成果
-                    </button>
+                    <div>
+                      <button
+                        className="link"
+                        data-testid="skip-preview"
+                        disabled={pending}
+                        onClick={() => setDialog('skipPreview')}
+                      >
+                        不查看成果，直接验收
+                      </button>
+                    </div>
                   ) : (
-                    <span className="muted" data-testid="preview-done">已完成成果查看</span>
+                    <span className="muted" data-testid="preview-done">
+                      {v.preview?.skipped ? '已跳过查看' : '已完成成果查看'}
+                    </span>
                   )}
                 </div>
                 {v.changes.length > 0 && (
@@ -387,10 +394,29 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
 
           {dialog && (
             <div className="confirm-panel" role="alertdialog" aria-modal="true" data-testid="confirm-panel" data-kind={dialog}>
-              <p data-testid="confirm-text">{dialog === 'discard' ? v.confirmTexts.discard : v.confirmTexts.undo}</p>
+              <p data-testid="confirm-text">
+                {dialog === 'discard'
+                  ? v.confirmTexts.discard
+                  : dialog === 'undo'
+                    ? v.confirmTexts.undo
+                    : '你还没有查看 AI 做出的成果，确定直接进入验收吗？'}
+              </p>
               <div className="row">
-                <button data-testid="confirm-yes" onClick={() => run((s) => (dialog === 'discard' ? s.discardTask(v.taskId) : s.undoSave(v.taskId)))}>{dialog === 'discard' ? COPY.discardYes : COPY.undoYes}</button>
-                <button className="secondary" data-testid="confirm-no" onClick={() => setDialog(null)}>{COPY.cancel}</button>
+                <button
+                  data-testid="confirm-yes"
+                  onClick={() =>
+                    run((s) => {
+                      if (dialog === 'discard') return s.discardTask(v.taskId);
+                      if (dialog === 'undo') return s.undoSave(v.taskId);
+                      return s.skipPreview(v.taskId, v.version);
+                    })
+                  }
+                >
+                  {dialog === 'discard' ? COPY.discardYes : dialog === 'undo' ? COPY.undoYes : '确定直接进入验收'}
+                </button>
+                <button className="secondary" data-testid="confirm-no" onClick={() => setDialog(null)}>
+                  {COPY.cancel}
+                </button>
               </div>
             </div>
           )}

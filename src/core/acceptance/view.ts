@@ -71,6 +71,7 @@ export interface UserAcceptanceView {
     kind: 'web' | 'finder' | null;
     buttonText: string;
     completed: boolean;
+    skipped?: boolean;
   };
 }
 
@@ -357,8 +358,9 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     version: acceptanceVersion(t),
     preview: {
       kind: ctx.previewKind !== undefined ? ctx.previewKind : (t.worktree?.path ? 'finder' : null),
-      buttonText: ctx.previewButtonText ?? ((ctx.previewKind ?? (t.worktree?.path ? 'finder' : null)) === 'web' ? '在浏览器中打开预览' : '在 Finder 中显示'),
-      completed: !!t.previewed,
+      buttonText: ctx.previewButtonText ?? ((ctx.previewKind ?? (t.worktree?.path ? 'finder' : null)) === 'web' ? '在浏览器中打开预览' : '在访达中显示'),
+      completed: !!t.previewed || !!t.previewSkipped,
+      skipped: !t.previewed && !!t.previewSkipped,
     },
   };
 }

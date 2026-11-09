@@ -240,11 +240,11 @@ export class TaskController {
           ctx.previewButtonText = '在浏览器中打开预览';
         } else {
           ctx.previewKind = 'finder';
-          ctx.previewButtonText = '在 Finder 中显示';
+          ctx.previewButtonText = '在访达中显示';
         }
       } catch {
         ctx.previewKind = 'finder';
-        ctx.previewButtonText = '在 Finder 中显示';
+        ctx.previewButtonText = '在访达中显示';
       }
     }
     if (!busy && !t.manualReview) {
@@ -343,12 +343,12 @@ export class TaskController {
     });
   }
 
-  async confirmPreview(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
+  async skipPreview(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
     const tid = this.checkArg(TASK_ID, id);
     const v = this.checkVersion(version);
     return this.act(tid, this.confirmWork(v, async (t) => {
-      await this.r().confirm(t.id, { previewed: true });
-      return '已确认查看成果';
+      await this.r().confirm(t.id, { previewSkipped: true });
+      return '已跳过查看成果';
     }));
   }
 

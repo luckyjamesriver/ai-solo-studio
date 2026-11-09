@@ -23,7 +23,7 @@ const api = {
   // B4-2：验收、保存、放弃、撤销。参数只有任务编号、条目编号（c0 / d0）与验收版本（字符串）；没有路径、分支或 Git 参数。
   getAcceptanceView: (id: string) => ipcRenderer.invoke('acceptance:get', id),
   openPreview: (id: string, version: string) => ipcRenderer.invoke('acceptance:openPreview', id, version),
-  confirmPreview: (id: string, version: string) => ipcRenderer.invoke('acceptance:confirmPreview', id, version),
+  skipPreview: (id: string, version: string) => ipcRenderer.invoke('acceptance:skipPreview', id, version),
   confirmCriterion: (id: string, itemId: string, version: string) => ipcRenderer.invoke('acceptance:confirmCriterion', id, itemId, version),
   confirmOverall: (id: string, version: string) => ipcRenderer.invoke('acceptance:confirmOverall', id, version),
   ackDenied: (id: string, itemId: string, version: string) => ipcRenderer.invoke('acceptance:ackDenied', id, itemId, version),

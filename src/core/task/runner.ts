@@ -140,6 +140,7 @@ export class TaskRunner extends EventEmitter {
       denied: [],
       deniedAcks: [],
       previewed: false,
+      previewSkipped: false,
       timeline: [],
       createdAt: now,
       updatedAt: now,
@@ -408,6 +409,7 @@ export class TaskRunner extends EventEmitter {
       if (!['reviewing', 'save_failed_unmerged'].includes(t.state) || !t.worktree) throw new Error('任务不在验收阶段。');
       t.criteria.forEach((c) => delete c.decision);
       t.previewed = false;
+      t.previewSkipped = false;
       t.overallConfirmed = false;
       t.deniedAcks = t.denied.map(() => false);
       await this.buildEvidence(t);
@@ -419,7 +421,7 @@ export class TaskRunner extends EventEmitter {
   }
 
   /** 用户对验收标准逐条确认/否决，或标记已试用。只改用户输入，不改自动检查结果。 */
-  async confirm(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean; deniedAck?: number; overall?: boolean }) {
+  async confirm(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean; previewSkipped?: boolean; deniedAck?: number; overall?: boolean }) {
     if (!this.enter(id)) throw new Error(MESSAGES.busy); // 与保存/放弃/撤销/重新检查互斥，避免同时改同一份记录
     try {
       return await this.confirmInner(id, update);
@@ -428,7 +430,7 @@ export class TaskRunner extends EventEmitter {
     }
   }
 
-  private async confirmInner(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean; deniedAck?: number; overall?: boolean }) {
+  private async confirmInner(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean; previewSkipped?: boolean; deniedAck?: number; overall?: boolean }) {
     const t = await this.load(id);
     if (t.state !== 'reviewing' || !t.card) throw new Error('任务不在验收阶段。');
     if (t.card.items.some((i) => i.key === 'drivers')) throw new Error(MESSAGES.externalDriver);
@@ -441,7 +443,14 @@ export class TaskRunner extends EventEmitter {
       if (!c || !update.decision) throw new Error('无效的验收标准。');
       c.decision = update.decision;
     }
-    if (update.previewed !== undefined) t.previewed = update.previewed;
+    if (update.previewed !== undefined) {
+      t.previewed = update.previewed;
+      if (update.previewed) t.previewSkipped = false;
+    }
+    if (update.previewSkipped !== undefined) {
+      t.previewSkipped = update.previewSkipped;
+      if (update.previewSkipped) t.previewed = false;
+    }
     if (update.deniedAck !== undefined) {
       if (!t.denied[update.deniedAck]) throw new Error('无效的被拒绝操作。');
       t.deniedAcks[update.deniedAck] = true;
@@ -480,6 +489,7 @@ export class TaskRunner extends EventEmitter {
     const t = await this.load(id);
     t.criteria.forEach((c) => delete c.decision);
     t.previewed = false;
+    t.previewSkipped = false;
     t.overallConfirmed = false;
     delete t.acceptedTree;
     delete t.checksVoid;
