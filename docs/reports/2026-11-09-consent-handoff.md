@@ -308,6 +308,15 @@
 - **单元测试全量结果**：`npm test` 23 passed, 11 skipped (34 test files), 504 passed, 37 skipped (541 tests), 0 failed。
 - **端到端测试全量结果**：`npm run test:e2e` 1 passed (1 test file), 28 passed, 0 failed（80.64s，包含新增的确定性并发与放弃刷新测试）。
 
+#### 5. GitHub Actions CI 最终验证（一次性全部通过，0 重跑）
+- **CI 运行链接**：[42620659364](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42620659364)
+- **提交版本**：`de9acfc`（删除 Tasks 合并保护并新增确定性并发 E2E 测试）
+- **运行尝试（Run Attempt）**：**Attempt 1（单次一次性全绿通过，0 重跑）**
+- **各 Runner 耗时与状态**：
+  - **`test (ubuntu-latest)`**：**Success**（37s，typecheck、test、build 全部通过）
+  - **`test (macos-latest)`**：**Success**（3m22s，typecheck、test、build、Electron 28 项 e2e 全部一次通过）
+
+
 
 
 
