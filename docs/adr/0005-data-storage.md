@@ -73,16 +73,16 @@
 - Repository 接口与文件版实现（`RecordStore`）：每次提交带 runId、attemptId、expectedRevision，做 CAS；冲突、过期运行、重复提交都显式返回并写入日志；`schema_version` 与 `revision` 分开；zod 校验记录的关键字段（其余字段原样保留）。
 - 只追加的 JSONL 事件日志（`.studio/events.jsonl`，补丁式记录，汇总可由它重建）与启动对账；运行编号换新（fence）后旧运行的回传一律拒绝；施工中被中断的任务在重启后按失败收尾。
 - 唯一写入者：数据目录租约（proper-lockfile）+ 进程内串行 + 主进程单实例锁；写文件用 write-file-atomic；数据目录必须在本地 APFS（`df` + `mount` 判断，探测接口可注入）。
-- 已改走记录库：任务记录、最近项目、外发告知确认、任务偏好、诊断记录（日志事件）、`.git/info/exclude` 的追加；旧文件第一次打开时迁移（旧文件改名为 `.migrated` 保留）。
+- 已改走记录库：任务记录、最近项目、外发告知确认、任务偏好、诊断记录（日志事件）、`.git/info/exclude` 的追加；`consent.json`（`ConsentStore`，位于 `.studio/records/consent/`）与交接任务清单（`ManifestStore`，位于 `.studio/records/manifests/`）也已完全接入统一记录库，支持 CAS 校验、`.studio/events.jsonl` 事件日志与启动对账恢复；旧文件第一次打开时自动迁移（旧文件改名为 `.migrated` 保留）。
 - 依赖边界检查（tests/security.test.ts “ADR 0006：持久化依赖边界”）：src 里只有 persistence/ 能直接写文件（豁免只有模拟执行体写任务副本），记录库只能被指定模块引用，UI 与 Agent 不得引用。
 
 与本文原定内容的差别（如实记录）：
-1. **思考线程（`.studio/threads/`）、交接清单与导入报告（`.studio/tasks/`）、`consent.json`、方案文档**没有改成记录库提交（没有 CAS 与事件日志），它们的写入统一经 persistence/files 里的原子写/不覆盖写原语（write-file-atomic）；它们是单写入者的命令行流程产物或一次性写入。后续任务可把线程记录也迁入记录库。任务记录搬到了 `.studio/records/tasks/`，交接清单仍在 `.studio/tasks/`，所以 `list` 不会再把清单当成任务。
+1. **思考线程（`.studio/threads/`）、方案文档、导入报告**没有改成记录库提交（没有 CAS 与事件日志），它们的写入统一经 persistence/files 里的原子写/不覆盖写原语（write-file-atomic）；它们是单写入者的命令行流程产物或一次性写入。`consent.json` 与交接清单已接入记录库（分别位于 `.studio/records/consent/` 与 `.studio/records/manifests/`），任务记录位于 `.studio/records/tasks/`，均在 `.studio/records/` 目录下通过 CAS、事件日志与启动对账统一管理。后续任务可把线程记录与方案文档也迁入记录库。
 2. 项目级保存互斥目前是“每个项目一个控制器、一个编排器”里的任务级互斥（同一任务的保存/放弃/撤销互斥）；跨任务的项目级保存锁没有单独实现——并行任务各自保存时由 Git 合并冲突检测兜底（场景 9 已验证）。
 3. 事件日志没有轮转或压缩。
 4. 引入时把项目 `engines` 收紧为 `>=22.22.2 <23`（write-file-atomic 的要求）；.nvmrc 仍是 `22`（解析为最新 22.x，满足要求）。Electron 45 内置 Node 的版本未确认。
 
 ### 待办（2026-11-09 记录）
-- **下一个任务**：`consent.json` 与交接清单（`.studio/tasks/`）接入统一写入服务（记录库提交，带 CAS 与事件日志），不再只走原子写原语。
+- **已完成**：`consent.json` 与交接清单（`.studio/tasks/` -> `.studio/records/manifests/`）接入统一写入服务（记录库提交，带 CAS 与事件日志，支持崩溃重建与对账），已通过冲突、运行隔离、崩溃恢复及全量测试。
 - **后续工作**：思考记录（`.studio/threads/`）、方案文档接入统一写入服务；事件日志轮转/压缩。
 - **UI 打磨阶段**：impeccable 提示的 side-tab 边框问题留到 UI 打磨阶段处理，本次不修改样式。
