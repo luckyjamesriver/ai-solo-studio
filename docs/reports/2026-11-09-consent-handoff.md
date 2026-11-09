@@ -273,5 +273,14 @@
     - `npx vitest run -c vitest.e2e.config.ts -t "验收失效"`：4.4s 一次通过
   - 本地全量运行 27 项 Electron E2E 测试（`npm run test:e2e`）：全部一次通过（81.99s，0 失败）。
 
+#### 4. GitHub Actions CI 最终验证（一次性全部通过，0 重跑）
+- **CI 运行链接**：[42617720060](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42617720060)
+- **提交版本**：`da5e6d5`（包含 `src/renderer/Tasks.tsx` 的异步乱序竞态根本修复）
+- **运行尝试（Run Attempt）**：**Attempt 1（单次一次性全绿通过，没有任何重跑）**
+- **各 Runner 耗时与状态**：
+  - **`test (ubuntu-latest)`**：**Success**（37s，typecheck、test、build 全部通过）
+  - **`test (macos-latest)`**：**Success**（3m34s，typecheck、test、build、Electron 27 项 e2e 全部一次通过）
+
+
 
 
