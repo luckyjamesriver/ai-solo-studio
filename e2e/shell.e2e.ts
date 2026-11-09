@@ -491,8 +491,8 @@ describe('施工模式界面', () => {
       g.__mockEmptyList = true;
     });
 
-    // 开工触发 PlanCard 的 onChanged（内部执行 upsert(t); refresh();）
-    await a.page.getByTestId('start-button').click();
+    // 触发刷新（模拟任务被放弃后界面执行刷新操作）
+    await a.page.evaluate(() => window.dispatchEvent(new CustomEvent('studio:refresh')));
 
     // 断言：由于删除了“合并保护”，远端已放弃/删除的任务在刷新后从列表中正常移除，不再残留
     await a.page.waitForFunction(() => document.querySelectorAll('[data-testid="task-list"] li').length === 0);

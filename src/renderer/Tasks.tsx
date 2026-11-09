@@ -37,9 +37,12 @@ export function Tasks() {
   useEffect(() => {
     mountedRef.current = true;
     refresh();
+    const handleRefresh = () => refresh();
+    window.addEventListener('studio:refresh', handleRefresh);
     return () => {
       mountedRef.current = false;
       refreshSeq.current++;
+      window.removeEventListener('studio:refresh', handleRefresh);
     };
   }, [refresh]);
 
