@@ -544,7 +544,7 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     const a = await toReview(proj, WRITE);
     fs.writeFileSync(path.join(proj, 'notes.txt'), 'mine');
     await a.page.getByTestId('confirm-overall').click();
-    await a.page.getByTestId('save-reason').waitFor();
+    await a.page.getByTestId('save-files').waitFor();
     const r = await a.page.evaluate(async () => {
       const s = (window as unknown as { studio: { listTasks: () => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (id: string) => Promise<{ actions: { save: { enabled: boolean; files?: string[] } } }> } }).studio;
       const t = (await s.listTasks()).tasks[0]!;
