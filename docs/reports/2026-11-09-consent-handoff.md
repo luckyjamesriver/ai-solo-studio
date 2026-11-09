@@ -212,4 +212,10 @@
      - 测试调用处（`tests/cli.test.ts`、`tests/flow.test.ts`、`tests/persistence.test.ts`）全部显式传入 `expectedRevision`。
   4. **补齐拒绝隐式提交测试**：
      - 在 `tests/persistence.test.ts` 中分别为 `ManifestStore` 和 `ConsentStore` 增加单测：`未传 expectedRevision 时提交直接抛错（禁止隐式自动读取当前修订号）`，断言不传修订号时运行时立即拒绝。
+  5. **验证结果与 CI 状态**：
+     - 本地全量测试：`npm test` 23 passed, 11 skipped, 0 failed（504 passed, 37 skipped, 0 failed）。
+     - GitHub CI 运行：[42613208400](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42613208400)
+       - `test (ubuntu-latest)`: **Success**（45s，typecheck、test、build 全部通过）
+       - `test (macos-latest)`: **Success**（3m28s，typecheck、test、build、e2e 全部通过）
+
 
