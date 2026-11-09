@@ -324,6 +324,15 @@
     - 绝不通过重跑或加长超时掩盖；
     - 在 `Tasks.tsx` 中注册 `studio:refresh` 事件，在 `e2e/shell.e2e.ts` 中通过派发事件触发确定性刷新，彻底解耦测试与 `start-button` 背后复杂的双重执行体生命周期，消除由于执行体并发介入引入的偶发竞态。
 
+#### 6. GitHub Actions CI 最终验证（一次性全部通过，0 重跑）
+- **CI 运行链接**：[42622517573](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42622517573)
+- **提交版本**：`631d152`（解耦刷新与执行体，派发 studio:refresh 消除偶发竞态）
+- **运行尝试（Run Attempt）**：**Attempt 1（单次一次性全绿通过，0 重跑）**
+- **各 Runner 耗时与状态**：
+  - **`test (ubuntu-latest)`**：**Success**（45s，typecheck、test、build 全部通过）
+  - **`test (macos-latest)`**：**Success**（3m58s，typecheck、test、build、Electron 28 项 e2e 全部一次通过）
+
+
 
 
 
