@@ -11,6 +11,7 @@ export function RunView({ task, onStop }: { task: TaskView; onStop: () => void }
       <div className="head">
         <strong>{task.goal}</strong>
         {task.fullTrust && <span className="badge-trust" data-testid="fulltrust-badge">{COPY.fullTrustBadge}</span>}
+        <span className="muted" data-testid="executor-info">执行者：{task.executorText}</span>
       </div>
       <p data-testid="run-state">当前状态：{task.stateText}</p>
       {task.permissions ? (

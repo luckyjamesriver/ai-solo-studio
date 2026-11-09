@@ -188,6 +188,26 @@ describe('任务控制器：完全信任必须确认（界面状态 + 核心门�
     expect(done.permissions?.lines.join('\n')).toMatch(/联网：不可以/);
   });
 
+  it('显示执行者：任务记录与视图能反映执行体报告的名称与模型（动态读取）', async () => {
+    const repo = await makeRepo();
+    const data = await tmpDir('data-');
+    const prefs = new TaskPrefs(data);
+    const executor = new FakeExecutor(
+      [{ do: 'say', text: '工作中' }, { do: 'write', path: 'index.html', content: 'test' }],
+      { emitPermissions: true, model: 'gpt-5-test', displayName: 'Codex' }
+    );
+    const ctl = new TaskController({ repo, makeExecutor: () => executor, pickDirectory: async () => null, prefs });
+    const v = await ctl.create('做测试');
+    expect(v.executorName).toBe('Codex');
+    expect(v.executorText).toBe('Codex');
+    await ctl.savePlan(v.id, form());
+    await ctl.start(v.id, false);
+    const done = await finished(ctl, v.id);
+    expect(done.executorName).toBe('Codex');
+    expect(done.model).toBe('gpt-5-test');
+    expect(done.executorText).toBe('Codex · gpt-5-test');
+  });
+
   it('开工后不能再改计划；不存在的任务编号被拒绝；表单被校验', async () => {
     const { ctl } = await controller([]);
     const v = await ctl.create('x');

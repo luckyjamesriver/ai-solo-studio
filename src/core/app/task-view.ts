@@ -60,6 +60,12 @@ export interface TaskView {
   reconciled: string | null;
   result: ResultView | null;
   diagnostics: string[];
+  /** 执行者名称（来自实际运行记录或任务配置，如 Codex / 模拟执行体） */
+  executorName: string;
+  /** 执行模型（来自实际运行记录，如 gpt-5 / gpt-4o） */
+  model?: string;
+  /** 执行者与模型完整文案（如 "Codex · gpt-5" 或 "Codex"） */
+  executorText: string;
 }
 
 export const STATE_TEXT: Record<TaskState, string> = {
@@ -164,6 +170,12 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
   }
 
   const extraDirs = (caps?.extraWritableDirs ?? []).map((p) => ({ key: extraDirKey(p), path: p }));
+  const executorName = task.executorName ?? (task.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex');
+  const modelFromTimeline = task.timeline.find((e) => e.kind === 'isolation' && e.text.includes('模型='))
+    ?.text.match(/模型=([^，；\s]+)/)?.[1];
+  const model = task.model ?? (modelFromTimeline && modelFromTimeline !== '未知' ? modelFromTimeline : undefined);
+  const executorText = model ? `${executorName} · ${model}` : executorName;
+
   return {
     id: task.id,
     request: task.request,
@@ -183,6 +195,9 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     running: opts.running,
     reconciled: task.reconciled ? `已核对：${task.reconciled.note}` : null,
     result,
+    executorName,
+    model,
+    executorText,
     // 诊断记录：时间线的文字（含应用自己的说明），经已知噪音过滤；工具事件只留概括，不含命令
     diagnostics: task.timeline
       .filter((e) => e.kind !== 'tool' && e.kind !== 'isolation' && e.kind !== 'state')

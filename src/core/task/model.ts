@@ -68,6 +68,8 @@ export interface Task {
   state: TaskState;
   plan?: Plan;
   executorId?: string;
+  executorName?: string;
+  model?: string;
   worktree?: Worktree;
   exit?: ExitOutcome;
   /** AI 请求过、但被拒绝而没有执行的操作 */

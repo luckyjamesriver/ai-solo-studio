@@ -20,10 +20,12 @@ export type FakeStep =
 
 export class FakeExecutor implements Executor {
   readonly id = 'fake';
-  readonly displayName = '模拟执行体（测试用）';
+  displayName = '模拟执行体（测试用）';
   readonly capabilities = { permissionPrompts: true, resumeAfterStop: false };
   /** emitPermissions：像真实适配器一样，开工后先报告“实际生效的权限”（模拟值），供界面显示 */
-  constructor(private readonly script: FakeStep[] | ((prompt: string) => FakeStep[]), private readonly options: { emitPermissions?: boolean } = {}) {}
+  constructor(private readonly script: FakeStep[] | ((prompt: string) => FakeStep[]), private readonly options: { emitPermissions?: boolean; model?: string; displayName?: string } = {}) {
+    if (options.displayName) this.displayName = options.displayName;
+  }
 
   async detect() {
     return { installed: true, loggedIn: 'yes' as const, version: 'fake' };
@@ -70,7 +72,7 @@ export class FakeExecutor implements Executor {
       const permissions = simulatedPermissions(resolveCapabilities(opts.capabilities), opts.cwd);
       ch.push({
         type: 'isolation',
-        info: { model: 'fake', instructionSources: [], approvalPolicy: permissions.approvalPolicy, sandbox: 'simulated', permissions, grantedMcp: [], warnings: [] },
+        info: { model: this.options.model ?? 'fake', instructionSources: [], approvalPolicy: permissions.approvalPolicy, sandbox: 'simulated', permissions, grantedMcp: [], warnings: [] },
       });
     }
 

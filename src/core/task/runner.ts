@@ -134,6 +134,8 @@ export class TaskRunner extends EventEmitter {
       id: TaskStore.newId(),
       request,
       state: 'draft',
+      executorId: this.opts.executor.id,
+      executorName: this.opts.executor.displayName,
       criteria: [],
       denied: [],
       deniedAcks: [],
@@ -226,6 +228,7 @@ export class TaskRunner extends EventEmitter {
       if (!r.ok) throw new Error(`不能让 AI 修改“${d}”：${r.reason}`);
     }
     t.executorId = this.opts.executor.id;
+    t.executorName = this.opts.executor.displayName;
     // 报告绑定 Git 状态：记录开始时的主线 HEAD、工作树路径与其 HEAD
     t.gitStart = {
       mainHeadAtStart: await G.headSha(this.opts.repo),
@@ -267,6 +270,7 @@ export class TaskRunner extends EventEmitter {
       else if (ev.type === 'isolation') {
         if (ev.info.permissions) t.effectivePermissions = ev.info.permissions; // 以启动后核验得到的实际生效权限为准
         t.isolationWarnings = [...(t.isolationWarnings ?? []), ...ev.info.warnings];
+        if (ev.info.model) t.model = ev.info.model;
         this.log(t, 'isolation', `隔离已核验：审批=${ev.info.approvalPolicy}，沙箱=${ev.info.sandbox}，模型=${ev.info.model ?? '未知'}，授予的 MCP=${ev.info.grantedMcp.join('、') || '无'}，指令来源=${ev.info.instructionSources.join('、') || '无'}${ev.info.permissions ? `；权限：${ev.info.permissions.summary}` : ''}${ev.info.warnings.length ? `；警告：${ev.info.warnings.join('；')}` : ''}`);
       }
       else if (ev.type === 'tool') this.log(t, 'tool', `${ev.name}: ${ev.summary}`);

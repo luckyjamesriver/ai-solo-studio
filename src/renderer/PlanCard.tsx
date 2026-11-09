@@ -70,7 +70,10 @@ export function PlanCard({ task, preferredMode, onChanged }: { task: TaskView; p
 
   return (
     <div className="plan" data-testid="plan-card">
-      <h3>计划</h3>
+      <div className="head">
+        <h3>计划</h3>
+        <span className="muted" data-testid="executor-info">执行者：{task.executorText}</span>
+      </div>
       <label>要做什么<textarea data-testid="goal" value={goal} onChange={(e) => setGoal(e.target.value)} rows={2} /></label>
       <label>验收标准（每行一条，可留空）<textarea data-testid="criteria" value={criteria} onChange={(e) => setCriteria(e.target.value)} rows={2} /></label>
 
