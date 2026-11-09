@@ -4,6 +4,7 @@ import readline from 'node:readline/promises';
 import { git } from '../../git/git.js';
 import { ConsentStore, FlowEngine, BUDGET_NOTE, gitignoreHasStudio, loadRequiredContext, type FlowOutcome, type FlowUI } from '../flow/index.js';
 import { exportTask, importReport, reviewImportedReport, saveImportRecord, type TaskManifest } from '../handoff/index.js';
+import { ManifestStore } from '../../persistence/manifest.js';
 import { parseArgs, USAGE } from './args.js';
 import { defaultRegistry, resolveThinkers, ThinkerSelectionError, type ThinkerRegistry } from './presets.js';
 import { nonInteractiveUI, ttyUI, type IO } from './ui.js';
@@ -149,7 +150,11 @@ async function doImport(projectRoot: string, args: ReturnType<typeof parseArgs>,
   }
 
   // 已绑定：可调用规划者审查一次，结果交用户
-  const manifest = JSON.parse(await fs.readFile(path.join(projectRoot, '.studio', 'tasks', `${args.task}.json`), 'utf8')) as TaskManifest;
+  const manifest = await new ManifestStore(projectRoot).get(args.task);
+  if (!manifest) {
+    say(`找不到任务清单：${args.task}`);
+    return EXIT.error;
+  }
   const picked = await resolveThinkers(registry, { ...(args.planner ? { planner: args.planner } : {}), ...(args.reviewer ? { reviewer: args.reviewer } : {}), single: true });
   const consent = new ConsentStore(projectRoot);
   if (!(await consent.has(picked.planner.service))) {

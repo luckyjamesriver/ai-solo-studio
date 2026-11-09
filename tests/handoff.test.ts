@@ -31,17 +31,18 @@ describe('导出', () => {
     expect(text).not.toContain('未经独立评审');
     expect(await read(path.join(exportDir, 'next-task.md'))).toBe('任务编号：OLD-1\n旧任务\n');
     expect(r.currentUpdated).toBe(false);
-    const m = JSON.parse(await read(r.manifestFile)) as TaskManifest;
+    const raw = JSON.parse(await read(r.manifestFile));
+    const m = (raw.data ?? raw) as TaskManifest;
     const head = (await git(root, ['rev-parse', 'HEAD'])).trim();
     expect(m).toMatchObject({ taskId: 'M9-X1', threadId: 'T-test', startHead: head, branch: 'main', plan: { path: plan.path, sha256: plan.sha256, artifactVersion: 1 }, singleThinker: false });
     expect(m.repoRoot).toBe(await fs.realpath(root));
     expect(m.worktreePath).toBe(await fs.realpath(root));
     expect(m.taskFile.path).toBe(r.taskFile);
     expect(m.exportedAt).toMatch(/^\d{4}-\d\d-\d\dT/);
-    expect(r.manifestFile).toBe(path.join(root, '.studio', 'tasks', 'M9-X1.json'));
+    expect(r.manifestFile).toBe(path.join(root, '.studio', 'records', 'manifests', 'M9-X1.json'));
     // 原子写入：没有残留临时文件
     expect((await fs.readdir(exportDir)).filter((f) => f.endsWith('.tmp'))).toEqual([]);
-    expect((await fs.readdir(path.join(root, '.studio', 'tasks'))).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    expect((await fs.readdir(path.join(root, '.studio', 'records', 'manifests'))).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
   it('单思考者时任务文件标注“未经独立评审”', async () => {
@@ -67,6 +68,7 @@ describe('导出', () => {
     const { exportDir: d3, base: b3, root: r3 } = await setup();
     await fs.writeFile(path.join(d3, 'M9-X1-task.md'), 'x');
     await expect(exportTask(b3)).rejects.toThrow(/任务文件已存在/);
+    expect(await exists(path.join(r3, '.studio', 'records', 'manifests', 'M9-X1.json'))).toBe(false);
     expect(await exists(path.join(r3, '.studio', 'tasks', 'M9-X1.json'))).toBe(false);
     void root;
   });

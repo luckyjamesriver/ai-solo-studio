@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git, isAncestor } from '../../git/git.js';
+import { ManifestStore } from '../../persistence/manifest.js';
 import { atomicWrite } from '../flow/store.js';
 import type { Thinker, ThinkResult } from '../types.js';
 import type { TaskManifest } from './export.js';
@@ -81,11 +82,10 @@ export async function importReport(i: { projectRoot: string; reportPath: string;
     if (!ok) (kind === 'mismatch' ? result.mismatches : result.unverifiedReasons).push(`${item}：${detail}`);
   };
 
-  const manifestFile = path.join(i.projectRoot, '.studio', 'tasks', `${i.taskId}.json`);
-  let manifest: TaskManifest;
-  try {
-    manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8')) as TaskManifest;
-  } catch {
+  const manifestStore = new ManifestStore(i.projectRoot);
+  const manifest = await manifestStore.get(i.taskId);
+  if (!manifest) {
+    const manifestFile = manifestStore.recordFile(i.taskId);
     result.unverifiedReasons.push(`找不到任务 ${i.taskId} 的任务清单（${manifestFile}）：没有绑定依据`);
     return done();
   }

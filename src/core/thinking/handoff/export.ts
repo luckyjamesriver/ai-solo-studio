@@ -1,22 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git } from '../../git/git.js';
+import { ManifestStore, type TaskManifest } from '../../persistence/manifest.js';
 import { atomicWrite, atomicWriteExclusive, sha256 } from '../flow/store.js';
 
-/** 任务清单（.studio/tasks/<任务编号>.json，宿主生成；已存在则拒绝覆盖）。 */
-export interface TaskManifest {
-  schema: 1;
-  taskId: string;
-  threadId: string;
-  repoRoot: string;
-  branch: string;
-  worktreePath: string;
-  startHead: string;
-  plan: { path: string; sha256: string; artifactVersion: number };
-  singleThinker: boolean;
-  exportedAt: string;
-  taskFile: { path: string; sha256: string };
-}
+export type { TaskManifest };
 
 export interface ExportInput {
   projectRoot: string;
@@ -111,14 +99,16 @@ export async function exportTask(i: ExportInput): Promise<ExportResult> {
   if (!i.exportDir) throw new Error('必须指定导出目录（--export-dir 或配置）');
   const now = (i.now ?? (() => new Date()))();
   const binding = await gitBinding(i.projectRoot);
-  const manifestFile = path.join(i.projectRoot, '.studio', 'tasks', `${i.taskId}.json`);
+  const manifestStore = new ManifestStore(i.projectRoot);
+  const manifestFile = manifestStore.recordFile(i.taskId);
   const exportDir = path.resolve(i.exportDir);
   const taskFile = path.join(exportDir, `${i.taskId}-task.md`);
 
   // 先检查两个唯一性，再写入任何东西
-  for (const [what, f] of [['任务清单', manifestFile], ['任务文件', taskFile]] as const) {
-    if (await fs.stat(f).then(() => true, () => false)) throw new Error(`${what}已存在，拒绝覆盖：${f}`);
-  }
+  if (await manifestStore.get(i.taskId)) throw new Error(`任务清单已存在，拒绝覆盖：${manifestFile}`);
+  const legacyFile = path.join(i.projectRoot, '.studio', 'tasks', `${i.taskId}.json`);
+  if (await fs.stat(legacyFile).then(() => true, () => false)) throw new Error(`任务清单已存在，拒绝覆盖：${legacyFile}`);
+  if (await fs.stat(taskFile).then(() => true, () => false)) throw new Error(`任务文件已存在，拒绝覆盖：${taskFile}`);
 
   const text = renderTaskFile({ taskId: i.taskId, binding, plan: i.plan, requirements: i.requirements, single: i.single, threadId: i.threadId });
   const manifest: TaskManifest = {
@@ -136,7 +126,11 @@ export async function exportTask(i: ExportInput): Promise<ExportResult> {
   };
   // 原子且不覆盖：临时文件 + link（目标存在则失败）
   await atomicWriteExclusive(taskFile, text);
-  await atomicWriteExclusive(manifestFile, JSON.stringify(manifest, null, 2) + '\n');
+  await manifestStore.save(manifest, {
+    runId: i.threadId,
+    expectedRevision: 0,
+    note: 'manifest_export',
+  });
 
   const result: ExportResult = { taskFile, manifestFile, manifest, currentUpdated: false };
   if (!i.setCurrent) return result;
