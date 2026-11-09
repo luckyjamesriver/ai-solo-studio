@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { exportTask, importReport, reviewImportedReport, saveImportRecord, type TaskManifest } from '../src/core/thinking/handoff/index.js';
+import { ManifestStore, StateConflictError } from '../src/core/persistence/index.js';
 import { FakeThinker } from '../src/core/thinking/index.js';
 import { FlowEngine } from '../src/core/thinking/flow/index.js';
 import { git, tmpDir } from './helpers.js';
@@ -71,6 +72,27 @@ describe('导出', () => {
     expect(await exists(path.join(r3, '.studio', 'records', 'manifests', 'M9-X1.json'))).toBe(false);
     expect(await exists(path.join(r3, '.studio', 'tasks', 'M9-X1.json'))).toBe(false);
     void root;
+  });
+
+  it('重复导出：允许覆盖时先读取当前修订号再提交，推进 revision；若写死 expectedRevision: 0 则会触发冲突', async () => {
+    const { root, exportDir, base } = await setup();
+    // 首次导出：版本为 1
+    const r1 = await exportTask(base);
+    expect(r1.manifest.revision).toBe(1);
+
+    const ms = new ManifestStore(root);
+    const m1 = (await ms.get(base.taskId))!;
+    expect(m1.revision).toBe(1);
+
+    // 重复导出（允许覆盖）：读取当前修订号 1，提交后修订号递增为 2
+    const updatedPlan = { ...plan, text: '## 方案\n加深色主题开关与持久化' };
+    const r2 = await exportTask({ ...base, plan: updatedPlan, overwrite: true });
+    expect(r2.manifest.revision).toBe(2);
+    const m2 = (await ms.get(base.taskId))!;
+    expect(m2.revision).toBe(2);
+
+    // 证明写死 expectedRevision: 0 必会失败：若以 expectedRevision: 0 提交已有记录，CAS 校验判定冲突抛出 StateConflictError
+    await expect(ms.save(m2, { expectedRevision: 0 })).rejects.toBeInstanceOf(StateConflictError);
   });
 
   it('必须给导出目录；任务编号必须合法', async () => {

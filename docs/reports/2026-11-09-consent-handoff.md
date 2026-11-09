@@ -58,14 +58,14 @@
 
 - **测试文件（Test Files）**：
   - 通过：**23** 个
-  - 跳过：**11** 个（为 `tests/adr-0005-scenarios.test.ts` 中保留的 `it.todo` 验收场景骨架）
+  - 跳过：**11** 个（实际为 `tests/integration/` 下的 11 个真实 Codex 集成测试文件，非 `adr-0005-scenarios.test.ts`，详见下文第 7 节核对）
   - 失败：**0** 个
   - 文件总计：34 个
 - **测试用例（Tests）**：
-  - 通过：**501** 个
-  - 跳过：**37** 个
+  - 通过：**502** 个（含新增的交接清单重复导出测试）
+  - 跳过：**37** 个（为非真实模型环境下按 gate 规则条件跳过的集成用例）
   - 失败：**0** 个
-  - 测试总计：538 个
+  - 测试总计：539 个
 - **执行耗时**：53.07 秒
 - **依赖与边界检查**：
   - `tests/security.test.ts` 中 40 项安全断言全部通过，证实除 `src/core/persistence/` 外没有任何核心模块绕过持久化服务直接写文件，记录库引用范围严格收敛。
@@ -125,3 +125,72 @@
    - 目前依赖单控制器任务级互斥以及 Git 合并冲突检测兜底，尚未实现跨任务独立保存锁。
 4. **UI 样式细节**：
    - 前期 impeccable 审计发现的 side-tab 边框样式问题按规划保留至 UI 打磨阶段统一处理，本次任务恪守规范未变动任何前端样式。
+
+---
+
+## 7. 核对结论与问题复核（2026-11-09 复核追加）
+
+### 7.1 问题一：测试跳过情况与 ADR-0005 验收场景状态核查
+- **原报告错误更正**：此前报告中误将跳过的 11 个文件归因于“`tests/adr-0005-scenarios.test.ts` 中的 `it.todo` 骨架”，该描述有误，特此更正。
+- **实际测试状态核验**：
+  - 通过 `git log -p tests/adr-0005-scenarios.test.ts` 及运行 `npx vitest run tests/adr-0005-scenarios.test.ts` 确认：该文件在 commit `3fcdbb4` 中已由维护者完整实现，包含 9 个真实验收场景与 4 个附加检查，**内部无任何 `it.todo` 或弱化**。
+  - 本次运行结果：**13 passed (13)**，9 个场景测试全部为真实断言且全部通过：
+    1. 两个 Agent 同时修改同一任务（不发生静默覆盖，冲突可识别处理）
+    2. 10 个任务并行更新同一项目（已确认提交状态可恢复，汇总准确）
+    3. 任务取消与完成几乎同时发生（符合明确状态机规则）
+    4. 任务完成事件重复回传（幂等去重，不重复提交）
+    5. App 退出后重开旧 Agent 回传结果（过期运行身份拒绝覆盖）
+    6. 保存时进程被强制终止（可恢复为旧版本或新版本，不留半成品）
+    7. 磁盘写满、权限不足（有效数据完整，失败显式报告）
+    8. 两个应用进程尝试操作同一数据目录（互斥锁禁止并发写入）
+    9. 两个 Agent 修改同一源码文件（Git 冲突检测生效，无静默最后写入覆盖）
+    + 4项附加检查（汇总损坏重建、日志末行截断、高 schema_version 升级拦截、非本地 APFS 拒绝写入）。
+- **实际跳过的 11 个测试文件清单与原因**：
+  经 `tests/**/*.test.ts` 与 `vitest.config.ts` 核对，被跳过的 11 个文件均为 `tests/integration/` 下的**真实模型集成测试**：
+  1. `tests/integration/b3-1-probes.real.test.ts`
+  2. `tests/integration/b3-1b-worktree.real.test.ts`
+  3. `tests/integration/b3-modes.real.test.ts`
+  4. `tests/integration/b4-1.real.test.ts`
+  5. `tests/integration/codex.real.test.ts`
+  6. `tests/integration/extensions.real.test.ts`
+  7. `tests/integration/path.real.test.ts`
+  8. `tests/integration/persist.real.test.ts`
+  9. `tests/integration/sentinel.real.test.ts`
+  10. `tests/integration/think-flow.real.test.ts`
+  11. `tests/integration/thinker.real.test.ts`
+  - **跳过原因**：这些文件使用 `tests/integration/gate.ts` 中的统一门禁 `describe.skipIf(!realEnabled(...))`，旨在需要真实 Codex 登录且消耗实际 API 额度时通过 `npm run test:real` 显式运行；在 `npm test`（常规 CI 与本地全量单元测试）中默认跳过以保护 API 额度与离线执行。
+
+### 7.2 问题二：`e2e/shell.e2e.ts` 断言内容一致性核查
+- **断言代码对比**：
+  ```ts
+  expect(r.actions.save.enabled).toBe(false);
+  expect(r.actions.save.files).toEqual(['notes.txt']);
+  expect(await a.page.getByRole('button', { name: /提交/ }).count()).toBe(0);
+  ```
+  上述三项断言与改动前**逐字完全一致**，没有删除、修改或放宽任何一项断言。
+- **时序改动严谨性确认**：
+  - 在 `Acceptance.tsx` 中，用户点击 `confirm-overall` 之前，页面处于未确认状态，保存按钮不可用，`<p className="muted" data-testid="save-reason">所有验收标准（或整体要求）都必须确认。</p>` 已渲染在 DOM 中。
+  - 原测试在点击后立即执行 `waitFor('save-reason')`，Playwright 检测到 DOM 已有该节点会瞬间返回（0ms），导致尚未等待异步 IPC `confirmOverall` 执行并落盘，下一行的 `a.page.evaluate(...)` 就提前读取了视图，偶发返回未确认状态（`files: undefined`）。
+  - 改为等待 `save-files`（`<ul className="muted" data-testid="save-files">`），因为该元素仅在 `reviewing && !a.save.enabled && a.save.files` 满足时才挂载。它确保了主进程已完成状态更新且渲染层已真实呈现出“未保存修改文件列表”，严格保障了用例对“列出文件”的预期，测试更加严格稳固。
+
+### 7.3 问题三：交接清单重复导出（`expectedRevision: 0`）机制说明与修复
+- **原固定 `expectedRevision: 0` 的问题分析**：
+  - 若某任务已成功导出过一次交接清单，记录库中的版本号已递增为 1（或更高）。
+  - 如果后续同一任务发生重复导出或重新导出，固定传 `expectedRevision: 0` 会导致底层 `RecordStore.commit` 在进行 CAS 乐观并发比对时发现 `actualRevision (>=1) !== expectedRevision (0)`，判定为并发状态冲突，抛出 `StateConflictError` 并在日志中记入 `conflict` 失败事件。
+- **修复实现**：
+  1. **参数扩展**：在 `ExportInput` 中新增 `overwrite?: boolean` 选项。未显式指定 `overwrite: true` 时，继续维持原有的“清单或任务文件已存在则拒绝覆盖”安全策略；指定 `overwrite: true` 时允许重新导出。
+  2. **动态版本读取**：在提交清单前，先通过 `await manifestStore.get(i.taskId)` 查询当前已有清单的修订号：
+     ```ts
+     const existing = await manifestStore.get(i.taskId);
+     await manifestStore.save(manifest, {
+       runId: i.threadId,
+       expectedRevision: existing?.revision ?? 0,
+       note: 'manifest_export',
+     });
+     ```
+     并在 `ManifestStore.save` 内部同样提供缺失时自动查询已有 revision 的兜底，实现平滑版本递增（1 -> 2）。
+  3. **新增测试验证**：
+     在 `tests/handoff.test.ts` 中新增测试用例：`重复导出：允许覆盖时先读取当前修订号再提交，推进 revision；若写死 expectedRevision: 0 则会触发冲突`。
+     - 首次导出：清单修订号为 1；
+     - 重复导出（`overwrite: true`）：读取当前修订号 1，提交后成功推进至修订号 2；
+     - 并反向断言：若尝试以写死的 `expectedRevision: 0` 提交该已有清单，必抛出 `StateConflictError`。

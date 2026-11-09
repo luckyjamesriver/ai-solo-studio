@@ -137,12 +137,17 @@ export class ManifestStore {
   async save(manifest: TaskManifest, opts: SaveManifestOptions = {}): Promise<void> {
     const repo = await this.repository();
     const { revision, runId, ...data } = manifest;
+    let expectedRevision = opts.expectedRevision ?? revision;
+    if (expectedRevision === undefined) {
+      const existing = await repo.get(manifest.taskId);
+      expectedRevision = existing ? existing.revision : 0;
+    }
     const r = await repo.commit(
       manifest.taskId,
       {
         runId: opts.runId ?? runId ?? 'manifest',
         attemptId: opts.attemptId ?? RecordStore.newAttemptId(),
-        expectedRevision: opts.expectedRevision ?? revision ?? 0,
+        expectedRevision,
         ...(opts.startRun ? { startRun: true } : {}),
         ...(opts.note ? { note: opts.note } : { note: 'manifest_export' }),
       },

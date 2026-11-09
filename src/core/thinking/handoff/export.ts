@@ -12,6 +12,8 @@ export interface ExportInput {
   threadId: string;
   /** 导出目录：由参数或配置给出，代码中不写死任何路径 */
   exportDir: string;
+  /** 允许重复导出覆盖已有文件与清单（更新模式） */
+  overwrite?: boolean;
   /** 只有用户明确选择“设为当前任务”才更新 next-task.md */
   setCurrent?: boolean;
   /** 更新 next-task.md 前，若它已存在：显示其首行编号并要求确认 */
@@ -104,11 +106,13 @@ export async function exportTask(i: ExportInput): Promise<ExportResult> {
   const exportDir = path.resolve(i.exportDir);
   const taskFile = path.join(exportDir, `${i.taskId}-task.md`);
 
-  // 先检查两个唯一性，再写入任何东西
-  if (await manifestStore.get(i.taskId)) throw new Error(`任务清单已存在，拒绝覆盖：${manifestFile}`);
-  const legacyFile = path.join(i.projectRoot, '.studio', 'tasks', `${i.taskId}.json`);
-  if (await fs.stat(legacyFile).then(() => true, () => false)) throw new Error(`任务清单已存在，拒绝覆盖：${legacyFile}`);
-  if (await fs.stat(taskFile).then(() => true, () => false)) throw new Error(`任务文件已存在，拒绝覆盖：${taskFile}`);
+  // 先检查两个唯一性，再写入任何东西（未指定 overwrite 时禁止覆盖）
+  if (!i.overwrite) {
+    if (await manifestStore.get(i.taskId)) throw new Error(`任务清单已存在，拒绝覆盖：${manifestFile}`);
+    const legacyFile = path.join(i.projectRoot, '.studio', 'tasks', `${i.taskId}.json`);
+    if (await fs.stat(legacyFile).then(() => true, () => false)) throw new Error(`任务清单已存在，拒绝覆盖：${legacyFile}`);
+    if (await fs.stat(taskFile).then(() => true, () => false)) throw new Error(`任务文件已存在，拒绝覆盖：${taskFile}`);
+  }
 
   const text = renderTaskFile({ taskId: i.taskId, binding, plan: i.plan, requirements: i.requirements, single: i.single, threadId: i.threadId });
   const manifest: TaskManifest = {
@@ -124,11 +128,17 @@ export async function exportTask(i: ExportInput): Promise<ExportResult> {
     exportedAt: now.toISOString(),
     taskFile: { path: taskFile, sha256: sha256(text) },
   };
-  // 原子且不覆盖：临时文件 + link（目标存在则失败）
-  await atomicWriteExclusive(taskFile, text);
+  // 写入任务文件：指定 overwrite 则允许覆盖，否则使用 exclusive 方式原子写入（目标存在则失败）
+  if (i.overwrite) {
+    await atomicWrite(taskFile, text);
+  } else {
+    await atomicWriteExclusive(taskFile, text);
+  }
+  // 先读取当前已有修订号（若有），再进行 CAS 提交；初次提交 expectedRevision 为 0，重复提交则带上当前修订号推进版本
+  const existing = await manifestStore.get(i.taskId);
   await manifestStore.save(manifest, {
     runId: i.threadId,
-    expectedRevision: 0,
+    expectedRevision: existing?.revision ?? 0,
     note: 'manifest_export',
   });
 
