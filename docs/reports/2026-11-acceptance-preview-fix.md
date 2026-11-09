@@ -83,4 +83,23 @@
 ## 6. GitHub CI 状态
 
 - **分支**：`rebuild`
-- **触发推送提交**：将在推送后记录 CI Run 链接并验证 Ubuntu 与 macOS 全绿。
+- **CI 运行链接**：[42659451928](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42659451928)
+- **触发推送提交**：`a61075f`
+- **综合状态**：**Success**（一次通过，0 次重试，0 失败）
+
+### 各 Job 运行明细：
+1. **`test (ubuntu-latest)`**（Job ID: `129306738370`）：
+   - 状态：**Success**（耗时 46s）
+   - 执行阶段：
+     - `Run npm run typecheck`：通过
+     - `Run npm test`：通过（24 passed, 11 skipped, 0 failed）
+     - `Run npm run build`：通过
+2. **`test (macos-latest)`**（Job ID: `129306738848`）：
+   - 状态：**Success**（耗时 5m1s）
+   - 执行阶段：
+     - `Run npm run typecheck`：通过
+     - `Run npm test`：通过（24 passed, 11 skipped, 0 failed）
+     - `Run npm run build`：通过
+     - `Install Electron binary (macOS)`：通过
+     - `Electron end-to-end (macOS)`：通过（33 passed, 0 failed，新增用例全部一次通过）
+
