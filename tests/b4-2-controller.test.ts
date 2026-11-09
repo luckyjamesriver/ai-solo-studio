@@ -441,5 +441,44 @@ describe('重启后状态一致、成果片段、启动核对', () => {
       expect(r.view.preview.completed).toBe(true);
       expect(called).toBe(false);
     });
+
+    it('模拟打开失败 → previewed 仍为 false，第 ② 步仍锁定', async () => {
+      const { id, ctl, repo } = await setup({
+        script: [{ do: 'write', path: 'index.html', content: '<h1>web</h1>' }],
+        files: { 'index.html': '<h1>init</h1>' },
+        openPreview: async () => {
+          throw new Error('模拟外部打开失败');
+        },
+      });
+      const v = await ctl.getAcceptanceView(id);
+      expect(v.preview.completed).toBe(false);
+
+      const r = await ctl.openPreview(id, v.version);
+      expect(r.ok).toBe(false);
+      expect(r.message).toBe('无法打开成果，请重试，或选择不查看直接验收');
+      expect(r.view.preview.completed).toBe(false);
+      // 第 ② 步仍未解锁（保存按钮等仍受门禁）
+      expect(r.view.actions.save.enabled).toBe(false);
+
+      const t = await taskOf(repo, id);
+      expect(t.previewed).toBe(false);
+    });
+
+    it('未注入 openPreview 回调 → 同样视为失败，不得标记 previewed', async () => {
+      const { id, ctl, repo } = await setup({
+        script: [{ do: 'write', path: 'index.html', content: '<h1>web</h1>' }],
+        files: { 'index.html': '<h1>init</h1>' },
+      });
+      const v = await ctl.getAcceptanceView(id);
+      expect(v.preview.completed).toBe(false);
+
+      const r = await ctl.openPreview(id, v.version);
+      expect(r.ok).toBe(false);
+      expect(r.message).toBe('无法打开成果，请重试，或选择不查看直接验收');
+      expect(r.view.preview.completed).toBe(false);
+
+      const t = await taskOf(repo, id);
+      expect(t.previewed).toBe(false);
+    });
   });
 });

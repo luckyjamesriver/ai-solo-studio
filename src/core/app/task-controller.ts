@@ -316,8 +316,10 @@ export class TaskController {
   async openPreview(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
     const tid = this.checkArg(TASK_ID, id);
     const v = this.checkVersion(version);
-    return this.act(tid, this.confirmWork(v, async (t) => {
-      if (!t.worktree?.path) throw new Error('任务没有工作树。');
+    return this.act(tid, async (t: Task) => {
+      if (v !== acceptanceVersion(t)) return { ok: false, message: MESSAGES.acceptanceInvalid };
+      if (t.state !== 'reviewing') return { ok: false, message: MESSAGES.notReady };
+      if (!t.worktree?.path) return { ok: false, message: '无法打开成果，请重试，或选择不查看直接验收' };
       const indexPath = path.join(t.worktree.path, 'index.html');
       let isWeb = false;
       try {
@@ -328,12 +330,17 @@ export class TaskController {
       }
       const targetPath = isWeb ? indexPath : t.worktree.path;
       const kind: 'web' | 'finder' = isWeb ? 'web' : 'finder';
-      if (this.o.openPreview) {
+      if (!this.o.openPreview) {
+        return { ok: false, message: '无法打开成果，请重试，或选择不查看直接验收' };
+      }
+      try {
         await this.o.openPreview({ kind, targetPath });
+      } catch {
+        return { ok: false, message: '无法打开成果，请重试，或选择不查看直接验收' };
       }
       await this.r().confirm(t.id, { previewed: true });
-      return isWeb ? '已在浏览器中打开预览' : '已在访达中显示';
-    }));
+      return { ok: true, message: isWeb ? '已在浏览器中打开预览' : '已在访达中显示' };
+    });
   }
 
   async confirmPreview(id: unknown, version: unknown): Promise<AcceptanceActionResult> {

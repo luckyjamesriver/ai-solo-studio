@@ -159,7 +159,8 @@ async function tasks(): Promise<TaskController> {
       if (kind === 'web') {
         await shell.openExternal(pathToFileURL(targetPath).href);
       } else {
-        await shell.openPath(targetPath);
+        const err = await shell.openPath(targetPath);
+        if (err) throw new Error(err);
       }
     },
   });
