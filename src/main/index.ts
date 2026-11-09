@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setSupplementalPath } from '../core/env/host-env.js';
 import { resolveHostTools, resolveTool } from '../core/env/path.js';
 import { validateProjectPath } from '../core/env/project-path.js';
@@ -157,7 +157,7 @@ async function tasks(): Promise<TaskController> {
     storeOptions: STORE_OPTS,
     openPreview: async ({ kind, targetPath }) => {
       if (kind === 'web') {
-        await shell.openExternal(`file://${targetPath}`);
+        await shell.openExternal(pathToFileURL(targetPath).href);
       } else {
         await shell.openPath(targetPath);
       }
