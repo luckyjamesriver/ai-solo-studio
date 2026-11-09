@@ -4,7 +4,6 @@ import { ensureStudioIgnored } from '../git/git.js';
 import { StateConflictError, StaleRunError } from './errors.js';
 import { migrateLegacyFiles } from './legacy.js';
 import { RecordStore, type CollectionDef, type CommitCmd, type CommitOutcome, type OpenOptions, type Stored } from './store.js';
-import { updateRecord } from './update.js';
 
 /**
  * 资料外发确认记录（ADR 0005）：记录库里的 `consent` 集合——`<项目>/.studio/records/consent/consent.json`，
@@ -13,6 +12,18 @@ import { updateRecord } from './update.js';
  */
 
 export type ConsentRecord = Record<string, { confirmedAt: string }>;
+
+export interface RecordConsentOptions {
+  runId?: string;
+  attemptId?: string;
+  expectedRevision: number;
+}
+
+export interface ClearConsentOptions {
+  runId?: string;
+  attemptId?: string;
+  expectedRevision: number;
+}
 
 const ConsentSchema = z.record(
   z.string(),
@@ -62,50 +73,54 @@ export class ConsentStore {
     return r ? service in r.value : false;
   }
 
-  async record(service: string, opts: { runId?: string; attemptId?: string; expectedRevision?: number } = {}): Promise<void> {
-    const store = await this.recordStore();
-    if (opts.expectedRevision !== undefined) {
-      const cur = (await this.get())?.value ?? {};
-      const next: ConsentRecord = { ...cur, [service]: { confirmedAt: new Date().toISOString() } };
-      const outcome = await store.commit(
-        CONSENT_COLLECTION,
-        CONSENT_RECORD_ID,
-        {
-          runId: opts.runId ?? 'consent',
-          attemptId: opts.attemptId ?? RecordStore.newAttemptId(),
-          expectedRevision: opts.expectedRevision,
-          note: 'consent',
-        },
-        next,
-      );
-      if (!outcome.ok) {
-        if (outcome.reason === 'conflict') {
-          throw new StateConflictError(CONSENT_COLLECTION.name, CONSENT_RECORD_ID, outcome.expected, outcome.actual);
-        }
-        throw new StaleRunError(CONSENT_COLLECTION.name, CONSENT_RECORD_ID, opts.runId ?? 'consent', outcome.currentRunId);
-      }
-      return;
+  async record(service: string, opts: RecordConsentOptions): Promise<void> {
+    if (opts === undefined || opts.expectedRevision === undefined || opts.expectedRevision === null || typeof opts.expectedRevision !== 'number') {
+      throw new Error('expectedRevision is required when recording consent');
     }
-    await updateRecord(
-      store,
+    const store = await this.recordStore();
+    const cur = (await this.get())?.value ?? {};
+    const next: ConsentRecord = { ...cur, [service]: { confirmedAt: new Date().toISOString() } };
+    const outcome = await store.commit(
       CONSENT_COLLECTION,
       CONSENT_RECORD_ID,
-      {},
-      (cur) => ({ ...cur, [service]: { confirmedAt: new Date().toISOString() } }),
-      { runId: opts.runId ?? 'consent', note: 'consent' },
+      {
+        runId: opts.runId ?? 'consent',
+        attemptId: opts.attemptId ?? RecordStore.newAttemptId(),
+        expectedRevision: opts.expectedRevision,
+        note: 'consent',
+      },
+      next,
     );
+    if (!outcome.ok) {
+      if (outcome.reason === 'conflict') {
+        throw new StateConflictError(CONSENT_COLLECTION.name, CONSENT_RECORD_ID, outcome.expected, outcome.actual);
+      }
+      throw new StaleRunError(CONSENT_COLLECTION.name, CONSENT_RECORD_ID, opts.runId ?? 'consent', outcome.currentRunId);
+    }
   }
 
-  async clear(): Promise<void> {
+  async clear(opts: ClearConsentOptions): Promise<void> {
+    if (opts === undefined || opts.expectedRevision === undefined || opts.expectedRevision === null || typeof opts.expectedRevision !== 'number') {
+      throw new Error('expectedRevision is required when clearing consent');
+    }
     const store = await this.recordStore();
-    await updateRecord(
-      store,
+    const outcome = await store.commit(
       CONSENT_COLLECTION,
       CONSENT_RECORD_ID,
+      {
+        runId: opts.runId ?? 'consent',
+        attemptId: opts.attemptId ?? RecordStore.newAttemptId(),
+        expectedRevision: opts.expectedRevision,
+        note: 'clear',
+      },
       {},
-      () => ({}),
-      { runId: 'consent', note: 'clear' },
     );
+    if (!outcome.ok) {
+      if (outcome.reason === 'conflict') {
+        throw new StateConflictError(CONSENT_COLLECTION.name, CONSENT_RECORD_ID, outcome.expected, outcome.actual);
+      }
+      throw new StaleRunError(CONSENT_COLLECTION.name, CONSENT_RECORD_ID, opts.runId ?? 'consent', outcome.currentRunId);
+    }
   }
 
   async commit(cmd: CommitCmd, value: ConsentRecord): Promise<CommitOutcome<ConsentRecord>> {

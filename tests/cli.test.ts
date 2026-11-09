@@ -228,7 +228,8 @@ describe('入口（runCli）', () => {
     expect(m.text()).toContain('不是验收通过');
     expect(m.text()).toContain('不会自动派下一个任务');
     // 无 TTY 且服务未确认
-    await new ConsentStore(root).clear();
+    const cs = new ConsentStore(root);
+    await cs.clear({ expectedRevision: (await cs.get())?.revision ?? 0 });
     const m2 = makeIO();
     const reg2 = registry({ 'claude-cli-personal': () => new FakeThinker([{ raw: JSON.stringify(review) }], { available: true }, { id: 'claude-cli-personal', service: 'svc-claude' }) });
     expect(await runCli(['--import', report, '--task', 'M7-G'], { cwd: root, isTTY: false, io: m2.io, registry: reg2 })).toBe(EXIT.waiting);

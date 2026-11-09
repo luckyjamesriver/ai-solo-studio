@@ -516,8 +516,9 @@ describe('无法询问（无 TTY）时一律停在确认点', () => {
     const rec = await readJson(path.join(threadDir(root), 'thread.json'));
     expect(rec.state).toBe('requirements_draft');
     // 已确认服务后，在需求确认点停下
-    await new ConsentStore(root).record('fake-service-a');
-    await new ConsentStore(root).record('fake-service-b');
+    const cs = new ConsentStore(root);
+    await cs.record('fake-service-a', { expectedRevision: (await cs.get())?.revision ?? 0 });
+    await cs.record('fake-service-b', { expectedRevision: (await cs.get())?.revision ?? 0 });
     const e2 = await engineFor(root, { planner: scripted() }, ui as never);
     await e2.load('T-test');
     expect(await e2.run()).toMatchObject({ kind: 'waiting', at: 'requirements_confirmation' });

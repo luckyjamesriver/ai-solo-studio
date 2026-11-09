@@ -167,7 +167,8 @@ async function doImport(projectRoot: string, args: ReturnType<typeof parseArgs>,
       say('你没有同意发送资料，跳过规划者审查。');
       return EXIT.ok;
     }
-    await consent.record(picked.planner.service);
+    const cur = await consent.get();
+    await consent.record(picked.planner.service, { expectedRevision: cur?.revision ?? 0 });
   }
   const planText = await fs.readFile(path.join(projectRoot, manifest.plan.path), 'utf8').catch(() => '（找不到方案文件）');
   const reportText = await fs.readFile(reportPath, 'utf8');

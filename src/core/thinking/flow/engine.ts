@@ -148,7 +148,8 @@ export class FlowEngine {
         const ans = await this.o.ui.confirmSend(thinker.service);
         if (ans === undefined) return { ok: false, outcome: await this.wait('send_consent', `首次向“${thinker.service}”发送资料需要你确认（资料将离开本机）。当前无法询问，已保存线程。`) };
         if (!ans) return { ok: false, outcome: await this.stop(`用户未同意向“${thinker.service}”发送资料`) };
-        await this.consent.record(thinker.service);
+        const cur = await this.consent.get();
+        await this.consent.record(thinker.service, { expectedRevision: cur?.revision ?? 0 });
       }
 
       const note = this.rec.pendingNotes[step];

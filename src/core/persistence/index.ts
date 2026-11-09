@@ -6,5 +6,5 @@ export { migrateLegacyFiles } from './legacy.js';
 export { localApfsProbe, requireLocalVolume } from './volume.js';
 export type { VolumeProbe } from './volume.js';
 export { diffRecord, applyPatch } from './patch.js';
-export { ConsentStore, CONSENT_COLLECTION, CONSENT_RECORD_ID, type ConsentRecord } from './consent.js';
+export { ConsentStore, CONSENT_COLLECTION, CONSENT_RECORD_ID, type ConsentRecord, type RecordConsentOptions, type ClearConsentOptions } from './consent.js';
 export { ManifestStore, MANIFEST_COLLECTION, type TaskManifest, type SaveManifestOptions } from './manifest.js';

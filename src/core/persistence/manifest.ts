@@ -58,7 +58,7 @@ export const MANIFEST_COLLECTION: CollectionDef<TaskManifest> = {
 export interface SaveManifestOptions {
   attemptId?: string;
   runId?: string;
-  expectedRevision?: number;
+  expectedRevision: number;
   startRun?: boolean;
   note?: string;
 }
@@ -134,20 +134,18 @@ export class ManifestStore {
     return items.map((s) => ({ ...s.value, revision: s.revision, ...(s.currentRunId !== undefined ? { runId: s.currentRunId } : {}) }));
   }
 
-  async save(manifest: TaskManifest, opts: SaveManifestOptions = {}): Promise<void> {
+  async save(manifest: TaskManifest, opts: SaveManifestOptions): Promise<void> {
+    if (opts === undefined || opts.expectedRevision === undefined || opts.expectedRevision === null || typeof opts.expectedRevision !== 'number') {
+      throw new Error('expectedRevision is required when saving manifest');
+    }
     const repo = await this.repository();
     const { revision, runId, ...data } = manifest;
-    let expectedRevision = opts.expectedRevision ?? revision;
-    if (expectedRevision === undefined) {
-      const existing = await repo.get(manifest.taskId);
-      expectedRevision = existing ? existing.revision : 0;
-    }
     const r = await repo.commit(
       manifest.taskId,
       {
         runId: opts.runId ?? runId ?? 'manifest',
         attemptId: opts.attemptId ?? RecordStore.newAttemptId(),
-        expectedRevision,
+        expectedRevision: opts.expectedRevision,
         ...(opts.startRun ? { startRun: true } : {}),
         ...(opts.note ? { note: opts.note } : { note: 'manifest_export' }),
       },

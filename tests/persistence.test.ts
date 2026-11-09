@@ -190,8 +190,8 @@ describe('ConsentStore（资料外发确认记录）', () => {
   it('崩溃后（汇总丢失）能从 JSONL 事件日志完整恢复，修订号与数据完全一致', async () => {
     const dir = await tmpDir('consent-');
     const cs = new ConsentStore(dir);
-    await cs.record('svc-a');
-    await cs.record('svc-b');
+    await cs.record('svc-a', { expectedRevision: 0 });
+    await cs.record('svc-b', { expectedRevision: 1 });
     const before = (await cs.get())!;
     expect(before.revision).toBe(2);
     expect(Object.keys(before.value).sort()).toEqual(['svc-a', 'svc-b']);
@@ -220,6 +220,17 @@ describe('ConsentStore（资料外发确认记录）', () => {
     expect(stored.revision).toBe(1);
     expect(stored.value).toMatchObject({ 'svc-legacy': { confirmedAt: '2026-11-01T00:00:00.000Z' } });
     expect(fsSync.existsSync(path.join(dir, '.studio', 'consent.json.migrated'))).toBe(true);
+  });
+
+  it('未传 expectedRevision 时提交直接抛错（禁止隐式自动读取当前修订号）', async () => {
+    const dir = await tmpDir('consent-norev-');
+    const cs = new ConsentStore(dir);
+    // @ts-expect-error 运行时防御测试：未传 expectedRevision
+    await expect(cs.record('svc-a', {})).rejects.toThrow(/expectedRevision is required/);
+    // @ts-expect-error 运行时防御测试：未传 opts
+    await expect(cs.record('svc-a')).rejects.toThrow(/expectedRevision is required/);
+    // @ts-expect-error 运行时防御测试：clear 未传 expectedRevision
+    await expect(cs.clear({})).rejects.toThrow(/expectedRevision is required/);
   });
 });
 
@@ -276,8 +287,8 @@ describe('ManifestStore（任务清单 / 交接清单）', () => {
     const ms = new ManifestStore(dir);
     const m1 = sampleManifest('M-CRASH-1');
     const m2 = sampleManifest('M-CRASH-2');
-    await ms.save(m1);
-    await ms.save(m2);
+    await ms.save(m1, { expectedRevision: 0 });
+    await ms.save(m2, { expectedRevision: 0 });
     expect(await ms.list()).toHaveLength(2);
 
     // 模拟进程崩溃，删除 records/ 汇总
@@ -307,5 +318,15 @@ describe('ManifestStore（任务清单 / 交接清单）', () => {
     expect(loaded!.taskId).toBe('M-LEGACY');
     expect(loaded!.revision).toBe(1);
     expect(fsSync.existsSync(path.join(legacyDir, 'M-LEGACY.json.migrated'))).toBe(true);
+  });
+
+  it('未传 expectedRevision 时提交直接抛错（禁止隐式自动读取当前修订号）', async () => {
+    const dir = await tmpDir('manifest-norev-');
+    const ms = new ManifestStore(dir);
+    const m = sampleManifest('M-NOREV');
+    // @ts-expect-error 运行时防御测试：未传 expectedRevision
+    await expect(ms.save(m, {})).rejects.toThrow(/expectedRevision is required/);
+    // @ts-expect-error 运行时防御测试：未传 opts
+    await expect(ms.save(m)).rejects.toThrow(/expectedRevision is required/);
   });
 });

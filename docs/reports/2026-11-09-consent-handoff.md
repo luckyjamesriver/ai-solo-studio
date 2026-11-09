@@ -194,3 +194,22 @@
      - 首次导出：清单修订号为 1；
      - 重复导出（`overwrite: true`）：读取当前修订号 1，提交后成功推进至修订号 2；
      - 并反向断言：若尝试以写死的 `expectedRevision: 0` 提交该已有清单，必抛出 `StateConflictError`。
+
+### 7.4 兜底逻辑修正：禁止无版本隐式提交，`expectedRevision` 严格必填
+- **修正背景与安全考量**：
+  - 此前为方便兼容，在 `ManifestStore.save` 中存在“未传 `expectedRevision` 时自动查询当前修订号并递增”的兜底，且 `ConsentStore.record` / `clear` 也使用了 `updateRecord` 兜底。
+  - 这种隐式自动查询并递增版本的做法违背了 ADR-0005 严格乐观并发控制（CAS）的核心初衷，容易在并发竞争时静默覆盖他人的修改，产生难以排查的脏写。
+- **具体修改内容**：
+  1. **删除自动读取当前修订号兜底**：
+     - 在 `ManifestStore.save` 中彻底移除 `opts.expectedRevision ?? revision` 及缺失时自动查询 `repo.get` 的逻辑。
+     - 在 `ConsentStore` 中彻底删除 `updateRecord` 导入与兜底调用，使 `record` 和 `clear` 均走严格的 `store.commit` CAS 逻辑。
+  2. **类型与运行时双重严格要求**：
+     - `SaveManifestOptions`、`RecordConsentOptions` 和 `ClearConsentOptions` 中的 `expectedRevision: number` 均改为必填字段。
+     - 在方法入口增加运行时强校验：若 `opts` 未传、`opts.expectedRevision` 为 `undefined`、`null` 或非 `number`，立即抛出明确异常（如 `throw new Error('expectedRevision is required when saving manifest')`）。
+  3. **调用点检查与规范传递**：
+     - `src/core/thinking/handoff/export.ts`：保留规范做法——先通过 `await manifestStore.get(i.taskId)` 读取当前修订号，再显式传入 `expectedRevision: existing?.revision ?? 0`。
+     - `src/core/thinking/cli/main.ts` 与 `src/core/thinking/flow/engine.ts`：外发确认调用显式读取当前版本并传入 `expectedRevision: cur?.revision ?? 0`。
+     - 测试调用处（`tests/cli.test.ts`、`tests/flow.test.ts`、`tests/persistence.test.ts`）全部显式传入 `expectedRevision`。
+  4. **补齐拒绝隐式提交测试**：
+     - 在 `tests/persistence.test.ts` 中分别为 `ManifestStore` 和 `ConsentStore` 增加单测：`未传 expectedRevision 时提交直接抛错（禁止隐式自动读取当前修订号）`，断言不传修订号时运行时立即拒绝。
+
