@@ -4,7 +4,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import * as G from '../src/core/git/git.js';
-import { applyPatch, diffRecord, RecordStore, CorruptRecordError, type CollectionDef } from '../src/core/persistence/index.js';
+import { applyPatch, diffRecord, RecordStore, CorruptRecordError, StateConflictError, StaleRunError, ConsentStore, CONSENT_COLLECTION, CONSENT_RECORD_ID, ManifestStore, MANIFEST_COLLECTION, type TaskManifest, type CollectionDef } from '../src/core/persistence/index.js';
 import { TaskStore } from '../src/core/task/store.js';
 import { RecentProjects } from '../src/core/app/recent.js';
 import { DisclosureStore } from '../src/core/app/disclosure.js';
@@ -144,5 +144,168 @@ describe('旧版本数据迁移', () => {
     expect((await (await RecordStore.open(data)).events()).some((e) => e.type === 'diagnostic')).toBe(true);
     await fs.writeFile(file, JSON.stringify({ schema_version: 9, revision: 1, updatedAt: 'x', attempts: [], data: {} }));
     await expect(new RecentProjects(data).list()).rejects.toThrow('升级');
+  });
+});
+
+describe('ConsentStore（资料外发确认记录）', () => {
+  it('CAS 校验与并发冲突：期望版本不一致时拒绝提交，抛出 StateConflictError，日志记为 conflict', async () => {
+    const dir = await tmpDir('consent-');
+    const cs = new ConsentStore(dir);
+    // 初始提交：期望版本 0
+    await cs.record('svc-a', { runId: 'run-1', expectedRevision: 0 });
+    const stored = (await cs.get())!;
+    expect(stored.revision).toBe(1);
+    expect(stored.value).toEqual({ 'svc-a': expect.objectContaining({ confirmedAt: expect.any(String) }) });
+
+    // 并发修改：两个写入者都基于 revision 1 发起修改
+    await cs.record('svc-b', { runId: 'run-1', expectedRevision: 1 });
+    expect((await cs.get())!.revision).toBe(2);
+
+    // 另一个写入者仍持旧版本 1 尝试提交 → 冲突
+    await expect(cs.record('svc-c', { runId: 'run-1', expectedRevision: 1 })).rejects.toBeInstanceOf(StateConflictError);
+    const events = await (await cs.recordStore()).events();
+    expect(events.at(-1)).toMatchObject({ type: 'conflict', collection: 'consent', id: 'consent' });
+  });
+
+  it('旧运行编号不能覆盖新状态（运行隔离/Fencing）：换新 runId 后旧 runId 提交被拒绝，抛出 StaleRunError', async () => {
+    const dir = await tmpDir('consent-');
+    const cs = new ConsentStore(dir);
+    const store = await cs.recordStore();
+    // run-1 开工
+    await store.commit(CONSENT_COLLECTION, CONSENT_RECORD_ID, { runId: 'run-1', attemptId: 'att-1', expectedRevision: 0, startRun: true }, { 'svc-a': { confirmedAt: 't1' } });
+    expect((await cs.get())!.currentRunId).toBe('run-1');
+
+    // run-2 换新开工（fence）
+    await store.commit(CONSENT_COLLECTION, CONSENT_RECORD_ID, { runId: 'run-2', attemptId: 'att-2', expectedRevision: 1, startRun: true }, { 'svc-a': { confirmedAt: 't1' }, 'svc-b': { confirmedAt: 't2' } });
+    expect((await cs.get())!.currentRunId).toBe('run-2');
+
+    // 来自旧运行 run-1 的迟到提交被拒绝
+    const outcome = await store.commit(CONSENT_COLLECTION, CONSENT_RECORD_ID, { runId: 'run-1', attemptId: 'att-3', expectedRevision: 2 }, { 'svc-a': { confirmedAt: 't1' }, 'svc-b': { confirmedAt: 't2' }, 'svc-c': { confirmedAt: 't3' } });
+    expect(outcome).toMatchObject({ ok: false, reason: 'stale_run', currentRunId: 'run-2' });
+
+    // record 方法同样抛出 StaleRunError
+    await expect(cs.record('svc-c', { runId: 'run-1', expectedRevision: 2 })).rejects.toBeInstanceOf(StaleRunError);
+  });
+
+  it('崩溃后（汇总丢失）能从 JSONL 事件日志完整恢复，修订号与数据完全一致', async () => {
+    const dir = await tmpDir('consent-');
+    const cs = new ConsentStore(dir);
+    await cs.record('svc-a');
+    await cs.record('svc-b');
+    const before = (await cs.get())!;
+    expect(before.revision).toBe(2);
+    expect(Object.keys(before.value).sort()).toEqual(['svc-a', 'svc-b']);
+
+    // 模拟进程崩溃且汇总 records/ 丢失或损坏
+    await (await cs.recordStore()).close();
+    await fs.rm(path.join(dir, '.studio', 'records'), { recursive: true });
+
+    // 重新打开：启动对账自动从 events.jsonl 重建汇总
+    const cs2 = new ConsentStore(dir);
+    const after = (await cs2.get())!;
+    expect(after.revision).toBe(2);
+    expect(after.value).toEqual(before.value);
+    expect(await cs2.has('svc-a')).toBe(true);
+    expect(await cs2.has('svc-b')).toBe(true);
+  });
+
+  it('旧版本 .studio/consent.json 自动迁移进记录库，原文件重命名为 .migrated', async () => {
+    const dir = await tmpDir('consent-mig-');
+    await fs.mkdir(path.join(dir, '.studio'), { recursive: true });
+    await fs.writeFile(path.join(dir, '.studio', 'consent.json'), JSON.stringify({ 'svc-legacy': { confirmedAt: '2026-11-01T00:00:00.000Z' } }));
+
+    const cs = new ConsentStore(dir);
+    expect(await cs.has('svc-legacy')).toBe(true);
+    const stored = (await cs.get())!;
+    expect(stored.revision).toBe(1);
+    expect(stored.value).toMatchObject({ 'svc-legacy': { confirmedAt: '2026-11-01T00:00:00.000Z' } });
+    expect(fsSync.existsSync(path.join(dir, '.studio', 'consent.json.migrated'))).toBe(true);
+  });
+});
+
+describe('ManifestStore（任务清单 / 交接清单）', () => {
+  const sampleManifest = (id: string): TaskManifest => ({
+    schema: 1,
+    taskId: id,
+    threadId: 'T-1',
+    repoRoot: '/p/repo',
+    branch: 'main',
+    worktreePath: '/p/worktree',
+    startHead: '1111111111111111111111111111111111111111',
+    plan: { path: 'docs/plans/p.md', sha256: 'a'.repeat(64), artifactVersion: 1 },
+    singleThinker: false,
+    exportedAt: '2026-11-08T00:00:00.000Z',
+    taskFile: { path: '/tmp/task.md', sha256: 'b'.repeat(64) },
+  });
+
+  it('CAS 校验与并发冲突：两个并发写入者基于同一版本修改时，后提交者收到 StateConflictError', async () => {
+    const dir = await tmpDir('manifest-');
+    const ms = new ManifestStore(dir);
+    const m = sampleManifest('M1');
+    // 初次提交 expectedRevision=0
+    await ms.save(m, { expectedRevision: 0, runId: 'run-1' });
+    expect(m.revision).toBe(1);
+
+    // 写入者 A 提交 revision=1 -> revision 变成 2
+    await ms.save({ ...m }, { expectedRevision: 1, runId: 'run-1' });
+    expect((await ms.get('M1'))!.revision).toBe(2);
+
+    // 写入者 B 仍基于 revision 1 尝试提交 -> 冲突
+    await expect(ms.save({ ...m }, { expectedRevision: 1, runId: 'run-1' })).rejects.toBeInstanceOf(StateConflictError);
+    const events = await (await ms.recordStore()).events();
+    expect(events.at(-1)).toMatchObject({ type: 'conflict', collection: 'manifests', id: 'M1' });
+  });
+
+  it('旧运行编号不能覆盖新状态：换新 runId 后旧 runId 提交被拒绝，抛出 StaleRunError', async () => {
+    const dir = await tmpDir('manifest-');
+    const ms = new ManifestStore(dir);
+    const m = sampleManifest('M2');
+    await ms.save(m, { runId: 'run-1', startRun: true, expectedRevision: 0 });
+    expect((await ms.get('M2'))!.runId).toBe('run-1');
+
+    // 重新开工切换 runId 到 run-2
+    await ms.save({ ...m, revision: 1 }, { runId: 'run-2', startRun: true, expectedRevision: 1 });
+    expect((await ms.get('M2'))!.runId).toBe('run-2');
+
+    // 旧 runId 提交被拒绝
+    await expect(ms.save({ ...m, revision: 2 }, { runId: 'run-1', expectedRevision: 2 })).rejects.toBeInstanceOf(StaleRunError);
+  });
+
+  it('崩溃后（汇总丢失）能从 JSONL 事件日志完整恢复清单记录', async () => {
+    const dir = await tmpDir('manifest-');
+    const ms = new ManifestStore(dir);
+    const m1 = sampleManifest('M-CRASH-1');
+    const m2 = sampleManifest('M-CRASH-2');
+    await ms.save(m1);
+    await ms.save(m2);
+    expect(await ms.list()).toHaveLength(2);
+
+    // 模拟进程崩溃，删除 records/ 汇总
+    await (await ms.recordStore()).close();
+    await fs.rm(path.join(dir, '.studio', 'records'), { recursive: true });
+
+    // 重新打开：启动对账自动从 events.jsonl 重建汇总
+    const ms2 = new ManifestStore(dir);
+    const list = await ms2.list();
+    expect(list).toHaveLength(2);
+    expect(list.map((x) => x.taskId).sort()).toEqual(['M-CRASH-1', 'M-CRASH-2']);
+    const r1 = (await ms2.get('M-CRASH-1'))!;
+    expect(r1.taskId).toBe('M-CRASH-1');
+    expect(r1.plan.path).toBe(m1.plan.path);
+    expect(r1.revision).toBe(1);
+  });
+
+  it('旧位置 .studio/tasks/<taskId>.json 的清单文件自动迁移进记录库，原文件重命名为 .migrated', async () => {
+    const dir = await tmpDir('manifest-mig-');
+    const legacyDir = path.join(dir, '.studio', 'tasks');
+    await fs.mkdir(legacyDir, { recursive: true });
+    await fs.writeFile(path.join(legacyDir, 'M-LEGACY.json'), JSON.stringify(sampleManifest('M-LEGACY')));
+
+    const ms = new ManifestStore(dir);
+    const loaded = await ms.get('M-LEGACY');
+    expect(loaded).not.toBeNull();
+    expect(loaded!.taskId).toBe('M-LEGACY');
+    expect(loaded!.revision).toBe(1);
+    expect(fsSync.existsSync(path.join(legacyDir, 'M-LEGACY.json.migrated'))).toBe(true);
   });
 });
