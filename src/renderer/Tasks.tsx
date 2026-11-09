@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { studio, type TaskView } from './api.js';
 import { COPY } from './copy.js';
 import { PlanCard } from './PlanCard.js';
@@ -16,10 +16,36 @@ export function Tasks() {
   const [request, setRequest] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  const refreshSeq = useRef(0);
+  const mountedRef = useRef(true);
+
   const refresh = useCallback(() => {
-    studio().listTasks().then((r) => { setTasks(r.tasks); setPreferred(r.preferredMode); }).catch((e: Error) => setError(e.message));
+    const seq = ++refreshSeq.current;
+    studio()
+      .listTasks()
+      .then((r) => {
+        if (!mountedRef.current || seq !== refreshSeq.current) return;
+        setTasks((prev) => {
+          // 防止异步延迟的旧响应冲掉本地刚创建但尚未在快照里的任务
+          const missing = prev.filter((p) => !r.tasks.some((t) => t.id === p.id));
+          return missing.length > 0 ? [...r.tasks, ...missing] : r.tasks;
+        });
+        setPreferred(r.preferredMode);
+      })
+      .catch((e: Error) => {
+        if (!mountedRef.current || seq !== refreshSeq.current) return;
+        setError(e.message);
+      });
   }, []);
-  useEffect(refresh, [refresh]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    refresh();
+    return () => {
+      mountedRef.current = false;
+      refreshSeq.current++;
+    };
+  }, [refresh]);
 
   const current = tasks.find((t) => t.id === selected) ?? null;
   const busy = !!current && (current.running || BUSY.includes(current.state));
@@ -34,7 +60,9 @@ export function Tasks() {
   const create = async () => {
     setError(null);
     try {
+      refreshSeq.current++;
       const t = await studio().createTask(request);
+      refreshSeq.current++;
       upsert(t);
       setSelected(t.id);
       setRequest('');

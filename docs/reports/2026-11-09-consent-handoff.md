@@ -218,4 +218,60 @@
        - `test (ubuntu-latest)`: **Success**（45s，typecheck、test、build 全部通过）
        - `test (macos-latest)`: **Success**（3m28s，typecheck、test、build、e2e 全部通过）
 
+### 7.5 CI 偶发失败（Flaky）核查、失败日志排查与根本修复
+
+#### 1. 失败记录与日志排查（真实故障数据）
+- **CI 运行 42613745355**（提交 `260c943`，共 3 次 Attempt）：
+  - **Attempt 1 失败**：
+    - 失败用例：`e2e/shell.e2e.ts` > `施工模式界面` > `偏好只预选：上次选了完全信任，新任务预选完全信任，但开工前仍然弹出确认面板`
+    - 错误信息：`TimeoutError: locator.check: Timeout 30000ms exceeded.`
+    - 调用栈：`Call log: - waiting for getByTestId('mode-full-trust')`，在第 358 行：
+      ```ts
+      357: await newTask(a.page, '任务一');
+      358: await a.page.getByTestId('mode-full-trust').check();
+      ```
+  - **Attempt 2 失败**：
+    - 失败用例：`e2e/shell.e2e.ts` > `验收、保存、放弃、撤销（B4-2，待维护者运行）` > `验收失效 → 保存被拦下并突出“重新检查” → 重新检查后确认清空`
+    - 错误信息：`TimeoutError: locator.waitFor: Timeout 30000ms exceeded.`
+    - 调用栈：`Call log: - waiting for getByTestId('plan-card') to be visible`，在 `newTask`（第 230 行）被 `toReview`（第 444 行 / 第 528 行）调用时。
+  - **Attempt 3**：全部通过（27 个 E2E 测试耗时 5m35s）。
+- **历史运行 42605282319**（提交 `f0ac7d1`，1 次失败）：
+  - 失败用例：`e2e/shell.e2e.ts` > `dirtyMain：主项目有未保存修改时不能保存，列出文件；修改消失后可用`
+  - 错误信息：`AssertionError: expected undefined to deeply equal [ 'notes.txt' ]`，在第 554 行。
+  - 原因：此前已在 commit `cc6c3f6` 中核查并修复（等待 `save-files` 节点渲染以保证主进程异步视图更新完成）。
+
+#### 2. 原因深度剖析：异步旧响应乱序覆盖（Stale Response Race Condition）
+- **触发机理**：
+  - 在 E2E 测试中通过 `openProjectWithFake` 打开项目时，渲染层组件 `Tasks` 挂载，并在 `useEffect` 中发起异步 IPC 请求 `studio().listTasks()` 查询任务列表。
+  - 由于测试执行非常迅速，测试代码紧接着执行 `await newTask(a.page, ...)`：
+    1. 在输入框填入需求并点击 `create-task` 按钮；
+    2. 主进程完成 `createTask` 并向持久化层写入记录，返回新建的任务对象 `t`；
+    3. `Tasks.create` 收到 `t`，调用 `upsert(t)`（此时 `tasks = [t]`），并设置 `setSelected(t.id)`；
+    4. React 渲染出选中的任务计划卡 `<PlanCard>`（`data-testid="plan-card"`），Playwright 的 `await page.getByTestId('plan-card').waitFor()` 满足并立即返回。
+  - **致命竞态（Race Condition）**：
+    - 此时，在组件刚挂载时发出的那个 `studio().listTasks()` 异步 IPC 请求（因主进程启动对账扫描或 macOS runner 调度较慢）才刚刚返回！
+    - 这个早期请求返回的是旧快照（空列表 `[]`）。
+    - 挂载时的 promise 回调无条件执行了 `setTasks(r.tasks)`，即 `setTasks([])`！
+    - 这瞬间将 `tasks` 清空覆盖！
+    - 紧接着 `current = tasks.find(t => t.id === selected) ?? null` 变为 `null`，React 立即卸载了 `<PlanCard>`，`plan-card` 与 `mode-full-trust` 瞬间从 DOM 中被销毁！
+    - **Attempt 1 中**：`newTask` 刚返回，下一行 `mode-full-trust.check()` 寻找元素时元素已被卸载，死等 30 秒超时；
+    - **Attempt 2 中**：旧响应更早一步在 `waitFor()` 期间清空状态，`plan-card` 同样消失，`waitFor()` 死等 30 秒超时。
+
+#### 3. 根本性修复（不加超时、不放宽断言、杜绝重跑掩盖）
+- 在 `src/renderer/Tasks.tsx` 中实施严格的异步请求版本控制与状态合并双重防御：
+  1. **请求序号递增守护（`refreshSeq`）**：
+     - 使用 `useRef(0)` 维护 `refreshSeq`。
+     - 每次发起 `refresh()` 时自增序号并绑定到该次请求；当 promise 返回时，若 `seq !== refreshSeq.current`，则该响应被判定为过期响应（Stale Response），直接丢弃，严禁调用 `setTasks`。
+     - 组件卸载时标记 `mountedRef.current = false` 并递增 `refreshSeq`，防止卸载后竞态。
+  2. **在创建任务时主动失效旧请求**：
+     - 在 `create()` 开始和完成写入时主动使 `refreshSeq.current++`，确保任何在任务创建前发起的旧 `listTasks()` 请求在返回时均被立即丢弃，绝不会覆盖新创建的任务。
+  3. **任务列表差异合并保护（Merge Defense）**：
+     - 在 `setTasks` 时比对 `prev` 与 `r.tasks`，通过 `prev.filter((p) => !r.tasks.some((t) => t.id === p.id))` 保留本地正在操作但尚未包含在远端旧快照中的任务，彻底消除偶发数据丢失。
+- **本地严苛验证**：
+  - 针对性运行失败用例：
+    - `npx vitest run -c vitest.e2e.config.ts -t "偏好只预选"`：3.0s 一次通过
+    - `npx vitest run -c vitest.e2e.config.ts -t "验收失效"`：4.4s 一次通过
+  - 本地全量运行 27 项 Electron E2E 测试（`npm run test:e2e`）：全部一次通过（81.99s，0 失败）。
+
+
 
