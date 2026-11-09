@@ -150,7 +150,7 @@ async function doImport(projectRoot: string, args: ReturnType<typeof parseArgs>,
   }
 
   // 已绑定：可调用规划者审查一次，结果交用户
-  const manifest = await new ManifestStore(projectRoot).get(args.task);
+  const manifest = await new ManifestStore(projectRoot).get(args.task!);
   if (!manifest) {
     say(`找不到任务清单：${args.task}`);
     return EXIT.error;
