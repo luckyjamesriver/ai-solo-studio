@@ -281,6 +281,34 @@
   - **`test (ubuntu-latest)`**：**Success**（37s，typecheck、test、build 全部通过）
   - **`test (macos-latest)`**：**Success**（3m34s，typecheck、test、build、Electron 27 项 e2e 全部一次通过）
 
+### 7.6 任务列表合并保护删除与纯序号方案的确定性测试
+
+#### 1. 背景与修正原因
+- 在 7.5 的竞态修复中，为了防御异步旧响应清空新建任务，除了引入 `refreshSeq` 序号机制外，还附加了“任务列表差异合并保护”（保留本地有、远端没有的任务）。
+- **合并保护的副作用**：当任务在后端被用户主动放弃（discard）、归档或删除后，前端组件内部由于保留了 `prev` 中本地已存在但远端快照已没有的任务，合并逻辑会导致已删除/已放弃的任务长期残留在界面上，无法被真正移除。
+- **架构校准**：单靠请求序号机制（`refreshSeq`）以及在创建任务时自增 `refreshSeq.current++`，已足以完全阻断和丢弃早于创建操作发起的所有过时旧响应（Stale Responses）。因此，“合并保护”不仅是冗余的，而且阻碍了状态的正常同步与废弃任务的移除，必须彻底删除。
+
+#### 2. 代码修改内容
+- **`src/renderer/Tasks.tsx`**：
+  - 彻底删除 `setTasks((prev) => { const missing = prev.filter(...); return missing.length > 0 ? [...r.tasks, ...missing] : r.tasks; });` 合并逻辑。
+  - 恢复为纯粹的 `setTasks(r.tasks);`。
+  - 纯粹依托 `if (!mountedRef.current || seq !== refreshSeq.current) return;` 判定请求时效性，只有当前最新的有效响应才能提交更新组件状态。
+
+#### 3. 新增确定性 E2E 测试
+- 在 `e2e/shell.e2e.ts` 中新增端到端确定性并发测试：
+  - **用例名称**：`确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除`
+  - **验证逻辑**：
+    1. **精准模拟主进程受控延迟**：通过 Electron 主进程 `ipcMain` 拦截器将打开项目触发的首次 `tasks:list` 调用挂起，人为制造旧响应严重滞后的场景。
+    2. **并发创建新任务**：在旧响应仍在挂起等待的期间，用户填入需求并点击创建新任务 `'并发新建任务'`，新任务在界面上渲染成功。
+    3. **释放旧响应并断言不丢失**：释放之前挂起的旧 `listTasks()` 响应（返回空列表 `[]`）。断言由于 `refreshSeq` 守卫生效，旧响应被判定为过期并丢弃，新任务在界面中完整保留，计划卡和目标输入框没有消失。
+    4. **模拟任务放弃并断言正常移除**：模拟任务在远端已被放弃/删除（后续 `tasks:list` 返回空列表），触发开工/刷新回调后，断言由于删除了“合并保护”，界面列表中的任务被确定性清空并移除（`task-list` 任务数为 0，`task-pane` 销毁），彻底杜绝残留。
+
+#### 4. 本地全量测试与验证结果
+- **类型检查**：`npm run typecheck` 0 错误通过。
+- **单元测试全量结果**：`npm test` 23 passed, 11 skipped (34 test files), 504 passed, 37 skipped (541 tests), 0 failed。
+- **端到端测试全量结果**：`npm run test:e2e` 1 passed (1 test file), 28 passed, 0 failed（80.64s，包含新增的确定性并发与放弃刷新测试）。
+
+
 
 
 

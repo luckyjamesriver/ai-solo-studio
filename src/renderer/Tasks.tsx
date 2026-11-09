@@ -25,11 +25,7 @@ export function Tasks() {
       .listTasks()
       .then((r) => {
         if (!mountedRef.current || seq !== refreshSeq.current) return;
-        setTasks((prev) => {
-          // 防止异步延迟的旧响应冲掉本地刚创建但尚未在快照里的任务
-          const missing = prev.filter((p) => !r.tasks.some((t) => t.id === p.id));
-          return missing.length > 0 ? [...r.tasks, ...missing] : r.tasks;
-        });
+        setTasks(r.tasks);
         setPreferred(r.preferredMode);
       })
       .catch((e: Error) => {

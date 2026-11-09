@@ -431,6 +431,74 @@ describe('施工模式界面', () => {
     expect(r.badId).toContain('找不到');
     expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'startTask', 'stopTask', 'undoSave']);
   });
+
+  it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
+    const proj = gitProject('stale-race-site');
+    const a = await launch(mk('data'));
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await useFakeExecutor(a.app, [{ do: 'say', text: '完成' }]);
+    await stubDialog(a.app, proj);
+
+    // 1. 在主进程中拦截 tasks:list，让第一次调用挂起（受控延迟返回旧的空列表）
+    await a.app.evaluate(({ ipcMain }) => {
+      const orig = (ipcMain as any)._invokeHandlers.get('tasks:list');
+      const g = globalThis as any;
+      g.__staleResolvers = [];
+      g.__blockFirstList = true;
+      g.__mockEmptyList = false;
+
+      ipcMain.removeHandler('tasks:list');
+      ipcMain.handle('tasks:list', async (event, ...args) => {
+        if (g.__mockEmptyList) {
+          return { tasks: [], preferredMode: 'standard' };
+        }
+        if (g.__blockFirstList) {
+          return new Promise((resolve) => {
+            g.__staleResolvers.push(() => resolve({ tasks: [], preferredMode: 'standard' }));
+          });
+        }
+        return orig(event, ...args);
+      });
+    });
+
+    // 2. 打开项目：Tasks 挂载并触发挂起的 listTasks()
+    await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await a.page.getByTestId('project').waitFor();
+
+    // 3. 此时旧的 listTasks() 尚未返回（正在模拟延迟返回旧空列表），在此期间创建任务
+    await newTask(a.page, '并发新建任务');
+    await a.page.getByTestId('plan-card').waitFor();
+    expect(await a.page.getByTestId('goal').inputValue()).toBe('并发新建任务');
+    expect(await a.page.getByTestId('task-list').innerText()).toContain('并发新建任务');
+
+    // 4. 释放之前挂起的旧 listTasks() 响应（返回旧的空列表 []）
+    await a.app.evaluate(() => {
+      const g = globalThis as any;
+      g.__blockFirstList = false;
+      for (const r of g.__staleResolvers) r();
+      g.__staleResolvers = [];
+    });
+    await a.page.waitForTimeout(300);
+
+    // 断言：由于 refreshSeq 请求序号机制，旧的空列表被判定过期并丢弃，新任务绝不会消失
+    await a.page.getByTestId('plan-card').waitFor();
+    expect(await a.page.getByTestId('goal').inputValue()).toBe('并发新建任务');
+    expect(await a.page.getByTestId('task-list').innerText()).toContain('并发新建任务');
+
+    // 5. 模拟任务在远端被放弃/删除（后续 listTasks 均返回空列表）
+    await a.app.evaluate(() => {
+      const g = globalThis as any;
+      g.__mockEmptyList = true;
+    });
+
+    // 开工触发 PlanCard 的 onChanged（内部执行 upsert(t); refresh();）
+    await a.page.getByTestId('start-button').click();
+
+    // 断言：由于删除了“合并保护”，远端已放弃/删除的任务在刷新后从列表中正常移除，不再残留
+    await a.page.waitForFunction(() => document.querySelectorAll('[data-testid="task-list"] li').length === 0);
+    expect(await a.page.getByTestId('task-list').count()).toBe(0);
+    expect(await a.page.getByTestId('task-pane').count()).toBe(0);
+  });
 });
 
 /**
