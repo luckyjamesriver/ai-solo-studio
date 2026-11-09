@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { EXIT, parseArgs, resolveThinkers, runCli, ThinkerSelectionError, type CliEnv, type ThinkerRegistry } from '../src/core/thinking/cli/index.js';
+import { ConsentStore } from '../src/core/thinking/flow/index.js';
 import { FakeThinker } from '../src/core/thinking/index.js';
 import { git, tmpDir } from './helpers.js';
 import { makeProject, scripted } from './flow-helpers.js';
@@ -81,7 +82,7 @@ describe('入口（runCli）', () => {
     expect(threads).toHaveLength(1);
     expect((await fs.readdir(exportDir)).length).toBe(0);
     // 资料外发确认没有被默认通过
-    await expect(fs.access(path.join(root, '.studio', 'consent.json'))).rejects.toThrow();
+    expect(await new ConsentStore(root).has('svc-claude')).toBe(false);
   });
 
   it('无 TTY 且已确认过服务：停在需求条目确认点（需求未确认不起草）', async () => {
@@ -113,7 +114,7 @@ describe('入口（runCli）', () => {
     expect(plans).toHaveLength(1);
     // 不自动提交：方案文件是未跟踪文件
     expect((await git(root, ['status', '--porcelain'])).trim()).toContain('docs/plans/');
-    const consent = JSON.parse(await fs.readFile(path.join(root, '.studio', 'consent.json'), 'utf8'));
+    const consent = (await new ConsentStore(root).get())!.value;
     expect(Object.keys(consent).sort()).toEqual(['svc-claude', 'svc-codex']);
   });
 
@@ -227,7 +228,7 @@ describe('入口（runCli）', () => {
     expect(m.text()).toContain('不是验收通过');
     expect(m.text()).toContain('不会自动派下一个任务');
     // 无 TTY 且服务未确认
-    await fs.rm(path.join(root, '.studio', 'consent.json'));
+    await new ConsentStore(root).clear();
     const m2 = makeIO();
     const reg2 = registry({ 'claude-cli-personal': () => new FakeThinker([{ raw: JSON.stringify(review) }], { available: true }, { id: 'claude-cli-personal', service: 'svc-claude' }) });
     expect(await runCli(['--import', report, '--task', 'M7-G'], { cwd: root, isTTY: false, io: m2.io, registry: reg2 })).toBe(EXIT.waiting);

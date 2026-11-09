@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWrite } from './store.js';
 import type { AttemptRecord, ThreadBudget, ThreadRecord } from './types.js';
 
 export const DEFAULT_BUDGET: ThreadBudget = { maxCalls: 12, stepTimeoutMs: 180_000, maxTotalCallMs: 30 * 60_000 };
@@ -68,27 +67,7 @@ export async function loadOptionalContext(projectRoot: string, files: string[]):
   return out;
 }
 
-/** 首次向某服务发送资料前的确认记录，按服务保存在 .studio/consent.json。 */
-export class ConsentStore {
-  constructor(private readonly projectRoot: string) {}
-  private file() {
-    return path.join(this.projectRoot, '.studio', 'consent.json');
-  }
-  private async read(): Promise<Record<string, { confirmedAt: string }>> {
-    try {
-      return JSON.parse(await fs.readFile(this.file(), 'utf8')) as Record<string, { confirmedAt: string }>;
-    } catch {
-      return {};
-    }
-  }
-  async has(service: string): Promise<boolean> {
-    return service in (await this.read());
-  }
-  async record(service: string): Promise<void> {
-    const cur = await this.read();
-    cur[service] = { confirmedAt: new Date().toISOString() };
-    await atomicWrite(this.file(), JSON.stringify(cur, null, 2) + '\n');
-  }
-}
+/** 首次向某服务发送资料前的确认记录，经统一写入服务保存在 .studio/records/consent/consent.json。 */
+export { ConsentStore } from '../../persistence/consent.js';
 
 export const lastAttempt = (rec: ThreadRecord, step: AttemptRecord['step']) => rec.attempts.filter((a) => a.step === step).at(-1);
