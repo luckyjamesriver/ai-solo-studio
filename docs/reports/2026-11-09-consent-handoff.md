@@ -1,0 +1,127 @@
+# 任务完成报告：consent.json 与交接清单接入统一写入服务
+
+- **日期**：2026-11-09
+- **分支**：`rebuild`
+- **执行任务**：将外发告知确认记录（`consent.json`）与交接任务清单（`.studio/tasks/`）接入现有的统一持久化服务（`RecordStore`），对齐 CAS 修订号校验、JSONL 事件日志与启动对账恢复机制，清理直接读写绕过，补全测试并更新 ADR 文档。
+
+---
+
+## 1. 修改的文件清单及改动说明
+
+| 文件路径 | 改动说明 |
+| :--- | :--- |
+| `src/core/persistence/consent.ts` | **新增**。定义 `CONSENT_COLLECTION`（集合名称 `'consent'`）与 `ConsentStore` 类，包装底层 `RecordStore`。实现带 CAS 修订号校验的 `record()`、`get()`、`has()`、`clear()`、`commit()` 操作。提供旧文件平滑兼容：若存在旧版 `.studio/consent.json`，在首次读取或记录时自动迁移进记录库并将原文件重命名为 `.studio/consent.json.migrated`。 |
+| `src/core/persistence/manifest.ts` | **新增**。定义 `MANIFEST_COLLECTION`（集合名称 `'manifests'`）与 `ManifestStore` 类，包装底层 `RecordStore`。负责交接清单（`.studio/records/manifests/<taskId>.json`）的统一持久化，支持 CAS 提交、查询与列表，提交时自动向 `.studio/events.jsonl` 追加 `manifest_saved` 事件；提供旧文件平滑兼容：若存在 `.studio/tasks/<taskId>.json`，自动迁入记录库并将原文件重命名为 `.migrated`。 |
+| `src/core/persistence/index.ts` | 导出 `ConsentStore`、`CONSENT_COLLECTION`、`CONSENT_RECORD_ID`、`ConsentRecord`、`ManifestStore`、`MANIFEST_COLLECTION`、`TaskManifest`、`SaveManifestOptions` 等接口与类型。 |
+| `src/core/thinking/flow/support.ts` | 移除原先直接写入 `.studio/consent.json` 的原子文件写入实现，改为引用并重导出 `persistence/consent.ts` 中的 `ConsentStore`，消除对底层文件系统的绕过。 |
+| `src/core/thinking/handoff/export.ts` | 移除直接写 `.studio/tasks/<taskId>.json` 的文件操作，改为调用 `ManifestStore.save()` 通过记录库提交，附加 `expectedRevision: 0` CAS 校验并在事件日志中留痕。 |
+| `src/core/thinking/handoff/import.ts` | 移除直接通过 `fs.readFile` 读取 `.studio/tasks/<taskId>.json` 的旧逻辑，改为调用 `ManifestStore.get()` 从统一记录库中读取。 |
+| `src/core/thinking/cli/main.ts` | 将思考层 CLI 中对任务清单的读取适配为 `new ManifestStore(projectRoot).get(args.task!)`，对资料外发权限的确认判断与记录适配为 `ConsentStore`。 |
+| `tests/cli.test.ts` | 将测试用例中直接读取和删除 `.studio/consent.json` 磁盘文件的操作改为调用 `ConsentStore.get()` 与 `ConsentStore.clear()`。 |
+| `tests/handoff.test.ts` | 将测试中对任务清单产物文件位置与内容的断言适配为统一记录库存储结构（路径为 `.studio/records/manifests/<taskId>.json`，且包含 `RecordEnvelope` 封套字段）。 |
+| `tests/persistence.test.ts` | 补充针对 `ConsentStore` 与 `ManifestStore` 的 8 个高可靠性单元测试，覆盖并发冲突、Fencing 隔离、日志恢复与旧文件迁移。 |
+| `docs/adr/0005-data-storage.md` | 更新第 8 节“实现状态”，把 `consent.json` 与交接清单从“与原定内容的差别”和“待办”中移除，并入“已改走记录库”列表，记录其实际位置与完成状态。 |
+| `docs/PROJECT_CONTEXT.md` | 更新第 11 节“待决与开放问题”中的“数据存储待办”，将该项标为已完成。 |
+| `e2e/shell.e2e.ts` | 修复端到端测试用例 `主项目有未保存修改：列出文件，不提供“帮我提交”` 中的异步时序问题：将原 `waitFor('save-reason')` 改为 `waitFor('save-files')`，避免因未确认状态下页面已存在 `save-reason` 元素导致尚未等待异步确认 IPC 返回就提前 evaluate 读取状态的偶发失败。 |
+
+---
+
+## 2. 新增测试及验证内容
+
+在 `tests/persistence.test.ts` 中新增了 2 个 `describe` 测试套件，共 8 个测试用例：
+
+### 2.1 ConsentStore（资料外发确认记录）
+1. **CAS 校验与并发冲突**：
+   - 验证两个并发修改者基于相同 `expectedRevision` 提交时，后提交者被拒绝并抛出 `StateConflictError`，且 `.studio/events.jsonl` 中如实记录 `conflict` 事件。
+2. **旧运行编号隔离（Fencing）**：
+   - 验证开工切换新 `runId` 之后，旧 `runId` 发起的迟到提交被拒绝（抛出 `StaleRunError`，日志记为 `stale_run`），保证旧执行体不会覆盖新状态。
+3. **崩溃后从日志恢复**：
+   - 模拟进程崩溃导致汇总目录 `.studio/records/` 整体丢失，重新启动 `ConsentStore` 时，启动对账逻辑自动根据 `.studio/events.jsonl` 事件流重建记录文件，验证其最终状态、键值与修订号与崩溃前 100% 一致。
+4. **旧数据平滑迁移**：
+   - 在项目根目录准备旧格式的 `.studio/consent.json` 文件，验证 `ConsentStore` 首次读取时能自动将其迁入记录库，并把旧文件重命名为 `.studio/consent.json.migrated` 保留备份。
+
+### 2.2 ManifestStore（任务清单 / 交接清单）
+1. **CAS 校验与并发冲突**：
+   - 验证清单首次提交 `expectedRevision: 0` 成功变为 `revision: 1`；随后两个写入者均基于版本 1 尝试更新，后提交者抛出 `StateConflictError`，事件日志记录 `conflict`。
+2. **旧运行编号隔离（Fencing）**：
+   - 验证清单开工生成 `runId: run-1` 后，若新运行开工换为 `run-2`，旧 `run-1` 的更新请求被拒绝并抛出 `StaleRunError`。
+3. **崩溃后从日志恢复**：
+   - 模拟写入多个任务清单后删除 `.studio/records/` 目录，验证重新实例化 `ManifestStore` 后通过 `reconcile` 完整重建所有任务清单记录，清单字段与版本无损还原。
+4. **旧数据平滑迁移**：
+   - 模拟旧版存储路径 `.studio/tasks/<taskId>.json`，验证 `ManifestStore` 能够透明读取、迁入新目录并自动生成 `.migrated` 副本。
+
+---
+
+## 3. 全量测试结果（`npm test`）
+
+执行 `npm test`（Vitest v5.0.5）的全量运行结果如下：
+
+- **测试文件（Test Files）**：
+  - 通过：**23** 个
+  - 跳过：**11** 个（为 `tests/adr-0005-scenarios.test.ts` 中保留的 `it.todo` 验收场景骨架）
+  - 失败：**0** 个
+  - 文件总计：34 个
+- **测试用例（Tests）**：
+  - 通过：**501** 个
+  - 跳过：**37** 个
+  - 失败：**0** 个
+  - 测试总计：538 个
+- **执行耗时**：53.07 秒
+- **依赖与边界检查**：
+  - `tests/security.test.ts` 中 40 项安全断言全部通过，证实除 `src/core/persistence/` 外没有任何核心模块绕过持久化服务直接写文件，记录库引用范围严格收敛。
+- **本地端到端测试（`npm run test:e2e`）**：
+  - 27 个端到端测试用例全部通过（耗时 77.86 秒）。
+
+---
+
+## 4. GitHub CI 状态
+
+- **触发提交**：`cc6c3f6`
+- **运行编号（Run ID）**：[42606735244](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42606735244)
+- **分支**：`rebuild`
+- **综合状态**：**Success**（所有平台全部通过，0 失败）
+
+### 各 Job 运行明细：
+1. **`test (ubuntu-latest)`**（Job ID: `129124532479`）：
+   - 状态：**Success**（耗时 45 秒）
+   - 执行阶段：
+     - `Run npm run typecheck`：通过
+     - `Run npm test`：通过（23 passed, 11 skipped, 0 failed）
+     - `Run npm run build`：通过
+2. **`test (macos-latest)`**（Job ID: `129124532674`）：
+   - 状态：**Success**（耗时 4 分 21 秒）
+   - 执行阶段：
+     - `Run npm run typecheck`：通过
+     - `Run npm test`：通过（23 passed, 11 skipped, 0 failed）
+     - `Run npm run build`：通过
+     - `Install Electron binary (macOS)`：通过
+     - `Electron end-to-end (macOS)`：通过（27 passed, 0 failed）
+
+---
+
+## 5. 与 ADR-0005 不一致的地方及原因
+
+1. **实际落盘路径的收敛与归一**：
+   - **ADR-0005 原文表述**：交接清单放在 `.studio/tasks/`，外发告知记录放在 `.studio/consent.json`。
+   - **实际落地路径**：
+     - 任务清单存储于 `.studio/records/manifests/<taskId>.json`；
+     - 外发确认记录存储于 `.studio/records/consent/consent.json`。
+   - **原因**：
+     - 现有的统一写入服务 `RecordStore` 的核心机制是：以 `.studio/records/<collection>/<id>.json` 作为快照汇总投影，以 `.studio/events.jsonl` 作为唯一权威事实日志。启动对账（`reconcile()`）会统一扫描 `recordsRoot` 并在汇总缺失/损坏时从日志重建。
+     - 若将清单和确认记录分散在 `records` 目录之外，就无法接入现有的启动对账和重放机制，必须另写一套分散的扫描和对账逻辑，违背了“接入现有的统一写入服务，不要另写一套新的存储机制”的原则。
+     - 现行实现不仅使任务记录（`tasks`）、清单记录（`manifests`）和外发确认（`consent`）在结构上彻底解耦独立，还通过自动迁移机制保留了对旧路径的无感兼容。
+
+除上述存储目录统一收归 `records/` 下以外，其余设计（CAS 乐观并发校验、`runId` Fencing 隔离、JSONL 事件日志、APFS 本地卷检测、跨进程目录租约锁、原子文件写入）完全与 ADR-0005 保持一致。
+
+---
+
+## 6. 未完成或不确定的事项
+
+1. **思考记录与方案文档的统一持久化**：
+   - 思考会话线程（`.studio/threads/`）和方案文档目前仍采用 `persistence/files.ts` 中的原子写原语进行一次性落盘，尚未接入带 CAS 与事件日志的 `RecordStore`，按规划留待后续专项任务迁移。
+2. **事件日志轮转与快照压缩**：
+   - `.studio/events.jsonl` 当前为纯追加日志，长期运行或任务量极大时日志文件体积会持续增长，尚未实现定期的日志截断、轮转或基于快照的压缩（ADR-0005 允许后续迭代完成）。
+3. **跨任务独立项目级保存锁**：
+   - 目前依赖单控制器任务级互斥以及 Git 合并冲突检测兜底，尚未实现跨任务独立保存锁。
+4. **UI 样式细节**：
+   - 前期 impeccable 审计发现的 side-tab 边框样式问题按规划保留至 UI 打磨阶段统一处理，本次任务恪守规范未变动任何前端样式。
