@@ -4,21 +4,21 @@ import type { TaskState } from '../task/state.js';
 
 /**
  * UI v2.1 第 3 节三层状态模型：
- * - 阶段（stage）：讨论 / 施工 / 验收 / 已结束（本阶段尚未实现讨论，任务从施工准备开始）
+ * - 阶段（stage）：计划（阶段 5 改为讨论）/ 施工 / 验收 / 已结束
  * - 运行状态（runStatus）：卡片徽章标签
- * - 结局（outcome）：仅「已结束」任务才有（已保存 / 已放弃 / 未完成而终止）
+ * - 结局（outcome）：仅「已结束」任务才有（已保存 / 已放弃 / 已撤销 / 未完成而终止）
  */
-export type TaskStage = 'discussing' | 'building' | 'reviewing' | 'ended';
-export type TaskOutcome = 'saved' | 'discarded' | 'terminated';
+export type TaskStage = 'planning' | 'discussing' | 'building' | 'reviewing' | 'ended';
+export type TaskOutcome = 'saved' | 'discarded' | 'undone' | 'terminated';
 export type WorkbenchGroup = 'needs_decision' | 'running' | 'recent_ended';
 
 export interface TaskClassification {
   stage: TaskStage;
-  stageLabel: '讨论' | '施工' | '验收' | '已结束';
+  stageLabel: '计划' | '讨论' | '施工' | '验收' | '已结束';
   boardColumn: TaskStage;
   runStatus: string | null;
   outcome: TaskOutcome | null;
-  outcomeLabel: '已保存' | '已放弃' | '未完成而终止' | null;
+  outcomeLabel: '已保存' | '已放弃' | '已撤销' | '未完成而终止' | null;
   workbenchGroup: WorkbenchGroup;
   isRunning: boolean;
   needsAttention: boolean;
@@ -29,16 +29,18 @@ export interface TaskClassification {
   actionKind: 'open_task' | 'open_history';
 }
 
-const STAGE_LABEL: Record<TaskStage, '讨论' | '施工' | '验收' | '已结束'> = {
+const STAGE_LABEL: Record<TaskStage, '计划' | '讨论' | '施工' | '验收' | '已结束'> = {
+  planning: '计划',
   discussing: '讨论',
   building: '施工',
   reviewing: '验收',
   ended: '已结束',
 };
 
-const OUTCOME_LABEL: Record<TaskOutcome, '已保存' | '已放弃' | '未完成而终止'> = {
+const OUTCOME_LABEL: Record<TaskOutcome, '已保存' | '已放弃' | '已撤销' | '未完成而终止'> = {
   saved: '已保存',
   discarded: '已放弃',
+  undone: '已撤销',
   terminated: '未完成而终止',
 };
 
@@ -145,7 +147,7 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
   const state: TaskState = t.state;
   switch (state) {
     case 'draft':
-      return mk('building', {
+      return mk('planning', {
         runStatus: '待配置计划',
         outcome: null,
         workbenchGroup: 'needs_decision',
@@ -154,7 +156,7 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
         actionLabel: '去配置计划',
       });
     case 'clarifying':
-      return mk('building', {
+      return mk('planning', {
         runStatus: '等你裁决',
         outcome: null,
         workbenchGroup: 'needs_decision',
@@ -163,7 +165,7 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
         actionLabel: '去说明',
       });
     case 'planned':
-      return mk('building', {
+      return mk('planning', {
         runStatus: '待开工确认',
         outcome: null,
         workbenchGroup: 'needs_decision',
@@ -172,7 +174,7 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
         actionLabel: '去开工',
       });
     case 'approved':
-      return mk('building', {
+      return mk(opts.isLiveRunning ? 'building' : 'planning', {
         runStatus: opts.isLiveRunning ? '运行中' : '待开工确认',
         outcome: null,
         workbenchGroup: opts.isLiveRunning ? 'running' : 'needs_decision',
@@ -194,12 +196,14 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
       });
     case 'exec_succeeded':
       return mk('building', {
-        runStatus: '运行中',
+        runStatus: opts.isLiveRunning ? '运行中' : '待生成验收',
         outcome: null,
         workbenchGroup: opts.isLiveRunning ? 'running' : 'needs_decision',
         isRunning: !!opts.isLiveRunning,
         needsAttention: !opts.isLiveRunning,
-        impact: opts.isLiveRunning ? 'AI 已结束修改，正在生成验收结果' : '执行已结束，等你查看验收结果',
+        impact: opts.isLiveRunning
+          ? 'AI 已结束修改，正在生成验收结果'
+          : '施工已结束，正在准备验收；如果一直停在这里，可以重新检查',
         actionLabel: opts.isLiveRunning ? '查看' : '去验收',
       });
     case 'exec_failed':
@@ -285,7 +289,7 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
     case 'discard_cleanup_pending':
       return mk('ended', {
         runStatus: '被阻断',
-        outcome: 'terminated',
+        outcome: 'discarded',
         workbenchGroup: 'needs_decision',
         needsAttention: true,
         isAbnormal: true,
@@ -294,8 +298,8 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
       });
     case 'undone':
       return mk('ended', {
-        runStatus: '已撤销保存',
-        outcome: 'terminated',
+        runStatus: null,
+        outcome: 'undone',
         workbenchGroup: 'recent_ended',
         impact: '已撤销那次保存，项目已恢复到保存之前的样子',
         actionLabel: '查看任务',

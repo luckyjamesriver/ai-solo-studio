@@ -42,14 +42,14 @@
 
 | `TaskState`（及附加条件） | 阶段（`stageLabel`） | 看板列 | 运行状态标签（`runStatus`） | 结局（`outcomeLabel`） | 工作台分组 | 异常标示 |
 |---|---|---|---|---|---|---|
-| `draft` | 施工 | 施工中 | 待配置计划 | — | 需要你决定 | 否 |
-| `clarifying` | 施工 | 施工中 | 等你裁决 | — | 需要你决定 | 否 |
-| `planned` | 施工 | 施工中 | 待开工确认 | — | 需要你决定 | 否 |
+| `draft` | 计划 | 计划中 | 待配置计划 | — | 需要你决定 | 否 |
+| `clarifying` | 计划 | 计划中 | 等你裁决 | — | 需要你决定 | 否 |
+| `planned` | 计划 | 计划中 | 待开工确认 | — | 需要你决定 | 否 |
 | `approved`（`isLiveRunning=true`） | 施工 | 施工中 | 运行中 | — | 正在运行 | 否 |
-| `approved`（`isLiveRunning=false`） | 施工 | 施工中 | 待开工确认 | — | 需要你决定 | 否 |
+| `approved`（`isLiveRunning=false`） | 计划 | 计划中 | 待开工确认 | — | 需要你决定 | 否 |
 | `running` | 施工 | 施工中 | 运行中 | — | 正在运行 | 否 |
 | `exec_succeeded`（`isLiveRunning=true`） | 施工 | 施工中 | 运行中 | — | 正在运行 | 否 |
-| `exec_succeeded`（`isLiveRunning=false`） | 施工 | 施工中 | 运行中 | — | 需要你决定 | 否 |
+| `exec_succeeded`（`isLiveRunning=false`） | 施工 | 施工中 | 待生成验收 | — | 需要你决定 | 否 |
 | `exec_failed` | 施工 | 施工中 | 失败 | — | 需要你决定 | 是 |
 | `stopped` | 施工 | 施工中 | 已停止 | — | 需要你决定 | 否 |
 | `timed_out` | 施工 | 施工中 | 已中断 | — | 需要你决定 | 是 |
@@ -62,11 +62,11 @@
 | `saved` | 已结束 | 已结束 | — | 已保存 | 最近结束 | 否 |
 | `saved_cleanup_pending` | 已结束 | 已结束 | 被阻断 | 已保存 | 需要你决定 | 是 |
 | `discarded` | 已结束 | 已结束 | — | 已放弃 | 最近结束 | 否 |
-| `discard_cleanup_pending` | 已结束 | 已结束 | 被阻断 | 未完成而终止 | 需要你决定 | 是 |
-| `undone` | 已结束 | 已结束 | 已撤销保存 | 未完成而终止 | 最近结束 | 否 |
+| `discard_cleanup_pending` | 已结束 | 已结束 | 被阻断 | 已放弃 | 需要你决定 | 是 |
+| `undone` | 已结束 | 已结束 | — | 已撤销 | 最近结束 | 否 |
 | `undo_failed` | 已结束 | 已结束 | 失败 | 已保存 | 需要你决定 | 是 |
 
-注：`讨论中` 列与阶段条中的「讨论」段按本阶段范围要求（B5/B6）先隐藏，待阶段 5 实现讨论引擎后再启用；工作台另会接入本机环境健康探测器（`health_issue`），在检测到 `fail` 项时向「需要你决定」追加一条可跳转「设置 → 环境体检」的异常条目。
+注：项目看板展示 `计划中 / 施工中 / 待验收 / 已结束` 四列（空列也保留展示），任务页阶段条展示 `1 计划 → 2 施工 → 3 验收`；待阶段 5 实现讨论引擎后再将「计划」/「计划中」改为「讨论」/「讨论中」。另说明：`exec_succeeded` 且不在实时运行时影响文案为「施工已结束，正在准备验收；如果一直停在这里，可以重新检查」；工作台还会接入本机环境健康探测器（`health_issue`），检测到 `fail` 项时向「需要你决定」追加一条可跳转「设置 → 环境体检」的异常条目。
 
 ---
 
@@ -124,10 +124,10 @@
 
 | 截图 | 对应原型锚点 / 规范条目 | 说明 |
 |---|---|---|
-| ![工作台](../screenshots/stage2/01-workbench.png) | `01-workbench`（B4） | 工作台汇总「需要你决定 / 正在运行 / 最近结束」、按项目筛选、侧栏独立角标与单主按钮 |
-| ![项目看板](../screenshots/stage2/02-project-board.png) | `02-project`（B5） | 三列表格看板（隐藏空的讨论中）、标签页与卡片三段信息顺序、左侧对齐标题 |
-| ![任务页外框-施工中](../screenshots/stage2/03-task-building.png) | `05-build`（B6） | 「项目 › 任务」面包屑、任务大标题、两步阶段条（「施工」高亮）与既有 `RunView` |
-| ![任务页外框-验收中](../screenshots/stage2/04-task-reviewing.png) | `07-accept`（B6） | 阶段条推进到「施工 ✓ → 验收」与分步验收卡 |
+| ![工作台](../screenshots/stage2/01-workbench.png) | `01-workbench`（B4） | 工作台汇总「需要你决定 / 正在运行 / 最近结束」、按项目筛选；仅含运行中任务的 `site-two` 不显示侧栏角标 |
+| ![项目看板](../screenshots/stage2/02-project-board.png) | `02-project`（B5） | 四列表格看板（`计划中 / 施工中 / 待验收 / 已结束`，空「计划中」列显示「还没有在计划中的任务」）、卡片左对齐标题 |
+| ![任务页外框-施工中](../screenshots/stage2/03-task-building.png) | `05-build`（B6） | 「项目 › 任务」面包屑、任务大标题、三步阶段条（「1 计划 ✓ → 2 施工」高亮）与既有 `RunView` |
+| ![任务页外框-验收中](../screenshots/stage2/04-task-reviewing.png) | `07-accept`（B6） | 阶段条推进到「1 计划 ✓ → 2 施工 ✓ → 3 验收」与分步验收卡 |
 | ![全局设置](../screenshots/stage2/05-settings.png) | `13-settings`（B7） | 仅含「资料外发 / 环境体检」标签页，无空占位 |
 | ![首次环境引导](../screenshots/stage2/06-env-onboarding.png) | B8 | 首次启动展示的 5 层环境检查引导与「进入工作台」主按钮 |
 | ![未检查确认按钮层级](../screenshots/stage2/07-unchecked-confirm.png) | `10-save-result`（B9） | 「打开预览」升为实心主按钮，风险操作「仍然保存」「放弃」均为次要描边按钮 |
@@ -158,3 +158,39 @@
 7. **macOS CI 运行 [`42784305957`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42784305957) 暴露 `e2e/shell.e2e.ts:1226` 超时（`TimeoutError: page.waitForFunction` 等待 `[data-testid="wb-running"]` 包含 `'任务二持续施工'`）**：
    - 根因：点击「开始施工」后任务立即进入 `TaskController.active`（异步创建 worktree 期间持久化状态仍为 `approved`），但 [`classifyTaskState`](../../src/core/app/task-state-view.ts) 对 `approved` 一律归为 `workbenchGroup: 'needs_decision'` 且 `isRunning: false`；快速切回工作台读取到 `counts.running === 0`，导致 `App.tsx` 关闭 `shouldPoll` 轮询，后续 `approved → running` 迁移不会被工作台自动刷新。
    - 修复：在 `classifyTaskState` 的 `approved` 分支按 `opts.isLiveRunning` 区分——活跃施工中返回 `workbenchGroup: 'running'`、`runStatus: '运行中'`、`isRunning: true`；在 [`tests/multi-project.test.ts`](../../tests/multi-project.test.ts) 增补 `approved` 与 `isLiveRunning` 组合断言，并在 [`e2e/shell.e2e.ts`](../../e2e/shell.e2e.ts) 拍摄 `03-task-building.png` 前增加等待 `run-view` 出现 `[data-testid="perm-summary"]` 的步骤。修复后本地 `typecheck`、544 项单元测试、37 项 E2E 与 6 项冒烟检查全部通过。
+
+---
+
+## 补丁 · 角标与状态映射修正
+
+针对第 2 节映射表核查与截图审阅发现的问题，补充一次聚焦修正：
+
+### 1. 做了什么
+1. **侧栏角标仅计 `workbenchGroup === 'needs_decision'`**：
+   - 修复 [`Sidebar.tsx`](../../src/renderer/Sidebar.tsx) 原 `p.needsAttentionCount + p.runningCount` 的问题，改为通过 [`projectBadgeCount`](../../src/renderer/Sidebar.tsx#L24) 只计 `p.needsAttentionCount`，与「待我处理」角标保持一致（正在运行与已结束任务均不计入）。
+   - 在 [`tests/multi-project.test.ts`](../../tests/multi-project.test.ts) 新增单元测试，验证一个项目仅有运行中任务时项目角标与待我处理角标均为 0（组件渲染输出不含任何角标元素）。
+2. **`TaskState` 三层映射修正（[`task-state-view.ts`](../../src/core/app/task-state-view.ts)）**：
+   - `undone`：新增结局 `'undone'`（`outcomeLabel: '已撤销'`），`runStatus` 改为 `null`（运行状态为空，`statusTag` 自然展示「已撤销」）。
+   - `discard_cleanup_pending`：`outcome` 改为 `'discarded'`（`outcomeLabel: '已放弃'`），运行状态 `'被阻断'` 与异常标记保留不变。
+   - `exec_succeeded` 且不在实时运行（`isLiveRunning=false`）：`runStatus` 改为 `'待生成验收'`，影响文案改为 `'施工已结束，正在准备验收；如果一直停在这里，可以重新检查'`。
+3. **新增「计划中」看板列与三步阶段条**：
+   - 将 `draft` / `clarifying` / `planned` / 未实时运行的 `approved` 归入 `stage: 'planning'`（`stageLabel: '计划'`、`boardColumn: 'planning'`）。
+   - [`ProjectBoard.tsx`](../../src/renderer/ProjectBoard.tsx) 与 [`copy.ts`](../../src/renderer/copy.ts) 在「施工中」左侧新增「计划中」列（`.grid` 列宽下限调整为 `minmax(200px, 1fr)` 以对齐四列排版），空列时仍保留显示并展示「还没有在计划中的任务」。
+   - [`TaskPage.tsx`](../../src/renderer/TaskPage.tsx) 阶段条改为 `1 计划 → 2 施工 → 3 验收`（阶段 5 实现讨论引擎后再将「计划」改为「讨论」）。
+4. **同步测试与重拍截图**：
+   - 更新 [`tests/multi-project.test.ts`](../../tests/multi-project.test.ts) 与 [`e2e/shell.e2e.ts`](../../e2e/shell.e2e.ts)，重拍更新后的 [`01-workbench.png`](../screenshots/stage2/01-workbench.png)（验证仅运行中任务的 `site-two` 无角标）与 [`02-project-board.png`](../screenshots/stage2/02-project-board.png)（验证「计划中 · 0 / 还没有在计划中的任务」列位于最左且四列并排），并同步刷新阶段条截图 [`03-task-building.png`](../screenshots/stage2/03-task-building.png) 与 [`04-task-reviewing.png`](../screenshots/stage2/04-task-reviewing.png)。
+
+### 2. 本次补丁验证数字
+- `npm run typecheck`：通过（0 错误）
+- 单元测试（`npx vitest run --maxWorkers=4`）：**27 个测试文件、546 项测试全部通过**（另有 11 个 `tests/integration/*.real.test.ts` 共 37 项按配置跳过，0 失败）
+- Electron 端到端测试（`E2E_STAGE2_SHOT_DIR=docs/screenshots/stage2 npm run test:e2e`）：**1 个测试文件、37 项测试全部通过**（耗时 `143.54s`）
+- 桌面冒烟测试（`npm run smoke`）：**全部 6 项检查通过**，正常退出 `code=0`
+
+### 3. CI 链接（阶段 2 收尾与本补丁）
+- **`9b77e6e`（`fix(ui): classify active approved tasks as running for workbench`）CI 通过**：[`https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42786116099`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42786116099)
+  - `test (ubuntu-latest)`：`success`（耗时 `55s`）
+  - `test (macos-latest)`：`success`（耗时 `6m35s`，含 37 项 Electron 端到端测试）
+- **本补丁提交（`fix(ui): count only needs-decision tasks in badges; add plan column; correct state mapping`）**：本地全量验证通过后推送 `rebuild`，待 CI 完成后补充运行链接。
+
+### 4. 本次补丁过程中的失败记录
+- 本次补丁编码完成后，`typecheck`、546 项单元测试、37 项 Electron 端到端测试及 6 项桌面冒烟测试均一次通过，无新增失败或回滚（`tests/security.test.ts` 未作任何修改或放宽）。

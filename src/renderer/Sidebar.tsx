@@ -20,6 +20,11 @@ interface SidebarProps {
   onSelectSettings: () => void;
 }
 
+/** 侧栏项目角标只计需要用户决定的任务数（不含运行中任务）。 */
+export function projectBadgeCount(project: Pick<OpenProjectSummary, 'needsAttentionCount'>): number {
+  return project.needsAttentionCount;
+}
+
 /** 固定宽度可收起侧栏（UI v2.1 第 1 节，不放尚未实现的额度行）。 */
 export function Sidebar({
   active,
@@ -63,7 +68,7 @@ export function Sidebar({
       {!collapsed && <div className="grp">{COPY.navProjectsGroup}</div>}
 
       {projects.map((p) => {
-        const badgeCount = p.needsAttentionCount + p.runningCount;
+        const badgeCount = projectBadgeCount(p);
         const abnormal = p.hasAbnormal || p.manualReviewLocked;
         const isOn = active.kind === 'project' && active.projectId === p.id;
         return (

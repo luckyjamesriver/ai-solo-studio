@@ -3,12 +3,18 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { OpenProjectManager } from '../src/core/app/open-projects.js';
 import { classifyTaskState } from '../src/core/app/task-state-view.js';
 import { TaskController } from '../src/core/app/task-controller.js';
 import { TaskPrefs } from '../src/core/app/prefs.js';
 import { FakeExecutor } from '../src/core/executor/adapters/fake.js';
 import { RecordStore } from '../src/core/persistence/index.js';
+import { Sidebar, projectBadgeCount } from '../src/renderer/Sidebar.js';
+import { ProjectBoard } from '../src/renderer/ProjectBoard.js';
+import { TaskPage } from '../src/renderer/TaskPage.js';
+import { buildTaskView } from '../src/core/app/task-view.js';
 import type { Task } from '../src/core/task/model.js';
 import type { TaskState } from '../src/core/task/state.js';
 
@@ -299,25 +305,181 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
       const cls = classifyTaskState(baseTask(s));
       expect(cls.impact.length, s).toBeGreaterThan(0);
       expect(cls.statusTag.length, s).toBeGreaterThan(0);
-      expect(['building', 'reviewing', 'ended']).toContain(cls.stage);
+      expect(['planning', 'building', 'reviewing', 'ended']).toContain(cls.stage);
       if (cls.stage !== 'ended') expect(cls.outcome).toBeNull();
-      else expect(['saved', 'discarded', 'terminated']).toContain(cls.outcome);
+      else expect(['saved', 'discarded', 'undone', 'terminated']).toContain(cls.outcome);
     }
 
-    expect(classifyTaskState(baseTask('draft'))).toMatchObject({ stage: 'building', runStatus: '待配置计划', outcome: null, workbenchGroup: 'needs_decision' });
-    expect(classifyTaskState(baseTask('approved'), { isLiveRunning: false })).toMatchObject({ stage: 'building', runStatus: '待开工确认', isRunning: false, workbenchGroup: 'needs_decision' });
-    expect(classifyTaskState(baseTask('approved'), { isLiveRunning: true })).toMatchObject({ stage: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
+    expect(classifyTaskState(baseTask('draft'))).toMatchObject({ stage: 'planning', stageLabel: '计划', boardColumn: 'planning', runStatus: '待配置计划', outcome: null, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('clarifying'))).toMatchObject({ stage: 'planning', stageLabel: '计划', boardColumn: 'planning', runStatus: '等你裁决', outcome: null, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('planned'))).toMatchObject({ stage: 'planning', stageLabel: '计划', boardColumn: 'planning', runStatus: '待开工确认', outcome: null, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('approved'), { isLiveRunning: false })).toMatchObject({ stage: 'planning', stageLabel: '计划', boardColumn: 'planning', runStatus: '待开工确认', isRunning: false, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('approved'), { isLiveRunning: true })).toMatchObject({ stage: 'building', stageLabel: '施工', boardColumn: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
     expect(classifyTaskState(baseTask('running'))).toMatchObject({ stage: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
-    expect(classifyTaskState(baseTask('exec_succeeded'), { isLiveRunning: true })).toMatchObject({ stage: 'building', runStatus: '运行中', workbenchGroup: 'running' });
-    expect(classifyTaskState(baseTask('exec_succeeded'), { isLiveRunning: false })).toMatchObject({ stage: 'building', runStatus: '运行中', workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('exec_succeeded'), { isLiveRunning: true })).toMatchObject({ stage: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
+    expect(classifyTaskState(baseTask('exec_succeeded'), { isLiveRunning: false })).toMatchObject({
+      stage: 'building',
+      runStatus: '待生成验收',
+      statusTag: '待生成验收',
+      isRunning: false,
+      needsAttention: true,
+      impact: '施工已结束，正在准备验收；如果一直停在这里，可以重新检查',
+      workbenchGroup: 'needs_decision',
+    });
     expect(classifyTaskState(baseTask('reviewing', { exit: { kind: 'stopped' } }))).toMatchObject({ stage: 'reviewing', runStatus: '已停止', outcome: null, workbenchGroup: 'needs_decision' });
     expect(classifyTaskState(baseTask('reviewing', { manualReview: { reason: '未确认', at: '2026-11-10T00:00:00.000Z' } }))).toMatchObject({ stage: 'reviewing', runStatus: '已锁定', isAbnormal: true, needsAttention: true, workbenchGroup: 'needs_decision' });
     expect(classifyTaskState(baseTask('save_failed_unmerged'))).toMatchObject({ stage: 'reviewing', runStatus: '被阻断', isAbnormal: true, workbenchGroup: 'needs_decision' });
     expect(classifyTaskState(baseTask('saved', { saveRecord: { savedAt: '2026-11-10T00:00:00.000Z', mergeCommit: 'abc', preMergeHead: 'def', taskCommit: 'ghi', branch: 'main', checked: true } }))).toMatchObject({ stage: 'ended', runStatus: null, outcome: 'saved', outcomeLabel: '已保存', statusTag: '已保存', workbenchGroup: 'recent_ended' });
     expect(classifyTaskState(baseTask('saved_cleanup_pending'))).toMatchObject({ stage: 'ended', runStatus: '被阻断', outcome: 'saved', isAbnormal: true, workbenchGroup: 'needs_decision' });
     expect(classifyTaskState(baseTask('discarded'))).toMatchObject({ stage: 'ended', runStatus: null, outcome: 'discarded', outcomeLabel: '已放弃', workbenchGroup: 'recent_ended' });
-    expect(classifyTaskState(baseTask('discard_cleanup_pending'))).toMatchObject({ stage: 'ended', runStatus: '被阻断', outcome: 'terminated', isAbnormal: true, workbenchGroup: 'needs_decision' });
-    expect(classifyTaskState(baseTask('undone'))).toMatchObject({ stage: 'ended', runStatus: '已撤销保存', outcome: 'terminated', outcomeLabel: '未完成而终止', workbenchGroup: 'recent_ended' });
+    expect(classifyTaskState(baseTask('discard_cleanup_pending'))).toMatchObject({ stage: 'ended', runStatus: '被阻断', outcome: 'discarded', outcomeLabel: '已放弃', statusTag: '被阻断', isAbnormal: true, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('undone'))).toMatchObject({ stage: 'ended', runStatus: null, outcome: 'undone', outcomeLabel: '已撤销', statusTag: '已撤销', isAbnormal: false, workbenchGroup: 'recent_ended' });
     expect(classifyTaskState(baseTask('undo_failed'))).toMatchObject({ stage: 'ended', runStatus: '失败', outcome: 'saved', isAbnormal: true, workbenchGroup: 'needs_decision' });
+  });
+
+  it('一个项目只有运行中任务时，侧栏项目角标与待我处理角标均为 0（不显示）', async () => {
+    const dataDir = mk('appdata');
+    const repoRunOnly = initGitRepo('run-only');
+    const repoMixed = initGitRepo('mixed');
+    const mgr = new OpenProjectManager<RecordStore>();
+
+    const ctlRunOnly = await openProjectIn(mgr, dataDir, 'proj-run', repoRunOnly, () => new FakeExecutor([{ do: 'hang' }]));
+    const runTaskId = await startStandardTask(ctlRunOnly, '仅运行中的任务');
+    await waitForState(ctlRunOnly, runTaskId, ['running']);
+
+    const wbOnlyRunning = await mgr.getWorkbench();
+    expect(wbOnlyRunning.counts).toEqual({ needsDecision: 0, running: 1, recentEnded: 0 });
+    const runOnlySummary = wbOnlyRunning.projects.find((p) => p.id === 'proj-run')!;
+    expect(runOnlySummary.needsAttentionCount).toBe(0);
+    expect(runOnlySummary.runningCount).toBe(1);
+    expect(projectBadgeCount(runOnlySummary)).toBe(0);
+
+    const htmlOnlyRunning = renderToStaticMarkup(
+      React.createElement(Sidebar, {
+        active: { kind: 'workbench' },
+        collapsed: false,
+        projects: wbOnlyRunning.projects,
+        needsDecisionCount: wbOnlyRunning.counts.needsDecision,
+        hasAbnormalDecision: false,
+        onToggleCollapse: () => {},
+        onSelectWorkbench: () => {},
+        onSelectProject: () => {},
+        onOpenProject: () => {},
+        onSelectSettings: () => {},
+      }),
+    );
+    expect(htmlOnlyRunning).not.toContain('workbench-badge');
+    expect(htmlOnlyRunning).not.toContain('project-badge-proj-run');
+
+    // 再打开一个含 1 条待决定与 1 条运行中任务的项目：只计 needs_decision，正在运行不计入
+    const ctlMixed = await openProjectIn(mgr, dataDir, 'proj-mix', repoMixed, () => new FakeExecutor([{ do: 'hang' }]));
+    const mixRunId = await startStandardTask(ctlMixed, '混合项目运行任务');
+    await waitForState(ctlMixed, mixRunId, ['running']);
+    await ctlMixed.create('混合项目草稿任务');
+
+    const wbMixed = await mgr.getWorkbench();
+    expect(wbMixed.counts).toEqual({ needsDecision: 1, running: 2, recentEnded: 0 });
+    expect(projectBadgeCount(wbMixed.projects.find((p) => p.id === 'proj-run')!)).toBe(0);
+    expect(projectBadgeCount(wbMixed.projects.find((p) => p.id === 'proj-mix')!)).toBe(1);
+
+    const htmlMixed = renderToStaticMarkup(
+      React.createElement(Sidebar, {
+        active: { kind: 'workbench' },
+        collapsed: false,
+        projects: wbMixed.projects,
+        needsDecisionCount: wbMixed.counts.needsDecision,
+        hasAbnormalDecision: false,
+        onToggleCollapse: () => {},
+        onSelectWorkbench: () => {},
+        onSelectProject: () => {},
+        onOpenProject: () => {},
+        onSelectSettings: () => {},
+      }),
+    );
+    expect(htmlMixed).toContain('data-testid="workbench-badge"');
+    expect(htmlMixed).toContain('>1<');
+    expect(htmlMixed).not.toContain('project-badge-proj-run');
+    expect(htmlMixed).toContain('data-testid="project-badge-proj-mix"');
+
+    await ctlRunOnly.stop(runTaskId);
+    await ctlMixed.stop(mixRunId);
+  });
+
+  it('项目看板展示计划中空列且位于施工中左侧；任务页展示 3 步阶段条（1 计划 → 2 施工 → 3 验收）', () => {
+    const boardHtml = renderToStaticMarkup(
+      React.createElement(ProjectBoard, {
+        project: { id: 'p1', path: '/tmp/p1', name: 'p1', isRepo: true, uncommitted: 0, savePoints: [], tasks: [] },
+        tasks: [],
+        preferredMode: 'standard',
+        tab: 'tasks',
+        disclosure: null,
+        error: null,
+        notice: null,
+        onTabChange: () => {},
+        onCreateTask: async () => {},
+        onOpenTask: () => {},
+        onRevealProject: () => {},
+        onCloseProject: () => {},
+        onOpenDisclosure: () => {},
+      }),
+    );
+    const idxPlanning = boardHtml.indexOf('data-testid="board-col-planning"');
+    const idxBuilding = boardHtml.indexOf('data-testid="board-col-building"');
+    const idxReviewing = boardHtml.indexOf('data-testid="board-col-reviewing"');
+    const idxEnded = boardHtml.indexOf('data-testid="board-col-ended"');
+    expect(idxPlanning).toBeGreaterThan(-1);
+    expect(idxPlanning).toBeLessThan(idxBuilding);
+    expect(idxBuilding).toBeLessThan(idxReviewing);
+    expect(idxReviewing).toBeLessThan(idxEnded);
+    expect(boardHtml).toContain('计划中 · 0');
+    expect(boardHtml).toContain('还没有在计划中的任务');
+
+    const baseTask = (state: TaskState): Task => ({
+      id: `t-${state}`,
+      request: '阶段条测试',
+      state,
+      createdAt: '2026-11-10T00:00:00.000Z',
+      updatedAt: '2026-11-10T00:00:00.000Z',
+      denied: [],
+      deniedAcks: [],
+      previewed: false,
+      criteria: [],
+      timeline: [],
+    });
+    const renderStageBar = (state: TaskState, running: boolean) =>
+      renderToStaticMarkup(
+        React.createElement(TaskPage, {
+          projectId: 'p1',
+          projectName: 'p1',
+          task: buildTaskView(baseTask(state), { scripts: [], running }),
+          preferredMode: 'standard',
+          error: null,
+          onBackToProject: () => {},
+          onStop: () => {},
+          onTaskChanged: () => {},
+          onAcceptanceChanged: () => {},
+        }),
+      );
+
+    const draftHtml = renderStageBar('draft', false);
+    expect(draftHtml).toContain('data-testid="stage-plan" data-status="cur"');
+    expect(draftHtml).toContain('>1 计划<');
+    expect(draftHtml).toContain('data-testid="stage-build" data-status="pending"');
+    expect(draftHtml).toContain('>2 施工<');
+    expect(draftHtml).toContain('data-testid="stage-accept" data-status="pending"');
+    expect(draftHtml).toContain('>3 验收<');
+
+    const runningHtml = renderStageBar('running', true);
+    expect(runningHtml).toContain('data-testid="stage-plan" data-status="done"');
+    expect(runningHtml).toContain('>1 计划 ✓<');
+    expect(runningHtml).toContain('data-testid="stage-build" data-status="cur"');
+    expect(runningHtml).toContain('>2 施工<');
+
+    const reviewingHtml = renderStageBar('reviewing', false);
+    expect(reviewingHtml).toContain('data-testid="stage-plan" data-status="done"');
+    expect(reviewingHtml).toContain('data-testid="stage-build" data-status="done"');
+    expect(reviewingHtml).toContain('>2 施工 ✓<');
+    expect(reviewingHtml).toContain('data-testid="stage-accept" data-status="cur"');
+    expect(reviewingHtml).toContain('>3 验收<');
   });
 });

@@ -22,7 +22,7 @@ interface ProjectBoardProps {
 
 /**
  * 项目看板（02-project，UI v2.1 第 2/3 节）：
- * 阶段 2 仅显示 施工中 / 待验收 / 已结束 三列（讨论阶段尚无后台，按规范暂隐藏“讨论中”列）。
+ * 显示 计划中 / 施工中 / 待验收 / 已结束 四列（阶段 5 实现讨论后将「计划中」改为「讨论中」，空列保留展示）。
  * 每张卡片按固定顺序显示：任务名 → 当前状态 → AI 与辅助信息。
  */
 export function ProjectBoard({
@@ -54,13 +54,20 @@ export function ProjectBoard({
     }
   };
 
+  const planning = tasks.filter((t) => t.layer.boardColumn === 'planning' || t.layer.boardColumn === 'discussing');
   const building = tasks.filter((t) => t.layer.boardColumn === 'building');
   const reviewing = tasks.filter((t) => t.layer.boardColumn === 'reviewing');
   const ended = tasks.filter((t) => t.layer.boardColumn === 'ended');
-  const columns: { key: 'building' | 'reviewing' | 'ended'; title: string; items: TaskView[] }[] = [
-    { key: 'building', title: COPY.boardColBuilding, items: building },
-    { key: 'reviewing', title: COPY.boardColReviewing, items: reviewing },
-    { key: 'ended', title: COPY.boardColEnded, items: ended },
+  const columns: {
+    key: 'planning' | 'building' | 'reviewing' | 'ended';
+    title: string;
+    emptyText: string;
+    items: TaskView[];
+  }[] = [
+    { key: 'planning', title: COPY.boardColPlanning, emptyText: COPY.boardEmptyPlanningCol, items: planning },
+    { key: 'building', title: COPY.boardColBuilding, emptyText: COPY.boardEmptyCol, items: building },
+    { key: 'reviewing', title: COPY.boardColReviewing, emptyText: COPY.boardEmptyCol, items: reviewing },
+    { key: 'ended', title: COPY.boardColEnded, emptyText: COPY.boardEmptyCol, items: ended },
   ];
 
   const historyTasks = tasks.filter((t) => ['saved', 'saved_cleanup_pending', 'undone', 'undo_failed'].includes(t.state));
@@ -151,7 +158,7 @@ export function ProjectBoard({
               <div className="lane" key={col.key} data-testid={`board-col-${col.key}`}>
                 <strong>{col.title} · {col.items.length}</strong>
                 {col.items.length === 0 ? (
-                  <p className="muted">{COPY.boardEmptyCol}</p>
+                  <p className="muted" data-testid={`board-empty-${col.key}`}>{col.emptyText}</p>
                 ) : (
                   <ul className="lane-list">
                     {col.items.map((t) => (

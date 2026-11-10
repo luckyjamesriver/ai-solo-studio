@@ -1182,23 +1182,35 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     await a.page.getByTestId('project').waitFor();
     expect(await sidebarWidth()).toBe(wWorkbench);
 
-    // 看板隐藏了尚无后台的「讨论中」，只展示 施工中 / 待验收 / 已结束 三列
+    // 看板展示四列：计划中 / 施工中 / 待验收 / 已结束（「计划中」空列也保留展示提示）
+    expect(await a.page.getByTestId('board-col-planning').isVisible()).toBe(true);
+    expect(await a.page.getByTestId('board-col-planning').innerText()).toContain('还没有在计划中的任务');
     expect(await a.page.getByTestId('board-col-building').isVisible()).toBe(true);
     expect(await a.page.getByTestId('board-col-reviewing').isVisible()).toBe(true);
     expect(await a.page.getByTestId('board-col-ended').isVisible()).toBe(true);
+    const planBox = (await a.page.getByTestId('board-col-planning').boundingBox())!;
+    const buildBox = (await a.page.getByTestId('board-col-building').boundingBox())!;
+    expect(planBox.x).toBeLessThan(buildBox.x);
 
     await newTask(a.page, '任务一验收');
     await a.page.getByTestId('task-page').waitFor();
     expect(await a.page.getByTestId('breadcrumb-project').innerText()).toBe('site-one');
-    expect(await a.page.getByTestId('stage-build').getAttribute('data-status')).toBe('cur');
+    expect(await a.page.getByTestId('stage-plan').getAttribute('data-status')).toBe('cur');
+    expect(await a.page.getByTestId('stage-plan').innerText()).toBe('1 计划');
+    expect(await a.page.getByTestId('stage-build').getAttribute('data-status')).toBe('pending');
+    expect(await a.page.getByTestId('stage-build').innerText()).toBe('2 施工');
     expect(await a.page.getByTestId('stage-accept').getAttribute('data-status')).toBe('pending');
+    expect(await a.page.getByTestId('stage-accept').innerText()).toBe('3 验收');
     expect(await sidebarWidth()).toBe(wWorkbench);
 
     await a.page.getByTestId('start-button').click();
     await inState(a.page, 'reviewing');
+    expect(await a.page.getByTestId('stage-plan').getAttribute('data-status')).toBe('done');
+    expect(await a.page.getByTestId('stage-plan').innerText()).toBe('1 计划 ✓');
     expect(await a.page.getByTestId('stage-build').getAttribute('data-status')).toBe('done');
-    expect(await a.page.getByTestId('stage-build').innerText()).toBe('施工 ✓');
+    expect(await a.page.getByTestId('stage-build').innerText()).toBe('2 施工 ✓');
     expect(await a.page.getByTestId('stage-accept').getAttribute('data-status')).toBe('cur');
+    expect(await a.page.getByTestId('stage-accept').innerText()).toBe('3 验收');
     await stage2Shot(a.page, '04-task-reviewing');
 
     await stubDialog(a.app, p2);
@@ -1208,6 +1220,8 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     await a.page.getByTestId('start-button').click();
     await a.page.getByTestId('run-view').waitFor();
     await a.page.getByTestId('perm-summary').waitFor({ timeout: 30_000 });
+    expect(await a.page.getByTestId('stage-plan').getAttribute('data-status')).toBe('done');
+    expect(await a.page.getByTestId('stage-build').getAttribute('data-status')).toBe('cur');
     await stage2Shot(a.page, '03-task-building');
 
     // 3. 在侧栏切换回 site-one 并截看板图
@@ -1219,9 +1233,10 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     await a.page.getByTestId(`nav-project-${id1}`).click();
     await a.page.getByTestId('board-col-reviewing').waitFor();
     expect(await a.page.getByTestId('board-col-reviewing').innerText()).toContain('任务一验收');
+    expect(await a.page.getByTestId('board-col-planning').innerText()).toContain('还没有在计划中的任务');
     await stage2Shot(a.page, '02-project-board');
 
-    // 4. 回到工作台：核对三组汇总、筛选、侧栏角标与真实 workbench:get 一致
+    // 4. 回到工作台：核对三组汇总、筛选、侧栏角标与真实 workbench:get 一致（仅运行中任务的 site-two 角标不显示）
     await a.page.getByTestId('nav-workbench').click();
     await a.page.getByTestId('workbench').waitFor();
     await a.page.waitForFunction(() => document.querySelector('[data-testid="wb-running"]')?.textContent?.includes('任务二持续施工'));
@@ -1234,7 +1249,7 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     );
     expect(await a.page.getByTestId('workbench-badge').innerText()).toBe(String(wb.counts.needsDecision));
     expect(await a.page.getByTestId(`project-badge-${id1}`).innerText()).toBe('1');
-    expect(await a.page.getByTestId(`project-badge-${id2}`).innerText()).toBe('1');
+    expect(await a.page.getByTestId(`project-badge-${id2}`).count()).toBe(0);
 
     // 按项目筛选
     await a.page.getByTestId('workbench-filter').selectOption(id1);

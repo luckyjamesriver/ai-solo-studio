@@ -17,7 +17,7 @@ interface TaskPageProps {
 
 /**
  * 任务页外框（UI v2.1 第 2 节，B6）：
- * 面包屑（项目 › 任务）+ 任务名 + 2 步阶段条（施工 / 验收，讨论阶段在阶段 5 前不显示）。
+ * 面包屑（项目 › 任务）+ 任务名 + 3 步阶段条（1 计划 → 2 施工 → 3 验收；阶段 5 时再把「计划」改为「讨论」）。
  * 现有的 PlanCard / RunView / Acceptance 原样放进外框，不改内部逻辑。
  */
 export function TaskPage({
@@ -32,9 +32,12 @@ export function TaskPage({
   onAcceptanceChanged,
 }: TaskPageProps) {
   const stage = task.layer.stage;
+  const planDone = stage === 'building' || stage === 'reviewing' || stage === 'ended';
+  const planCur = stage === 'planning' || stage === 'discussing';
   const buildDone = stage === 'reviewing' || stage === 'ended';
-  const acceptCur = stage === 'reviewing';
+  const buildCur = stage === 'building';
   const acceptDone = stage === 'ended';
+  const acceptCur = stage === 'reviewing';
 
   return (
     <main className="main" data-testid="task-page" aria-label={task.goal}>
@@ -51,18 +54,25 @@ export function TaskPage({
         </div>
         <div className="stages" aria-label="任务阶段" data-testid="stage-bar">
           <span
-            className={`st${buildDone ? ' done' : ' cur'}`}
-            data-testid="stage-build"
-            data-status={buildDone ? 'done' : 'cur'}
+            className={`st${planDone ? ' done' : planCur ? ' cur' : ''}`}
+            data-testid="stage-plan"
+            data-status={planDone ? 'done' : planCur ? 'cur' : 'pending'}
           >
-            {buildDone ? '施工 ✓' : '施工'}
+            {planDone ? '1 计划 ✓' : '1 计划'}
+          </span>
+          <span
+            className={`st${buildDone ? ' done' : buildCur ? ' cur' : ''}`}
+            data-testid="stage-build"
+            data-status={buildDone ? 'done' : buildCur ? 'cur' : 'pending'}
+          >
+            {buildDone ? '2 施工 ✓' : '2 施工'}
           </span>
           <span
             className={`st${acceptDone ? ' done' : acceptCur ? ' cur' : ''}`}
             data-testid="stage-accept"
             data-status={acceptDone ? 'done' : acceptCur ? 'cur' : 'pending'}
           >
-            {acceptDone ? '验收 ✓' : '验收'}
+            {acceptDone ? '3 验收 ✓' : '3 验收'}
           </span>
         </div>
       </div>
