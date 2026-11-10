@@ -134,4 +134,6 @@
 5. 初版截图视觉审阅发现 `02-accept-failed.png` 在点击「保存说明」后因仅等待 `data-status === 'failed'`（此前点「不符合」时已为该状态），截到了 `pending-feedback` 尚未结束的瞬间，且 `08-read-access-wording.png` 的敏感路径列表单列过长被视口裁切。修正等待条件为 `!pending-feedback && !save-note-c1`、调整 `standardDesc` 避免文字重复制并把敏感清单改为紧凑两列栅格后，重跑全部 40 个 E2E 并复核 8 张截图确认无误。
 
 ### GitHub Actions CI（`rebuild` 分支）
-- 待推送后由 `gh run watch` 跟踪双平台（`ubuntu-latest` + `macos-latest`）结果并回填精确运行链接。
+- 验证运行（`6d75baf`，含全部 4 个代码/测试提交与 8 张截图）：[https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42819126740](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42819126740)
+  - `test (macos-latest)`：`success`（[job 129839794691](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42819126740/job/129839794691)，含 `typecheck`、`npm test`、`build` 与 macOS 全部 Electron E2E）
+  - `test (ubuntu-latest)`：`success`（[job 129839795080](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42819126740/job/129839795080)，含 `typecheck`、`npm test`、`build`）
