@@ -574,18 +574,20 @@ export class DiscussionService {
     return set;
   }
 
-  private async runTurn(task: Task, threadId: string, preset: DiscussionPreset, decisions: ResumeDecisions): Promise<FlowOutcome> {
-    if (this.inflight.has(task.id)) throw new Error('这个任务的讨论正在进行中，请稍候。');
-    const snap = await inspectDiscussion(this.opts.repo, threadId, { consentStore: this.consent });
-    const set = snap.started ? this.resolveStartedPlan(snap) : await this.resolveUnstartedPlan(preset);
-    if (!snap.started && set.roleProblem) {
-      throw new Error(set.roleProblem);
-    }
+  private runTurn(task: Task, threadId: string, preset: DiscussionPreset, decisions: ResumeDecisions): Promise<FlowOutcome> {
+    if (this.inflight.has(task.id)) return Promise.reject(new Error('这个任务的讨论正在进行中，请稍候。'));
     this.errors.delete(task.id);
     this.consentPending.delete(task.id);
 
     const p = (async (): Promise<FlowOutcome> => {
+      // 先挂起一个微任务，确保下方的 this.inflight.set 先于 finally 执行，且 launchTurn 返回时 inflight 已就位
+      await Promise.resolve();
       try {
+        const snap = await inspectDiscussion(this.opts.repo, threadId, { consentStore: this.consent });
+        const set = snap.started ? this.resolveStartedPlan(snap) : await this.resolveUnstartedPlan(preset);
+        if (!snap.started && set.roleProblem) {
+          throw new Error(set.roleProblem);
+        }
         const { outcome } = await runPausedFlow(
           {
             projectRoot: this.opts.repo,

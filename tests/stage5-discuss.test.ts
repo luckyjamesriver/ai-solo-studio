@@ -925,4 +925,26 @@ describe('阶段 5b 提交③：Claude API token 用量展示（零虚构金额�
     expect(html).toContain('不估算金额（仅统计 token 与次数）');
     expect(html).not.toMatch(/\$\d+\.\d+/);
   });
+
+  it('launchTurn 在任何异步 IO 前同步登记 inflight，confirmDiscussionSend 后 waitDiscussion 不会漏等', async () => {
+    const planner = scripted();
+    const origThink = planner.think.bind(planner);
+    planner.think = async (req) => {
+      await new Promise((r) => setTimeout(r, 30));
+      return origThink(req);
+    };
+    const { ctl } = await makeTempCtl({ planner });
+    const created = await ctl.create('测试 inflight 同步登记');
+    const started = await ctl.startDiscussion(created.id, 'codex-single');
+    expect(started.running).toBe(true);
+    await ctl.waitDiscussion(created.id);
+    const consentV = await ctl.getDiscussionView(created.id);
+    expect(consentV.pauseAt).toBe('send_consent');
+
+    const resumed = await ctl.confirmDiscussionSend(created.id, consentV.pendingConsentService!, true);
+    expect(resumed.running).toBe(true);
+    await ctl.waitDiscussion(created.id);
+    const after = await ctl.getDiscussionView(created.id);
+    expect(after.pauseAt).toBe('requirements_confirmation');
+  });
 });
