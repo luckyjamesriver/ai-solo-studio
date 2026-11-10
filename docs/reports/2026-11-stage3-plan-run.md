@@ -23,7 +23,7 @@
    - [`task-view.ts`](../../src/core/app/task-view.ts) 的 `buildStoppedInfo` 仅依据后端 [`hasQuotaExhaustedError`](../../src/core/app/task-state-view.ts) 严格区分「你停止的 / 超时 / 额度用完 / AI 执行出错」；「已经做完」的文件数只读真实 Git worktree 差异数（`diffSummary` / `card.changes`），忽略 AI 自述；「你的项目」在曾授权额外文件夹时如实附上不可自动还原的目录提示。
    - 新增 [`runner.ts`](../../src/core/task/runner.ts) 的 `prepareContinue`、[`task-controller.ts`](../../src/core/app/task-controller.ts) 的 `continueTask` 以及 IPC `tasks:continue`（`window.studio.continueTask(projectId, id)`），让用户在停止或中断后点击「继续执行」直接复用原任务副本接着做。同时修复长路径在 `.extra-dir-card` 警告框内向右溢出的样式问题。
 
-4. **`fix(ui): correct state copy that contradicts the state machine`**
+4. **`fix(ui): correct state copy that contradicts the state machine`（`2f40e92`）**
    - 对 [`src/core/app/task-state-view.ts`](../../src/core/app/task-state-view.ts) 全状态与分支逐条对照 [`state.ts`](../../src/core/task/state.ts) 和阶段 3 新页面做一致性审计与修正（详见第 5 节）。
    - 将 `sliceLatestRun` 与 `hasQuotaExhaustedError` 收拢到 `task-state-view.ts` 供 `task-view.ts` 复用，消除重复逻辑，并在 [`tests/stage3-plan-run.test.ts`](../../tests/stage3-plan-run.test.ts) 补齐全部审计用例。
 
@@ -119,4 +119,6 @@
 4. **`tests/stage3-plan-run.test.ts` Commit 4 新增测例 TypeScript 报错**：构造 `AcceptanceCard` / `AcceptanceItem` 测试替身时漏写了必填的 `label` 与 `readyToSave` 字段，补齐后 `typecheck` 通过。
 
 ### GitHub CI 运行状态
-- 待提交 4 与本报告推送到 `rebuild` 后记录完整双平台（`ubuntu-latest` / `macos-latest`）CI 链接与耗时。
+- **阶段 3 全量提交（`1081343`..`2f40e92`）双平台 CI 通过**：[`https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42803502476`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42803502476)
+  - `test (ubuntu-latest)`（[129786734471](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42803502476/job/129786734471)）：`success`（耗时 `1m12s`）
+  - `test (macos-latest)`（[129786734833](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42803502476/job/129786734833)）：`success`（耗时 `7m12s`，含全部 `40` 项 Electron E2E）
