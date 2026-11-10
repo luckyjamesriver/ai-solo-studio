@@ -68,6 +68,17 @@ export type {
 export type { ChangePreview, Hunk } from '../core/acceptance/snippets.js';
 export type { AcceptanceActionResult } from '../core/app/task-controller.js';
 export type { ClaudeKeySaveResult, ClaudeKeyStatus, ClaudeKeyValidationCategory } from '../core/app/claude-key.js';
+export type {
+  AiProviderId,
+  ChiefRoleChoice,
+  EffectiveRolesResult,
+  GlobalAiRoles,
+  GlobalAiSettingsView,
+  ProjectAiRolesConfig,
+  ProjectRoleMode,
+  ProjectRolesView,
+  ReviewerRoleChoice,
+} from '../core/app/ai-settings.js';
 export type { DiscussionView, DiscussionPreset } from '../core/app/discussion-service.js';
 export type {
   BasisStatus,
@@ -88,6 +99,7 @@ export type {
   StepName,
 } from '../core/thinking/flow/index.js';
 import type { ClaudeKeySaveResult, ClaudeKeyStatus } from '../core/app/claude-key.js';
+import type { GlobalAiSettingsView, ProjectRolesView } from '../core/app/ai-settings.js';
 import type { ProjectBriefInput as BriefIn, ProjectBriefView as BriefView } from '../core/thinking/flow/index.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
 import type { DiscussionView } from '../core/app/discussion-service.js';
@@ -145,12 +157,16 @@ interface StudioApi {
   projectStatus(projectId: string): Promise<ProjectStatus>;
   getProjectBrief(projectId: string): Promise<BriefView>;
   saveProjectBrief(projectId: string, brief: BriefIn): Promise<BriefView>;
+  getProjectRoles(projectId: string): Promise<ProjectRolesView>;
+  saveProjectRoles(projectId: string, mode: string, chief: string, reviewer: string): Promise<ProjectRolesView>;
   initProject(consent: boolean): Promise<OpenResult>;
   getDisclosure(): Promise<DisclosureState>;
   acceptDisclosure(): Promise<DisclosureState>;
   getClaudeKeyStatus(): Promise<ClaudeKeyStatus>;
   saveClaudeKey(secret: string): Promise<ClaudeKeySaveResult>;
   deleteClaudeKey(): Promise<ClaudeKeyStatus>;
+  getAiSettings(): Promise<GlobalAiSettingsView>;
+  saveAiRoles(chief: string, reviewer: string, model: string): Promise<GlobalAiSettingsView>;
 }
 
 declare global {

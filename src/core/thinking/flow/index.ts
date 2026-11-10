@@ -18,6 +18,8 @@ export {
   createPausedFlowUI,
   runPausedFlow,
   inspectDiscussion,
+  isThreadStarted,
+  lockThreadRoles,
   readApprovedThreadPlan,
   updateThreadPreset,
   stopThreadRecord,

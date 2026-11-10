@@ -5,6 +5,7 @@ import {
   ConsentStore,
   createBoundThread,
   inspectDiscussion,
+  lockThreadRoles,
   readApprovedThreadPlan,
   readDiscussionChats,
   readProjectBriefView,
@@ -31,15 +32,23 @@ import {
   type StepName,
 } from '../thinking/flow/index.js';
 import type { Task } from '../task/model.js';
+import { providerDisplayName, type AiProviderId, type AiSettingsStore } from './ai-settings.js';
 import type { DiscussionClassifyHint } from './task-state-view.js';
 
-export type DiscussionPreset = 'codex-single' | 'dev-personal';
+export type DiscussionPreset = 'roles' | 'codex-single' | 'dev-personal';
 
 export interface ResolvedThinkerSet {
   preset: DiscussionPreset;
   planner: Thinker;
   reviewer?: Thinker;
   single: boolean;
+  sameAiSingle?: boolean;
+  plannerLabel?: string;
+  reviewerLabel?: string | null;
+  reviewerRoleDisplay?: string;
+  roleSourceLabel?: string | null;
+  modelHint?: string;
+  roleProblem?: string | null;
 }
 
 export interface DiscussionServiceOptions {
@@ -47,6 +56,9 @@ export interface DiscussionServiceOptions {
   consent?: ConsentStore;
   devPersonalEnabled?: boolean;
   makeThinkers?: (preset: DiscussionPreset) => ResolvedThinkerSet;
+  aiSettings?: AiSettingsStore;
+  getClaudeAvailability?: () => Promise<boolean>;
+  makeThinkerByProvider?: (provider: AiProviderId, model?: string) => Thinker;
 }
 
 export interface DiscussionView {
@@ -65,6 +77,10 @@ export interface DiscussionView {
   presetLabel: string;
   plannerLabel: string;
   reviewerLabel: string | null;
+  reviewerRoleDisplay: string;
+  sameAiSingle: boolean;
+  roleSourceLabel: string | null;
+  roleProblem: string | null;
   independentReview: boolean;
   unreviewed: boolean;
   unreviewedBadge: string | null;
@@ -111,6 +127,7 @@ const STEP_TEXT: Record<StepName | ChatStepName, string> = {
 };
 
 const PRESET_LABEL: Record<DiscussionPreset, string> = {
+  roles: '按 AI 角色设置讨论',
   'codex-single': 'Codex（单思考者模式 · 未经独立评审）',
   'dev-personal': '开发者预设（Claude 规划 + Codex 复核）',
 };
@@ -214,20 +231,191 @@ export class DiscussionService {
     }
   }
 
-  private resolveSet(preset: DiscussionPreset): ResolvedThinkerSet {
+  private resolveLegacySet(preset: DiscussionPreset): ResolvedThinkerSet {
     if (preset === 'dev-personal' && !this.opts.devPersonalEnabled) {
-      throw new Error('未启用开发者预设（STUDIO_DEV_PERSONAL_CLAUDE=1），当前仅可使用 Codex 单思考者模式。');
+      throw new Error('未启用开发者预设（STUDIO_DEV_PERSONAL_CLAUDE=1），当前仅可使用按角色配置模式。');
     }
-    if (this.opts.makeThinkers) return this.opts.makeThinkers(preset);
+    if (this.opts.makeThinkers) {
+      const legacyPreset = preset === 'roles' ? 'codex-single' : preset;
+      return this.opts.makeThinkers(legacyPreset);
+    }
     if (preset === 'dev-personal') {
       throw new Error('当前环境未注册 dev-personal 思考者预设。');
     }
     return { preset: 'codex-single', planner: new CodexThinker(), single: true };
   }
 
-  async ensureBoundThread(task: Task, preset: DiscussionPreset = 'codex-single'): Promise<string> {
+  private thinkerForId(thinkerId: string, modelHint?: string): Thinker {
+    if (thinkerId === 'claude-api' && this.opts.makeThinkerByProvider) {
+      return this.opts.makeThinkerByProvider('claude', modelHint);
+    }
+    if (thinkerId === 'codex' && this.opts.makeThinkerByProvider) {
+      return this.opts.makeThinkerByProvider('codex');
+    }
+    if (this.opts.makeThinkers) {
+      const dev = this.opts.devPersonalEnabled ? this.resolveLegacySet('dev-personal') : null;
+      if (dev?.planner.id === thinkerId) return dev.planner;
+      if (dev?.reviewer?.id === thinkerId) return dev.reviewer;
+      const single = this.resolveLegacySet('codex-single');
+      return single.planner;
+    }
+    return new CodexThinker();
+  }
+
+  private async resolveUnstartedPlan(explicitPreset?: DiscussionPreset): Promise<ResolvedThinkerSet> {
+    if (explicitPreset === 'dev-personal') {
+      const set = this.resolveLegacySet('dev-personal');
+      return {
+        ...set,
+        plannerLabel: set.planner.displayName,
+        reviewerLabel: set.reviewer?.displayName ?? null,
+        reviewerRoleDisplay: set.reviewer?.displayName ?? '不复核',
+        sameAiSingle: false,
+        roleSourceLabel: '开发者预设',
+        roleProblem: null,
+      };
+    }
+
+    if (this.opts.aiSettings) {
+      const claudeAvail = this.opts.getClaudeAvailability ? await this.opts.getClaudeAvailability() : undefined;
+      const eff = await this.opts.aiSettings.resolveEffectiveRoles(
+        this.opts.repo,
+        claudeAvail === undefined ? undefined : { claudeAvailable: claudeAvail },
+      );
+
+      if (eff.chief === 'unset' || eff.reviewer === 'unset') {
+        const placeholder = this.opts.makeThinkerByProvider
+          ? this.opts.makeThinkerByProvider('codex')
+          : this.resolveLegacySet('codex-single').planner;
+        const pLabel = eff.chief === 'unset' ? '未设置' : providerDisplayName(eff.chief);
+        const rDisplay =
+          eff.reviewer === 'unset'
+            ? '未设置'
+            : eff.reviewer === 'none'
+              ? '不复核'
+              : providerDisplayName(eff.reviewer);
+        return {
+          preset: 'roles',
+          planner: placeholder,
+          // 占位未开始线程用 single: true 创建，待用户补全配置后再按实际角色启动，避免无 reviewer 时建线程失败
+          single: true,
+          sameAiSingle: eff.sameAi,
+          plannerLabel: pLabel,
+          reviewerLabel: null,
+          reviewerRoleDisplay: rDisplay,
+          roleSourceLabel: eff.sourceLabel,
+          modelHint: eff.claudeModel,
+          roleProblem: eff.problem,
+        };
+      }
+
+      const planner = this.opts.makeThinkerByProvider
+        ? this.opts.makeThinkerByProvider(eff.chief, eff.claudeModel)
+        : this.thinkerForId(eff.chief === 'claude' ? 'claude-api' : 'codex', eff.claudeModel);
+      const reviewer =
+        eff.single || eff.reviewer === 'none'
+          ? undefined
+          : this.opts.makeThinkerByProvider
+            ? this.opts.makeThinkerByProvider(eff.reviewer, eff.claudeModel)
+            : this.thinkerForId(eff.reviewer === 'claude' ? 'claude-api' : 'codex', eff.claudeModel);
+      const preset: DiscussionPreset = eff.chief === 'codex' && eff.reviewer === 'none' ? 'codex-single' : 'roles';
+      const pLabel = planner.displayName;
+      const rLabel = reviewer?.displayName ?? null;
+      const rDisplay = reviewer
+        ? reviewer.displayName
+        : eff.sameAi
+          ? `${pLabel}（与首席同一 AI，按单思考者运行）`
+          : '不复核';
+
+      return {
+        preset,
+        planner,
+        ...(reviewer ? { reviewer } : {}),
+        single: eff.single,
+        sameAiSingle: eff.sameAi,
+        plannerLabel: pLabel,
+        reviewerLabel: rLabel,
+        reviewerRoleDisplay: rDisplay,
+        roleSourceLabel: eff.sourceLabel,
+        modelHint: eff.claudeModel,
+        roleProblem: eff.problem,
+      };
+    }
+
+    const legacy = this.resolveLegacySet(explicitPreset ?? 'codex-single');
+    return {
+      ...legacy,
+      plannerLabel: legacy.planner.displayName,
+      reviewerLabel: legacy.reviewer?.displayName ?? null,
+      reviewerRoleDisplay: legacy.reviewer?.displayName ?? '不复核',
+      sameAiSingle: false,
+      roleSourceLabel: null,
+      roleProblem: null,
+    };
+  }
+
+  private resolveStartedPlan(snap: DiscussionSnapshot): ResolvedThinkerSet {
+    if (snap.presetHint === 'dev-personal' || snap.plannerId === 'claude-cli') {
+      const set = this.resolveLegacySet('dev-personal');
+      return {
+        ...set,
+        plannerLabel: snap.plannerLabel ?? set.planner.displayName,
+        reviewerLabel: snap.reviewerLabel ?? set.reviewer?.displayName ?? null,
+        reviewerRoleDisplay: snap.reviewerLabel ?? set.reviewer?.displayName ?? '不复核',
+        sameAiSingle: false,
+        roleSourceLabel: snap.roleSourceLabel ?? '开发者预设',
+        roleProblem: null,
+      };
+    }
+
+    if (!snap.presetHint && !snap.single && !this.opts.makeThinkerByProvider && this.opts.devPersonalEnabled) {
+      const set = this.resolveLegacySet('dev-personal');
+      return {
+        ...set,
+        plannerLabel: set.planner.displayName,
+        reviewerLabel: set.reviewer?.displayName ?? null,
+        reviewerRoleDisplay: set.reviewer?.displayName ?? '不复核',
+        sameAiSingle: false,
+        roleSourceLabel: '开发者预设',
+        roleProblem: null,
+      };
+    }
+
+    const planner = this.thinkerForId(snap.plannerId, snap.modelHint);
+    const reviewer = !snap.single && snap.reviewerId ? this.thinkerForId(snap.reviewerId, snap.modelHint) : undefined;
+    const pLabel = snap.plannerLabel ?? planner.displayName;
+    const rLabel = snap.single ? null : (snap.reviewerLabel ?? reviewer?.displayName ?? null);
+    const sameAi = !!snap.sameAiSingle;
+    const rDisplay = rLabel
+      ? rLabel
+      : sameAi
+        ? `${pLabel}（与首席同一 AI，按单思考者运行）`
+        : '不复核';
+    const preset: DiscussionPreset =
+      snap.presetHint === 'dev-personal' || snap.presetHint === 'codex-single' || snap.presetHint === 'roles'
+        ? snap.presetHint
+        : snap.single && snap.plannerId !== 'claude-api'
+          ? 'codex-single'
+          : 'roles';
+
+    return {
+      preset,
+      planner,
+      ...(reviewer ? { reviewer } : {}),
+      single: snap.single,
+      sameAiSingle: sameAi,
+      plannerLabel: pLabel,
+      reviewerLabel: rLabel,
+      reviewerRoleDisplay: rDisplay,
+      roleSourceLabel: snap.roleSourceLabel ?? null,
+      ...(snap.modelHint ? { modelHint: snap.modelHint } : {}),
+      roleProblem: null,
+    };
+  }
+
+  async ensureBoundThread(task: Task, preset?: DiscussionPreset): Promise<string> {
     if (task.threadId) return task.threadId;
-    const set = this.resolveSet(preset);
+    const set = await this.resolveUnstartedPlan(preset);
     const rec = await createBoundThread(this.opts.repo, task.request, {
       planner: set.planner,
       ...(set.reviewer ? { reviewer: set.reviewer } : {}),
@@ -248,14 +436,28 @@ export class DiscussionService {
     });
     if (snap.pauseAt !== 'send_consent') this.consentPending.delete(task.id);
 
-    const preset: DiscussionPreset = snap.single ? 'codex-single' : 'dev-personal';
-    const set = this.resolveSet(preset);
+    const set = snap.started
+      ? this.resolveStartedPlan(snap)
+      : await this.resolveUnstartedPlan(snap.presetHint === 'dev-personal' ? 'dev-personal' : undefined);
+    const single = snap.started ? snap.single : set.single;
+    const independentReview = !single;
     const active = this.activeStep.get(task.id) ?? null;
     const err = this.errors.get(task.id) ?? null;
     const [chats, briefView] = await Promise.all([
       readDiscussionChats(this.opts.repo, threadId),
       readProjectBriefView(this.opts.repo),
     ]);
+
+    const plannerLabel = set.plannerLabel ?? set.planner.displayName;
+    const reviewerLabel = single ? null : (set.reviewerLabel ?? set.reviewer?.displayName ?? null);
+    const sameAiSingle = !!set.sameAiSingle;
+    const reviewerRoleDisplay =
+      set.reviewerRoleDisplay ??
+      (reviewerLabel ? reviewerLabel : sameAiSingle ? `${plannerLabel}（与首席同一 AI，按单思考者运行）` : '不复核');
+    const presetLabel =
+      set.preset === 'roles'
+        ? `${plannerLabel} 首席${reviewerLabel ? ` + ${reviewerLabel} 复核` : sameAiSingle ? '（首席与复核同 AI）' : '（不复核）'}`
+        : PRESET_LABEL[set.preset];
 
     return {
       taskId: task.id,
@@ -267,15 +469,19 @@ export class DiscussionService {
       activeStep: active,
       activeStepText: active ? STEP_TEXT[active] : null,
       error: err,
-      preset,
+      preset: set.preset,
       canUseDevPersonal: !!this.opts.devPersonalEnabled,
-      canSwitchPreset: snap.state === 'requirements_draft' && snap.budget.callsUsed === 0 && !this.inflight.has(task.id),
-      presetLabel: PRESET_LABEL[preset],
-      plannerLabel: set.planner.displayName,
-      reviewerLabel: set.reviewer?.displayName ?? null,
-      independentReview: snap.independentReview,
-      unreviewed: snap.unreviewed,
-      unreviewedBadge: snap.unreviewed ? '未经独立评审' : null,
+      canSwitchPreset: !snap.started && snap.state === 'requirements_draft' && snap.budget.callsUsed === 0 && !this.inflight.has(task.id),
+      presetLabel,
+      plannerLabel,
+      reviewerLabel,
+      reviewerRoleDisplay,
+      sameAiSingle,
+      roleSourceLabel: set.roleSourceLabel ?? null,
+      roleProblem: snap.started ? null : (set.roleProblem ?? null),
+      independentReview,
+      unreviewed: single,
+      unreviewedBadge: single ? '未经独立评审' : null,
       rawRequirement: snap.rawRequirement,
       requirementsVersion: snap.requirementsVersion,
       requirementsFrozen: snap.requirementsFrozen,
@@ -306,8 +512,9 @@ export class DiscussionService {
     if (this.inflight.has(task.id)) throw new Error('这个任务的讨论或对话正在进行中，请稍候。');
     const threadId = task.threadId ?? (await this.ensureBoundThread(task));
     const snap = await inspectDiscussion(this.opts.repo, threadId, { consentStore: this.consent });
-    const preset: DiscussionPreset = snap.single ? 'codex-single' : 'dev-personal';
-    const set = this.resolveSet(preset);
+    const set = snap.started
+      ? this.resolveStartedPlan(snap)
+      : await this.resolveUnstartedPlan(snap.presetHint === 'dev-personal' ? 'dev-personal' : undefined);
     const thinker = target === 'planner' ? set.planner : set.reviewer;
     if (!thinker) throw new Error('单思考者模式下没有复核思考者，无法发起复核对话。');
 
@@ -343,9 +550,37 @@ export class DiscussionService {
     if (p) await p;
   }
 
+  /** 开始讨论前锁定当前角色配置到线程记录中（此后修改设置不影响该线程）。 */
+  async prepareStart(task: Task, threadId: string, preset: DiscussionPreset): Promise<ResolvedThinkerSet> {
+    const snap = await inspectDiscussion(this.opts.repo, threadId, { consentStore: this.consent });
+    if (snap.started) {
+      return this.resolveStartedPlan(snap);
+    }
+    const set = await this.resolveUnstartedPlan(preset);
+    if (set.roleProblem) {
+      throw new Error(set.roleProblem);
+    }
+    await lockThreadRoles(this.opts.repo, threadId, {
+      single: set.single,
+      plannerId: set.planner.id,
+      ...(set.reviewer ? { reviewerId: set.reviewer.id } : {}),
+      ...(set.plannerLabel ? { plannerLabel: set.plannerLabel } : {}),
+      ...(set.reviewerLabel ? { reviewerLabel: set.reviewerLabel } : {}),
+      sameAiSingle: !!set.sameAiSingle,
+      presetHint: set.preset,
+      ...(set.modelHint ? { modelHint: set.modelHint } : {}),
+      ...(set.roleSourceLabel ? { roleSourceLabel: set.roleSourceLabel } : {}),
+    });
+    return set;
+  }
+
   private async runTurn(task: Task, threadId: string, preset: DiscussionPreset, decisions: ResumeDecisions): Promise<FlowOutcome> {
     if (this.inflight.has(task.id)) throw new Error('这个任务的讨论正在进行中，请稍候。');
-    const set = this.resolveSet(preset);
+    const snap = await inspectDiscussion(this.opts.repo, threadId, { consentStore: this.consent });
+    const set = snap.started ? this.resolveStartedPlan(snap) : await this.resolveUnstartedPlan(preset);
+    if (!snap.started && set.roleProblem) {
+      throw new Error(set.roleProblem);
+    }
     this.errors.delete(task.id);
     this.consentPending.delete(task.id);
 
@@ -392,11 +627,17 @@ export class DiscussionService {
   async setPresetBeforeStart(task: Task, preset: DiscussionPreset): Promise<void> {
     if (!task.threadId) return;
     if (this.inflight.has(task.id)) throw new Error('正在执行中，不能切换思考者预设。');
-    const set = this.resolveSet(preset);
+    const set = await this.resolveUnstartedPlan(preset);
     await updateThreadPreset(this.opts.repo, task.threadId, {
       single: set.single,
       plannerId: set.planner.id,
       ...(set.reviewer ? { reviewerId: set.reviewer.id } : {}),
+      ...(set.plannerLabel ? { plannerLabel: set.plannerLabel } : {}),
+      ...(set.reviewerLabel ? { reviewerLabel: set.reviewerLabel } : {}),
+      sameAiSingle: !!set.sameAiSingle,
+      presetHint: set.preset,
+      ...(set.modelHint ? { modelHint: set.modelHint } : {}),
+      ...(set.roleSourceLabel ? { roleSourceLabel: set.roleSourceLabel } : {}),
     });
   }
 

@@ -1,5 +1,15 @@
-import { useEffect, useState } from 'react';
-import { studio, type DisclosureState, type ProjectBriefView, type ProjectStatus, type TaskView } from './api.js';
+import { useEffect, useState, type FormEvent } from 'react';
+import {
+  studio,
+  type ChiefRoleChoice,
+  type DisclosureState,
+  type ProjectBriefView,
+  type ProjectRoleMode,
+  type ProjectRolesView,
+  type ProjectStatus,
+  type ReviewerRoleChoice,
+  type TaskView,
+} from './api.js';
 import { ProjectBriefForm } from './ProjectBriefForm.js';
 import { COPY } from './copy.js';
 
@@ -48,11 +58,21 @@ export function ProjectBoard({
   const [briefError, setBriefError] = useState<string | null>(null);
   const [briefSavedNotice, setBriefSavedNotice] = useState<string | null>(null);
 
+  const [rolesView, setRolesView] = useState<ProjectRolesView | null>(null);
+  const [roleMode, setRoleMode] = useState<ProjectRoleMode>('global');
+  const [roleChief, setRoleChief] = useState<ChiefRoleChoice>('codex');
+  const [roleReviewer, setRoleReviewer] = useState<ReviewerRoleChoice>('none');
+  const [rolesBusy, setRolesBusy] = useState(false);
+  const [rolesError, setRolesError] = useState<string | null>(null);
+  const [rolesSavedNotice, setRolesSavedNotice] = useState<string | null>(null);
+
   useEffect(() => {
     if (tab !== 'settings') return;
     let cancelled = false;
     setBriefError(null);
     setBriefSavedNotice(null);
+    setRolesError(null);
+    setRolesSavedNotice(null);
     studio()
       .getProjectBrief(project.id)
       .then((v) => {
@@ -60,6 +80,18 @@ export function ProjectBoard({
       })
       .catch((e: Error) => {
         if (!cancelled) setBriefError(e.message);
+      });
+    studio()
+      .getProjectRoles(project.id)
+      .then((rv) => {
+        if (cancelled) return;
+        setRolesView(rv);
+        setRoleMode(rv.mode);
+        setRoleChief(rv.chief);
+        setRoleReviewer(rv.reviewer);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setRolesError(e.message);
       });
     return () => {
       cancelled = true;
@@ -316,6 +348,179 @@ export function ProjectBoard({
                 )}
               </>
             )}
+          </div>
+
+          <div className="box" data-testid="project-settings-roles">
+            <h2>AI 角色</h2>
+            {(() => {
+              const roleName = (c: ChiefRoleChoice | ReviewerRoleChoice) =>
+                c === 'claude' ? 'Claude' : c === 'codex' ? 'Codex' : c === 'none' ? '不复核' : '未设置';
+              const needUnset = roleMode === 'custom' && (roleChief === 'unset' || roleReviewer === 'unset');
+              const needClaude = roleMode === 'custom' && (roleChief === 'claude' || roleReviewer === 'claude') && !rolesView?.claudeAvailable;
+              const needCodex = roleMode === 'custom' && (roleChief === 'codex' || roleReviewer === 'codex') && !rolesView?.codexAvailable;
+              const unconnectedWarn = needUnset
+                ? '存在「未设置」的角色（可能已删除 Key），请重新选择后再保存。'
+                : needClaude
+                  ? 'Claude 尚未接入（未配置可用 API Key），请先在全局「设置 → AI 与角色」接入后再保存。'
+                  : needCodex
+                    ? 'Codex 尚未接入或未登录，请先在终端登录 Codex 后再保存。'
+                    : null;
+              const sameAiNotice =
+                roleMode === 'custom' && (roleChief === 'codex' || roleChief === 'claude') && roleChief === roleReviewer
+                  ? `「首席」与「复核」均选择了 ${roleName(roleChief)}：将按单思考者模式运行，并标记「未经独立评审」。`
+                  : null;
+              const handleSaveRoles = async (e: FormEvent) => {
+                e.preventDefault();
+                if (rolesBusy || unconnectedWarn) return;
+                setRolesError(null);
+                setRolesSavedNotice(null);
+                setRolesBusy(true);
+                try {
+                  const next = await studio().saveProjectRoles(project.id, roleMode, roleChief, roleReviewer);
+                  setRolesView(next);
+                  setRoleMode(next.mode);
+                  setRoleChief(next.chief);
+                  setRoleReviewer(next.reviewer);
+                  setRolesSavedNotice('本项目 AI 角色设置已保存（已开始的讨论线程不受影响）。');
+                } catch (err) {
+                  setRolesError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setRolesBusy(false);
+                }
+              };
+              return (
+                <form onSubmit={handleSaveRoles} noValidate style={{ marginTop: '6px' }}>
+                  <div className="item">
+                    <div className="grow">
+                      <label htmlFor={`proj-role-mode-${project.id}`}>
+                        <strong>首席 / 复核 / 执行</strong>
+                      </label>
+                      <div className="muted">选择跟随全局设置，或仅在本项目单独指定思考者角色。</div>
+                    </div>
+                    <select
+                      id={`proj-role-mode-${project.id}`}
+                      aria-label="角色来源"
+                      data-testid="project-role-mode"
+                      value={roleMode}
+                      onChange={(e) => {
+                        setRoleMode(e.target.value as ProjectRoleMode);
+                        setRolesError(null);
+                        setRolesSavedNotice(null);
+                      }}
+                    >
+                      <option value="global">跟随全局设置</option>
+                      <option value="custom">本项目单独设置</option>
+                    </select>
+                  </div>
+
+                  {roleMode === 'global' && rolesView && (
+                    <p className="muted" style={{ marginTop: '8px' }} data-testid="project-role-inherited">
+                      当前沿用全局设置：首席 {roleName(rolesView.globalRoles.chief)} · 复核{' '}
+                      {roleName(rolesView.globalRoles.reviewer)} · 执行 Codex
+                    </p>
+                  )}
+
+                  {roleMode === 'custom' && (
+                    <>
+                      <div className="item">
+                        <div className="grow">
+                          <label htmlFor={`proj-chief-${project.id}`}>
+                            <strong>首席</strong> <span className="muted">· 写方案</span>
+                          </label>
+                        </div>
+                        <select
+                          id={`proj-chief-${project.id}`}
+                          aria-label="项目首席"
+                          data-testid="project-role-chief"
+                          value={roleChief}
+                          onChange={(e) => {
+                            setRoleChief(e.target.value as ChiefRoleChoice);
+                            setRolesError(null);
+                            setRolesSavedNotice(null);
+                          }}
+                        >
+                          {roleChief === 'unset' && (
+                            <option value="unset" disabled>
+                              未设置（请重新选择）
+                            </option>
+                          )}
+                          <option value="codex">Codex</option>
+                          <option value="claude">Claude</option>
+                        </select>
+                      </div>
+
+                      <div className="item">
+                        <div className="grow">
+                          <label htmlFor={`proj-reviewer-${project.id}`}>
+                            <strong>复核</strong> <span className="muted">· 独立找错</span>
+                          </label>
+                        </div>
+                        <select
+                          id={`proj-reviewer-${project.id}`}
+                          aria-label="项目复核"
+                          data-testid="project-role-reviewer"
+                          value={roleReviewer}
+                          onChange={(e) => {
+                            setRoleReviewer(e.target.value as ReviewerRoleChoice);
+                            setRolesError(null);
+                            setRolesSavedNotice(null);
+                          }}
+                        >
+                          {roleReviewer === 'unset' && (
+                            <option value="unset" disabled>
+                              未设置（请重新选择）
+                            </option>
+                          )}
+                          <option value="none">不复核</option>
+                          <option value="codex">Codex</option>
+                          <option value="claude">Claude</option>
+                        </select>
+                      </div>
+
+                      <div className="item">
+                        <div className="grow">
+                          <strong>执行</strong> <span className="muted">· 每个任务一个（目前仅支持 Codex）</span>
+                        </div>
+                        <span data-testid="project-role-executor" className="tag">
+                          Codex（固定）
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {sameAiNotice && (
+                    <p className="notice" style={{ marginTop: '8px' }} data-testid="project-same-ai-notice">
+                      {sameAiNotice}
+                    </p>
+                  )}
+                  {unconnectedWarn && (
+                    <p role="alert" className="error" style={{ marginTop: '8px' }} data-testid="project-role-unconnected-warn">
+                      {unconnectedWarn}
+                    </p>
+                  )}
+                  {rolesError && (
+                    <p role="alert" className="error" style={{ marginTop: '8px' }} data-testid="project-roles-error">
+                      {rolesError}
+                    </p>
+                  )}
+                  {rolesSavedNotice && (
+                    <p role="status" className="muted" style={{ marginTop: '8px' }} data-testid="project-roles-saved">
+                      {rolesSavedNotice}
+                    </p>
+                  )}
+                  <div className="row" style={{ marginTop: '10px' }}>
+                    <button
+                      type="submit"
+                      className="btn pri"
+                      disabled={rolesBusy || !!unconnectedWarn}
+                      data-testid="project-roles-save"
+                    >
+                      {rolesBusy ? '保存中…' : '保存角色设置'}
+                    </button>
+                  </div>
+                </form>
+              );
+            })()}
           </div>
 
           <div className="box">

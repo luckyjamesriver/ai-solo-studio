@@ -18,6 +18,7 @@ export interface DiscussionPageProps {
   task: TaskView;
   onTaskUpdated: (t: TaskView) => void;
   onTaskReplaced: (nextTask: TaskView) => void;
+  onOpenAiSettings?: () => void;
 }
 
 export interface DiscussionBodyProps {
@@ -58,6 +59,7 @@ export interface DiscussionBodyProps {
   onChangePlannerChatDraft?: (text: string) => void;
   onChangeReviewerChatDraft?: (text: string) => void;
   onSendChat?: (target: 'planner' | 'reviewer') => void;
+  onOpenAiSettings?: () => void;
 }
 
 function stepMarker(status: DiscussionView['steps'][number]['status']): string {
@@ -128,6 +130,7 @@ export function DiscussionViewBody({
   onChangePlannerChatDraft,
   onChangeReviewerChatDraft,
   onSendChat,
+  onOpenAiSettings,
 }: DiscussionBodyProps) {
   const effectiveTab: DiscussionTab =
     !view.independentReview && activeTab === 'reviewer-chat' ? 'summary' : activeTab;
@@ -185,20 +188,31 @@ export function DiscussionViewBody({
           </div>
           <span className="muted">线程 {view.threadId}</span>
         </div>
+        <div className="muted" data-testid="discussion-roles" style={{ marginTop: '6px' }}>
+          首席：{view.plannerLabel} · 复核：{view.reviewerRoleDisplay}
+          {view.roleSourceLabel ? ` · 来源：${view.roleSourceLabel}` : ''}
+        </div>
 
         {view.canSwitchPreset && view.canUseDevPersonal && (
           <div className="row" style={{ marginTop: '10px', gap: '14px', flexWrap: 'wrap' }}>
             <span className="muted">讨论模式</span>
-            <label className="row" style={{ gap: '6px' }}>
-              <input
-                type="radio"
-                name="discuss-preset"
-                value="codex-single"
-                checked={selectedPreset === 'codex-single'}
-                onChange={() => onSelectPreset('codex-single')}
-              />
-              <span>Codex 单思考者（{COPY.discussUnreviewedBadge}）</span>
-            </label>
+            {(() => {
+              const configuredPreset: DiscussionPreset = view.preset === 'dev-personal' ? 'roles' : view.preset;
+              return (
+                <label className="row" style={{ gap: '6px' }}>
+                  <input
+                    type="radio"
+                    name="discuss-preset"
+                    value={configuredPreset}
+                    checked={selectedPreset !== 'dev-personal'}
+                    onChange={() => onSelectPreset(configuredPreset)}
+                  />
+                  <span>
+                    按角色设置（首席：{view.plannerLabel} · 复核：{view.reviewerRoleDisplay}）
+                  </span>
+                </label>
+              );
+            })()}
             <label className="row" style={{ gap: '6px' }}>
               <input
                 type="radio"
@@ -547,6 +561,23 @@ export function DiscussionViewBody({
                 <section className="box hl" data-testid="discussion-ready-card">
                   <h2>需求草稿</h2>
                   <p style={{ marginTop: '6px' }}>{view.rawRequirement}</p>
+                  {view.roleProblem && selectedPreset !== 'dev-personal' && (
+                    <div className="box wbox" style={{ marginTop: '10px' }} role="alert" data-testid="discussion-role-problem">
+                      <p>{view.roleProblem}</p>
+                      {onOpenAiSettings && (
+                        <div className="row" style={{ marginTop: '8px' }}>
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            data-testid="discussion-open-ai-settings"
+                            onClick={onOpenAiSettings}
+                          >
+                            前往「设置 → AI 与角色」调整
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <p className="muted" style={{ marginTop: '8px' }}>
                     点击「开始讨论」由首席整理需求并起草方案；如果需求已经很明确，也可以跳过讨论直接填写施工计划。
                   </p>
@@ -909,8 +940,8 @@ export function DiscussionViewBody({
           <section className="box" data-testid="discussion-progress-card">
             <h2>进度</h2>
             <p className="muted" style={{ marginTop: '4px' }}>
-              首席：{view.plannerLabel}
-              {view.reviewerLabel ? ` · 复核：${view.reviewerLabel}` : ` · ${COPY.discussUnreviewedBadge}`}
+              首席：{view.plannerLabel} · 复核：{view.reviewerRoleDisplay}
+              {view.unreviewed ? `（${COPY.discussUnreviewedBadge}）` : ''}
             </p>
             <div className="discuss-step-list" style={{ marginTop: '10px' }}>
               {view.steps.map((st) => (
@@ -1022,6 +1053,7 @@ export function DiscussionPage({
   task,
   onTaskUpdated,
   onTaskReplaced,
+  onOpenAiSettings,
 }: DiscussionPageProps) {
   const [view, setView] = useState<DiscussionView | null>(null);
   const [activeTab, setActiveTab] = useState<DiscussionTab>('summary');
@@ -1230,6 +1262,7 @@ export function DiscussionPage({
           return updated;
         });
       }}
+      {...(onOpenAiSettings ? { onOpenAiSettings } : {})}
     />
   );
 }

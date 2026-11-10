@@ -85,6 +85,14 @@ export interface ThreadRecord {
   updatedAt: string;
   state: ThreadState;
   stoppedReason?: string;
+  /** 讨论是否已正式开始（锁定当时的角色配置，后续修改全局/项目设置不再影响该线程） */
+  started?: boolean;
+  presetHint?: string;
+  modelHint?: string;
+  roleSourceLabel?: string;
+  sameAiSingle?: boolean;
+  plannerLabel?: string;
+  reviewerLabel?: string;
   rawRequirement: string;
   /** 单思考者模式：未经独立评审 */
   single: boolean;

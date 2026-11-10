@@ -120,12 +120,14 @@ describe('首次外发告知', () => {
     await shot(a.page, '1-首次外发告知');
     await acceptDisclosure(a.page);
     await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId('tab-settings-disclosure').click();
     expect(await a.page.getByTestId('outbound-status').innerText()).toContain('已确认');
     expect(fs.existsSync(path.join(data, 'records', 'app', 'disclosure.json'))).toBe(true);
     await a.app.close();
 
     const b = await launch(data);
     await b.page.getByTestId('nav-settings').click();
+    await b.page.getByTestId('tab-settings-disclosure').click();
     await b.page.getByTestId('outbound-status').waitFor();
     await b.page.waitForTimeout(800);
     expect(await b.page.getByTestId('disclosure').count()).toBe(0);
@@ -141,6 +143,7 @@ describe('首次外发告知', () => {
     await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
     await a.page.locator('ul.env li').first().waitFor({ timeout: 60_000 }); // 首次引导中的体检仍可浏览
     await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId('tab-settings-disclosure').click();
     expect(await a.page.getByTestId('outbound-status').innerText()).toContain('尚未确认');
     expect(fs.existsSync(path.join(data, 'records', 'app', 'disclosure.json'))).toBe(false);
     await a.app.close();
@@ -614,7 +617,7 @@ describe('施工模式界面', () => {
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
     expect(r.forgedProject).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'detectEnvironment', 'discardTask', 'editReworkPermissions', 'getAcceptanceView', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getTask', 'getWorkbench', 'initProject', 'listOpenProjects', 'listTasks', 'modifyDiscussionRequirements', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealProject', 'reworkTask', 'saveClaudeKey', 'savePlan', 'saveProjectBrief', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoSave']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'detectEnvironment', 'discardTask', 'editReworkPermissions', 'getAcceptanceView', 'getAiSettings', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getProjectRoles', 'getTask', 'getWorkbench', 'initProject', 'listOpenProjects', 'listTasks', 'modifyDiscussionRequirements', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealProject', 'reworkTask', 'saveAiRoles', 'saveClaudeKey', 'savePlan', 'saveProjectBrief', 'saveProjectRoles', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {

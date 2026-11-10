@@ -10,6 +10,7 @@ import {
   type ClaudeKeySaveResult,
   type ClaudeKeyStatus,
   type DisclosureState,
+  type GlobalAiSettingsView,
   type HealthReport,
   type OpenResult,
   type ProjectStatus,
@@ -51,6 +52,7 @@ export function App() {
   const [disc, setDisc] = useState<DisclosureState | null>(null);
   const [showDisc, setShowDisc] = useState(false);
   const [claudeKey, setClaudeKey] = useState<ClaudeKeyStatus | null>(null);
+  const [aiSettings, setAiSettings] = useState<GlobalAiSettingsView | null>(null);
 
   const mountedRef = useRef(true);
   const refreshSeqRef = useRef<Record<string, number>>({});
@@ -63,16 +65,22 @@ export function App() {
     setScreen(next);
   }, []);
 
-  const refreshClaudeKey = useCallback(() => {
+  const refreshAiSettings = useCallback(() => {
     studio()
-      .getClaudeKeyStatus()
+      .getAiSettings()
       .then((s) => {
-        if (mountedRef.current) setClaudeKey(s);
+        if (!mountedRef.current) return;
+        setAiSettings(s);
+        setClaudeKey(s.claudeKey);
       })
       .catch((e: Error) => {
         if (mountedRef.current) setError(e.message);
       });
   }, []);
+
+  const refreshClaudeKey = useCallback(() => {
+    refreshAiSettings();
+  }, [refreshAiSettings]);
 
   const refreshDisclosure = useCallback(() => {
     studio()
@@ -231,6 +239,7 @@ export function App() {
     const res = await studio().saveClaudeKey(secret);
     if (res.ok && mountedRef.current) {
       setClaudeKey(res.status);
+      refreshAiSettings();
       refreshDisclosure();
     }
     return res;
@@ -240,9 +249,19 @@ export function App() {
     const s = await studio().deleteClaudeKey();
     if (mountedRef.current) {
       setClaudeKey(s);
+      refreshAiSettings();
       refreshDisclosure();
     }
     return s;
+  };
+
+  const handleSaveAiRoles = async (chief: string, reviewer: string, model: string): Promise<GlobalAiSettingsView> => {
+    const updated = await studio().saveAiRoles(chief, reviewer, model);
+    if (mountedRef.current) {
+      setAiSettings(updated);
+      setClaudeKey(updated.claudeKey);
+    }
+    return updated;
   };
 
   const acceptDisclosure = () =>
@@ -366,7 +385,7 @@ export function App() {
         onSelectProject={(id) => selectProject(id, 'tasks')}
         onOpenProject={() => handleOpenResult(studio().chooseProject())}
         onSelectSettings={() => {
-          navigate({ kind: 'settings', tab: 'disclosure' });
+          navigate({ kind: 'settings', tab: 'ai' });
           refreshEnv();
           refreshClaudeKey();
         }}
@@ -449,6 +468,11 @@ export function App() {
               loadProjectData(screen.projectId);
               refreshWorkbench();
             }}
+            onOpenAiSettings={() => {
+              navigate({ kind: 'settings', tab: 'ai' });
+              refreshEnv();
+              refreshAiSettings();
+            }}
           />
         )}
 
@@ -458,12 +482,20 @@ export function App() {
             disc={disc}
             env={env}
             claudeKey={claudeKey}
+            aiSettings={aiSettings}
             error={error}
-            onTabChange={(tab) => setScreen({ kind: 'settings', tab })}
+            onTabChange={(tab) => {
+              setScreen({ kind: 'settings', tab });
+              if (tab === 'ai') refreshAiSettings();
+            }}
             onShowDisclosure={() => setShowDisc(true)}
-            onRefreshEnv={() => refreshEnv()}
+            onRefreshEnv={() => {
+              refreshEnv();
+              refreshAiSettings();
+            }}
             onSaveClaudeKey={handleSaveClaudeKey}
             onDeleteClaudeKey={handleDeleteClaudeKey}
+            onSaveAiRoles={handleSaveAiRoles}
           />
         )}
       </div>

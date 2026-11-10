@@ -12,6 +12,13 @@ import { resolveCapabilities } from '../capabilities/model.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
 import type { Executor } from '../executor/types.js';
 import type { Task } from '../task/model.js';
+import type { Thinker } from '../thinking/types.js';
+import {
+  buildSameAiNotice,
+  type AiProviderId,
+  type AiSettingsStore,
+  type ProjectRolesView,
+} from './ai-settings.js';
 import { buildTaskView, extraDirKey, type TaskView } from './task-view.js';
 import { classifyTaskState, type TaskClassification } from './task-state-view.js';
 import type { ModePreference, TaskPrefs } from './prefs.js';
@@ -59,6 +66,12 @@ export interface ControllerOptions {
   makeThinkers?: (preset: DiscussionPreset) => ResolvedThinkerSet;
   /** 是否开启开发者预设（STUDIO_DEV_PERSONAL_CLAUDE=1 且未打包） */
   devPersonalEnabled?: boolean;
+  /** 全局/项目 AI 角色配置（阶段 5b） */
+  aiSettings?: AiSettingsStore;
+  /** 当前接入 AI 的可用状态 */
+  getAiAvailability?: () => Promise<{ codexAvailable: boolean; claudeAvailable: boolean }>;
+  /** 按思考者标识（codex / claude）构建 Thinker */
+  makeThinkerByProvider?: (provider: AiProviderId, model?: string) => Thinker;
 }
 
 const EDITABLE = ['draft', 'clarifying', 'planned', 'approved'];
@@ -90,6 +103,11 @@ export class TaskController {
       repo: this.o.repo,
       ...(this.o.devPersonalEnabled ? { devPersonalEnabled: true } : {}),
       ...(this.o.makeThinkers ? { makeThinkers: this.o.makeThinkers } : {}),
+      ...(this.o.aiSettings ? { aiSettings: this.o.aiSettings } : {}),
+      ...(this.o.getAiAvailability
+        ? { getClaudeAvailability: async () => (await this.o.getAiAvailability!()).claudeAvailable }
+        : {}),
+      ...(this.o.makeThinkerByProvider ? { makeThinkerByProvider: this.o.makeThinkerByProvider } : {}),
     });
     return this.discussion;
   }
@@ -673,6 +691,35 @@ export class TaskController {
     return readProjectBriefView(this.o.repo);
   }
 
+  async getProjectRoles(): Promise<ProjectRolesView> {
+    if (!this.o.aiSettings) throw new Error('当前环境未启用 AI 角色设置。');
+    const avail = this.o.getAiAvailability
+      ? await this.o.getAiAvailability()
+      : { codexAvailable: true, claudeAvailable: true };
+    const [cfg, globalRoles, effective] = await Promise.all([
+      this.o.aiSettings.getProjectRoles(this.o.repo),
+      this.o.aiSettings.getGlobalRoles(),
+      this.o.aiSettings.resolveEffectiveRoles(this.o.repo, avail),
+    ]);
+    return {
+      ...cfg,
+      globalRoles,
+      effective,
+      codexAvailable: avail.codexAvailable,
+      claudeAvailable: avail.claudeAvailable,
+      sameAiNotice: buildSameAiNotice(cfg.chief, cfg.reviewer),
+    };
+  }
+
+  async saveProjectRoles(mode: unknown, chief: unknown, reviewer: unknown): Promise<ProjectRolesView> {
+    if (!this.o.aiSettings) throw new Error('当前环境未启用 AI 角色设置。');
+    const avail = this.o.getAiAvailability
+      ? await this.o.getAiAvailability()
+      : { codexAvailable: true, claudeAvailable: true };
+    await this.o.aiSettings.saveProjectRoles(this.o.repo, { mode, chief, reviewer }, avail);
+    return this.getProjectRoles();
+  }
+
   async waitDiscussion(id: unknown): Promise<void> {
     const tid = this.checkArg(TASK_ID, id);
     await this.d().waitIdle(tid);
@@ -686,7 +733,7 @@ export class TaskController {
   }
 
   async startDiscussion(id: unknown, preset: unknown): Promise<DiscussionView> {
-    if (preset !== 'codex-single' && preset !== 'dev-personal') throw new Error(VIEW_TEXT.invalidArgument);
+    if (preset !== 'roles' && preset !== 'codex-single' && preset !== 'dev-personal') throw new Error(VIEW_TEXT.invalidArgument);
     const tid = this.checkArg(TASK_ID, id);
     const t = await this.load(tid);
     if (t.manualReview) throw new Error(MESSAGES.abnormal);
@@ -700,6 +747,7 @@ export class TaskController {
     if (!(await hasRequiredContext(this.o.repo))) {
       throw new Error('找不到项目简介（或 docs/PROJECT_CONTEXT.md），请先填写项目简介后再开始讨论。');
     }
+    await this.d().prepareStart(t, threadId, preset);
     this.d().launchTurn(t, threadId, preset);
     return this.d().getView(t);
   }

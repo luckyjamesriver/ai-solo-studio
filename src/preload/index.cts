@@ -18,6 +18,10 @@ const api = {
   getClaudeKeyStatus: () => ipcRenderer.invoke('settings:getClaudeKey'),
   saveClaudeKey: (secret: string) => ipcRenderer.invoke('settings:saveClaudeKey', secret),
   deleteClaudeKey: () => ipcRenderer.invoke('settings:deleteClaudeKey'),
+  getAiSettings: () => ipcRenderer.invoke('settings:getAi'),
+  saveAiRoles: (chief: string, reviewer: string, model: string) => ipcRenderer.invoke('settings:saveAiRoles', chief, reviewer, model),
+  getProjectRoles: (projectId: string) => ipcRenderer.invoke('project:getRoles', projectId),
+  saveProjectRoles: (projectId: string, mode: string, chief: string, reviewer: string) => ipcRenderer.invoke('project:saveRoles', projectId, mode, chief, reviewer),
   // B3-2 + 阶段 2 多项目：任务。第一个参数固定为已打开的 projectId；没有任何路径参数——
   // 额外文件夹由主进程弹出系统选择框取得并校验。
   listTasks: (projectId: string) => ipcRenderer.invoke('tasks:list', projectId),

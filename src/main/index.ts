@@ -7,12 +7,19 @@ import { validateProjectPath } from '../core/env/project-path.js';
 import { runHealthCheck, type HealthReport } from '../core/env/health.js';
 import * as G from '../core/git/git.js';
 import { CodexExecutor, VERIFIED_CODEX_VERSION } from '../core/executor/adapters/codex.js';
+import { ClaudeApiThinker } from '../core/thinking/claude-api.js';
 import { ClaudeCliThinker, DEV_PERSONAL_ENV } from '../core/thinking/claude-cli.js';
 import { CodexThinker } from '../core/thinking/codex.js';
 import { RecentProjects } from '../core/app/recent.js';
 import { DisclosureStore, buildDisclosure } from '../core/app/disclosure.js';
 import { AppStore } from '../core/app/app-store.js';
 import { ClaudeKeyStore, type SecretVault } from '../core/app/claude-key.js';
+import {
+  AiSettingsStore,
+  buildSameAiNotice,
+  SUGGESTED_CLAUDE_MODELS,
+  type GlobalAiSettingsView,
+} from '../core/app/ai-settings.js';
 import { TaskStore } from '../core/task/store.js';
 import { TaskController } from '../core/app/task-controller.js';
 import { TaskPrefs } from '../core/app/prefs.js';
@@ -65,7 +72,36 @@ const safeStorageVault: SecretVault = {
   },
 };
 const claudeKeyStore = () => new ClaudeKeyStore(dataDir(), safeStorageVault, STORE_OPTS);
+const aiSettingsStore = () => new AiSettingsStore(dataDir(), STORE_OPTS);
 const TOOLS = ['git', 'node', 'npm', 'codex'] as const;
+
+async function detectCodexAvailability(explicitCommand?: string): Promise<{ available: boolean; note?: string }> {
+  try {
+    const command = explicitCommand ?? (await resolveTool('codex', {}))?.path ?? 'codex';
+    return await new CodexThinker({ command }).detect();
+  } catch (e) {
+    return { available: false, note: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function getGlobalAiView(): Promise<GlobalAiSettingsView> {
+  const [codex, claudeKey, roles] = await Promise.all([
+    detectCodexAvailability(),
+    claudeKeyStore().status(),
+    aiSettingsStore().getGlobalRoles(),
+  ]);
+  return {
+    codex: {
+      available: codex.available,
+      statusLabel: codex.available ? '可用' : '不可用',
+      detail: codex.note ?? (codex.available ? '本机 ChatGPT 登录 / Codex CLI 就绪' : '尚未安装或尚未登录 Codex'),
+    },
+    claudeKey,
+    roles,
+    sameAiNotice: buildSameAiNotice(roles.chief, roles.reviewer),
+    availableClaudeModels: SUGGESTED_CLAUDE_MODELS,
+  };
+}
 
 openProjects.setHealthProbe(async (): Promise<WorkbenchEntry[]> => {
   if (!latestHealth) return [];
@@ -147,6 +183,24 @@ async function createController(dir: string): Promise<TaskController> {
       };
     },
     devPersonalEnabled,
+    aiSettings: aiSettingsStore(),
+    getAiAvailability: async () => {
+      const [codex, keyStatus] = await Promise.all([
+        detectCodexAvailability(codexPath),
+        claudeKeyStore().status(),
+      ]);
+      return {
+        codexAvailable: codex.available,
+        claudeAvailable: keyStatus.configured && keyStatus.available,
+      };
+    },
+    makeThinkerByProvider: (provider, model) =>
+      provider === 'claude'
+        ? new ClaudeApiThinker({
+            ...(model ? { model } : {}),
+            getSecret: () => claudeKeyStore().getSecret(),
+          })
+        : new CodexThinker({ command: codexPath }),
     pickDirectory: async () => {
       const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: '选择允许 AI 修改的另一个文件夹' });
       return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
@@ -337,6 +391,8 @@ ipcMain.handle('project:openRecent', async (_e, id: unknown): Promise<OpenResult
 ipcMain.handle('project:status', (_e, projectId: unknown) => projectStatus(projectId));
 ipcMain.handle('project:getBrief', (_e, projectId: unknown) => controllerFor(projectId).getProjectBrief());
 ipcMain.handle('project:saveBrief', (_e, projectId: unknown, brief: unknown) => controllerFor(projectId).saveProjectBrief(brief));
+ipcMain.handle('project:getRoles', (_e, projectId: unknown) => controllerFor(projectId).getProjectRoles());
+ipcMain.handle('project:saveRoles', (_e, projectId: unknown, mode: unknown, chief: unknown, reviewer: unknown) => controllerFor(projectId).saveProjectRoles(mode, chief, reviewer));
 ipcMain.handle('project:init', async (_e, consent: unknown): Promise<OpenResult> => {
   const target = pendingInit;
   pendingInit = null;
@@ -355,9 +411,27 @@ ipcMain.handle('settings:saveClaudeKey', async (_e, secret: unknown) => {
   if (typeof secret !== 'string' || secret.length > 512) {
     throw new Error('无效的 API Key 输入参数。');
   }
-  return claudeKeyStore().save(secret);
+  const roles = await aiSettingsStore().getGlobalRoles();
+  return claudeKeyStore().save(secret, { model: roles.claudeModel });
 });
-ipcMain.handle('settings:deleteClaudeKey', () => claudeKeyStore().delete());
+ipcMain.handle('settings:deleteClaudeKey', () =>
+  claudeKeyStore().delete(() => aiSettingsStore().onClaudeKeyDeleted()),
+);
+ipcMain.handle('settings:getAi', () => getGlobalAiView());
+ipcMain.handle('settings:saveAiRoles', async (_e, chief: unknown, reviewer: unknown, model: unknown) => {
+  const [codex, claudeKey] = await Promise.all([
+    detectCodexAvailability(),
+    claudeKeyStore().status(),
+  ]);
+  await aiSettingsStore().saveGlobalRoles(
+    { chief, reviewer, claudeModel: model },
+    {
+      codexAvailable: codex.available,
+      claudeAvailable: claudeKey.configured && claudeKey.available,
+    },
+  );
+  return getGlobalAiView();
+});
 
 // 单实例（ADR 0005）：第二个实例只唤起已有窗口，不启动，更不会写数据——所有写入都来自同一个主进程。
 const gotSingleInstanceLock = app.requestSingleInstanceLock();

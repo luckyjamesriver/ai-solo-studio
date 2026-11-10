@@ -18,6 +18,7 @@ interface TaskPageProps {
   onTaskChanged: (t: TaskView) => void;
   onTaskReplaced?: (t: TaskView) => void;
   onAcceptanceChanged: () => void;
+  onOpenAiSettings?: () => void;
 }
 
 /**
@@ -36,6 +37,7 @@ export function TaskPage({
   onTaskChanged,
   onTaskReplaced,
   onAcceptanceChanged,
+  onOpenAiSettings,
 }: TaskPageProps) {
   const [ackStopToken, setAckStopToken] = useState<string | null>(null);
   useEffect(() => {
@@ -112,6 +114,7 @@ export function TaskPage({
             task={task}
             onTaskUpdated={onTaskChanged}
             onTaskReplaced={onTaskReplaced ?? onTaskChanged}
+            {...(onOpenAiSettings ? { onOpenAiSettings } : {})}
           />
         ) : showPlan ? (
           <PlanCard

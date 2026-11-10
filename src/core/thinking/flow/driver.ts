@@ -85,13 +85,20 @@ export interface DiscussionBudgetView {
 export interface DiscussionSnapshot {
   threadId: string;
   state: ThreadRecord['state'];
+  started: boolean;
   pauseAt: PauseKind;
   pauseMessage: string | null;
   single: boolean;
   independentReview: boolean;
   unreviewed: boolean;
+  sameAiSingle: boolean;
   plannerId: string;
   reviewerId?: string;
+  plannerLabel?: string;
+  reviewerLabel?: string;
+  presetHint?: string;
+  modelHint?: string;
+  roleSourceLabel?: string;
   rawRequirement: string;
   requirementsVersion: number | null;
   requirementsFrozen: boolean;
@@ -111,6 +118,15 @@ export interface DiscussionSnapshot {
   budget: DiscussionBudgetView;
   steps: DiscussionStepStatus[];
   stoppedReason: string | null;
+}
+
+export function isThreadStarted(rec: Pick<ThreadRecord, 'started' | 'attempts' | 'state' | 'log'>): boolean {
+  return (
+    rec.started === true ||
+    rec.attempts.length > 0 ||
+    rec.state !== 'requirements_draft' ||
+    rec.log.some((l) => l.text.startsWith('停在确认点'))
+  );
 }
 
 export interface ApprovedThreadPlanPayload {
@@ -457,13 +473,20 @@ export async function inspectDiscussion(
   return {
     threadId: rec.id,
     state: rec.state,
+    started: isThreadStarted(rec),
     pauseAt,
     pauseMessage,
     single: rec.single,
     independentReview: !rec.single,
     unreviewed: rec.single,
+    sameAiSingle: !!rec.sameAiSingle,
     plannerId: rec.plannerId,
     ...(rec.reviewerId ? { reviewerId: rec.reviewerId } : {}),
+    ...(rec.plannerLabel ? { plannerLabel: rec.plannerLabel } : {}),
+    ...(rec.reviewerLabel ? { reviewerLabel: rec.reviewerLabel } : {}),
+    ...(rec.presetHint ? { presetHint: rec.presetHint } : {}),
+    ...(rec.modelHint ? { modelHint: rec.modelHint } : {}),
+    ...(rec.roleSourceLabel ? { roleSourceLabel: rec.roleSourceLabel } : {}),
     rawRequirement: rec.rawRequirement,
     requirementsVersion: reqArt?.version ?? null,
     requirementsFrozen: !!reqFrozenArt,
@@ -525,24 +548,66 @@ export async function readApprovedThreadPlan(projectRoot: string, threadId: stri
   };
 }
 
-/** 仅更新思考线程预设（限尚未产生任何尝试时）。 */
-export async function updateThreadPreset(
-  projectRoot: string,
-  threadId: string,
-  next: { single: boolean; plannerId: string; reviewerId?: string },
-): Promise<ThreadRecord> {
-  const store = new ThreadStore(projectRoot);
-  const rec = await store.load(threadId);
-  if (rec.attempts.length > 0 || rec.state !== 'requirements_draft') {
-    throw new Error('讨论已经开始，不能直接更换预设；如需更换，请修改需求并重新开始讨论。');
-  }
+export interface ThreadRoleBindingInput {
+  single: boolean;
+  plannerId: string;
+  reviewerId?: string;
+  plannerLabel?: string;
+  reviewerLabel?: string;
+  sameAiSingle?: boolean;
+  presetHint?: string;
+  modelHint?: string;
+  roleSourceLabel?: string;
+}
+
+function applyBinding(rec: ThreadRecord, next: ThreadRoleBindingInput): void {
   rec.single = next.single;
   rec.plannerId = next.plannerId;
   if (next.single || !next.reviewerId) delete rec.reviewerId;
   else rec.reviewerId = next.reviewerId;
+  if (next.plannerLabel !== undefined) rec.plannerLabel = next.plannerLabel;
+  if (next.reviewerLabel !== undefined) rec.reviewerLabel = next.reviewerLabel;
+  else if (next.single) delete rec.reviewerLabel;
+  if (next.sameAiSingle !== undefined) rec.sameAiSingle = next.sameAiSingle;
+  if (next.presetHint !== undefined) rec.presetHint = next.presetHint;
+  if (next.modelHint !== undefined) rec.modelHint = next.modelHint;
+  if (next.roleSourceLabel !== undefined) rec.roleSourceLabel = next.roleSourceLabel;
+}
+
+/** 仅更新思考线程预设或未开始线程的角色（限讨论尚未开始时）。 */
+export async function updateThreadPreset(
+  projectRoot: string,
+  threadId: string,
+  next: ThreadRoleBindingInput,
+): Promise<ThreadRecord> {
+  const store = new ThreadStore(projectRoot);
+  const rec = await store.load(threadId);
+  if (isThreadStarted(rec)) {
+    throw new Error('讨论已经开始，不能直接更换思考角色；如需更换，请修改需求并重新开始讨论。');
+  }
+  applyBinding(rec, next);
   rec.log.push({
     at: new Date().toISOString(),
-    text: `切换思考预设（${next.single ? '单思考者模式：未经独立评审' : `规划者 ${next.plannerId} / 评审者 ${next.reviewerId}`}）`,
+    text: `更新讨论角色（${next.single ? '单思考者模式：未经独立评审' : `首席 ${next.plannerId} / 复核 ${next.reviewerId}`}）`,
+  });
+  await store.save(rec);
+  return rec;
+}
+
+/** 讨论正式开始时把当前角色配置锁定到线程记录中；后续修改全局或项目设置不再影响该线程。 */
+export async function lockThreadRoles(
+  projectRoot: string,
+  threadId: string,
+  next: ThreadRoleBindingInput,
+): Promise<ThreadRecord> {
+  const store = new ThreadStore(projectRoot);
+  const rec = await store.load(threadId);
+  if (isThreadStarted(rec)) return rec;
+  applyBinding(rec, next);
+  rec.started = true;
+  rec.log.push({
+    at: new Date().toISOString(),
+    text: `开始讨论，已锁定角色（${next.single ? (next.sameAiSingle ? `${next.plannerLabel ?? next.plannerId} 兼首席与复核 · 单思考者` : `${next.plannerLabel ?? next.plannerId} · 不复核`) : `首席 ${next.plannerLabel ?? next.plannerId} / 复核 ${next.reviewerLabel ?? next.reviewerId}`}${next.roleSourceLabel ? ` · ${next.roleSourceLabel}` : ''}）`,
   });
   await store.save(rec);
   return rec;
