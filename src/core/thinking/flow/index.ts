@@ -23,3 +23,10 @@ export {
   type DiscussionSnapshot,
   type ApprovedThreadPlanPayload,
 } from './driver.js';
+export {
+  sendThreadChat,
+  readDiscussionChats,
+  type ChatTarget,
+  type DiscussionChatMessage,
+  type DiscussionChatsView,
+} from './chat.js';

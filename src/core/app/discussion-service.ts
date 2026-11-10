@@ -6,14 +6,19 @@ import {
   createBoundThread,
   inspectDiscussion,
   readApprovedThreadPlan,
+  readDiscussionChats,
   runPausedFlow,
+  sendThreadChat,
   stopThreadRecord,
   summarizePlanMarkdown,
   updateThreadPreset,
   type ApprovedThreadPlanPayload,
   type ChatStepName,
+  type ChatTarget,
   type Decision,
   type DiscussionBudgetView,
+  type DiscussionChatMessage,
+  type DiscussionChatsView,
   type DiscussionSnapshot,
   type DiscussionStepStatus,
   type FlowOutcome,
@@ -78,6 +83,7 @@ export interface DiscussionView {
   reviewRecord: ReviewRecordSnapshot | null;
   budget: DiscussionBudgetView;
   steps: DiscussionStepStatus[];
+  chats: DiscussionChatsView;
   stoppedReason: string | null;
   budgetNote: string;
 }
@@ -211,6 +217,7 @@ export class DiscussionService {
     const set = this.resolveSet(preset);
     const active = this.activeStep.get(task.id) ?? null;
     const err = this.errors.get(task.id) ?? null;
+    const chats = await readDiscussionChats(this.opts.repo, threadId);
 
     return {
       taskId: task.id,
@@ -249,9 +256,46 @@ export class DiscussionService {
       reviewRecord: snap.reviewRecord,
       budget: snap.budget,
       steps: snap.steps,
+      chats,
       stoppedReason: snap.stoppedReason,
       budgetNote: BUDGET_NOTE,
     };
+  }
+
+  async sendChat(task: Task, target: ChatTarget, message: string): Promise<DiscussionView> {
+    if (this.inflight.has(task.id)) throw new Error('这个任务的讨论或对话正在进行中，请稍候。');
+    const threadId = task.threadId ?? (await this.ensureBoundThread(task));
+    const snap = await inspectDiscussion(this.opts.repo, threadId, { consentStore: this.consent });
+    const preset: DiscussionPreset = snap.single ? 'codex-single' : 'dev-personal';
+    const set = this.resolveSet(preset);
+    const thinker = target === 'planner' ? set.planner : set.reviewer;
+    if (!thinker) throw new Error('单思考者模式下没有复核思考者，无法发起复核对话。');
+
+    const step: ChatStepName = target === 'planner' ? 'chat_planner' : 'chat_reviewer';
+    this.errors.delete(task.id);
+    this.activeStep.set(task.id, step);
+    const p = (async () => {
+      try {
+        await sendThreadChat({
+          projectRoot: this.opts.repo,
+          threadId,
+          target,
+          thinker,
+          message,
+          consent: this.consent,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.errors.set(task.id, msg);
+        throw e;
+      } finally {
+        this.activeStep.delete(task.id);
+        this.inflight.delete(task.id);
+      }
+    })();
+    this.inflight.set(task.id, p);
+    await p;
+    return this.getView(task);
   }
 
   async waitIdle(taskId: string): Promise<void> {

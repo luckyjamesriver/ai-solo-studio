@@ -35,6 +35,7 @@ const api = {
   adjudicateDiscussion: (projectId: string, id: string, kind: string, key: string, decision: string, reason: string) => ipcRenderer.invoke('discussion:adjudicate', projectId, id, kind, key, decision, reason),
   decideDiscussionApproval: (projectId: string, id: string, decision: string) => ipcRenderer.invoke('discussion:approve', projectId, id, decision),
   modifyDiscussionRequirements: (projectId: string, id: string, newRequest: string) => ipcRenderer.invoke('discussion:modifyReqs', projectId, id, newRequest),
+  sendDiscussionChat: (projectId: string, id: string, target: string, message: string) => ipcRenderer.invoke('discussion:chat', projectId, id, target, message),
   skipDiscussion: (projectId: string, id: string) => ipcRenderer.invoke('discussion:skip', projectId, id),
   // B4-2 + 阶段 2 多项目：验收、保存、放弃、撤销。参数只有已打开项目编号、任务编号、条目编号（c0 / d0）与验收版本；没有路径、分支或 Git 参数。
   getAcceptanceView: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:get', projectId, id),

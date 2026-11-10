@@ -787,6 +787,18 @@ export class TaskController {
     return this.view(bound);
   }
 
+  async sendDiscussionChat(id: unknown, target: unknown, message: unknown): Promise<DiscussionView> {
+    if (target !== 'planner' && target !== 'reviewer') throw new Error(VIEW_TEXT.invalidArgument);
+    if (typeof message !== 'string' || !message.trim()) throw new Error('请输入要发送的对话内容。');
+    if (message.length > 2000) throw new Error('单次对话内容请控制到 2000 字以内。');
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (!['draft', 'clarifying'].includes(t.state)) throw new Error('只有讨论中的任务才能向思考者提问。');
+    await this.ensureTaskThread(t);
+    return this.d().sendChat(t, target, message);
+  }
+
   async skipDiscussion(id: unknown): Promise<TaskView> {
     const tid = this.checkArg(TASK_ID, id);
     const t = await this.load(tid);

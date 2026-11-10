@@ -498,3 +498,163 @@ describe('阶段 5a 提交②：讨论页面、依据核验逐字呈现、未经
     expect(nextView.rawRequirement).toBe('修改后的新需求：增加导出');
   });
 });
+
+describe('阶段 5a 提交③：每个思考者的独立对话与隔离边界', () => {
+  it('复核对话严格隔离（绝不传首席原始输出/决议/首席对话）；首席对话不传复核对话；未授权外发与预算超限均拦截；评审产物不变', async () => {
+    const CHIEF_RAW_SECRET = 'CHIEF_RAW_PREFIX_SECRET_XYZ';
+    const CHIEF_RESOLUTION_SECRET = 'CHIEF_RESOLUTION_INTERNAL_SECRET_777';
+    const CHIEF_CHAT_USER_SECRET = 'USER_TO_CHIEF_ONLY_SECRET_111';
+    const CHIEF_CHAT_REPLY_SECRET = 'CHIEF_ONLY_REPLY_SECRET_222';
+    const REVIEWER_CHAT_USER_SECRET = 'USER_TO_REVIEWER_ONLY_SECRET_333';
+    const REVIEWER_CHAT_REPLY_SECRET = 'REVIEWER_ONLY_REPLY_SECRET_444';
+
+    const planner = new FakeThinker(
+      (req) => {
+        if (req.output.required.includes('reply')) {
+          return { raw: JSON.stringify({ reply: CHIEF_CHAT_REPLY_SECRET }), model: 'm-planner' };
+        }
+        if (req.output.required.includes('items')) {
+          return { raw: JSON.stringify(REQ), model: 'm-planner' };
+        }
+        if (req.output.required.includes('coverage')) {
+          return { raw: `${CHIEF_RAW_SECRET}\n${JSON.stringify(DRAFT)}`, model: 'm-planner' };
+        }
+        return {
+          raw: JSON.stringify({
+            plan: '## 方案（修订版）\n保留核心配色逻辑。',
+            resolutions: [{ index: 1, result: '交用户裁决', reason: CHIEF_RESOLUTION_SECRET }],
+            item_marks: [{ id: 'R1', mark: '保留' }, { id: 'R2', mark: '保留' }],
+            additions: [],
+          }),
+          model: 'm-planner',
+        };
+      },
+      { available: true },
+      { id: 'fake-planner', service: 'Codex CLI' },
+    );
+
+    const reviewer = new FakeThinker(
+      (req) => {
+        if (req.output.required.includes('reply')) {
+          return { raw: JSON.stringify({ reply: REVIEWER_CHAT_REPLY_SECRET }), model: 'm-reviewer' };
+        }
+        return {
+          raw: JSON.stringify({
+            ...REVIEW,
+            findings: [
+              {
+                problem: '深色图片未处理',
+                severity: '阻断',
+                basis: 'docs/ref.md#安全',
+                impact: '对比度不足',
+                suggestion: '降低亮度',
+                resolution: '',
+              },
+            ],
+          }),
+          model: 'm-reviewer',
+        };
+      },
+      { available: true },
+      { id: 'fake-reviewer', service: 'Claude Code CLI' },
+    );
+
+    const { repo, ctl } = await makeTempCtl({ planner, reviewer, devPersonalEnabled: true });
+    const created = await ctl.create('深色模式讨论隔离验证');
+    await ctl.startDiscussion(created.id, 'dev-personal');
+    await ctl.waitDiscussion(created.id);
+
+    // 1) 未同意外发给复核之前尝试发起复核对话 -> 被拦截，复核零调用
+    const c1 = await ctl.getDiscussionView(created.id);
+    await expect(ctl.sendDiscussionChat(created.id, 'reviewer', '提前问复核')).rejects.toThrow(/尚未同意向/);
+    expect(reviewer.requests).toHaveLength(0);
+
+    // 2) 走完首席拆解、冻结需求、起草
+    await ctl.confirmDiscussionSend(created.id, c1.pendingConsentService!, true);
+    await ctl.waitDiscussion(created.id);
+    const reqV = await ctl.getDiscussionView(created.id);
+    await ctl.confirmDiscussionRequirements(
+      created.id,
+      reqV.requirements.map((r) => ({ id: r.id, text: r.text })),
+    );
+    await ctl.waitDiscussion(created.id);
+
+    // 3) 同意复核外发并完成评审与修订 -> 停在 adjudication
+    const c2 = await ctl.getDiscussionView(created.id);
+    await ctl.confirmDiscussionSend(created.id, c2.pendingConsentService!, true);
+    await ctl.waitDiscussion(created.id);
+
+    const ts = new ThreadStore(repo);
+    const threadBefore = await ts.load(c2.threadId);
+    const reviewArtBefore = ts.latest(threadBefore, 'review')!;
+    const reviewFileBefore = await fs.readFile(path.join(repo, '.studio', 'threads', c2.threadId, reviewArtBefore.file), 'utf8');
+
+    // 4) 先与首席对话
+    const afterPlannerChat = await ctl.sendDiscussionChat(created.id, 'planner', CHIEF_CHAT_USER_SECRET);
+    expect(afterPlannerChat.chats.planner.map((m) => m.text)).toEqual([
+      CHIEF_CHAT_USER_SECRET,
+      CHIEF_CHAT_REPLY_SECRET,
+    ]);
+    expect(afterPlannerChat.chats.reviewer).toEqual([]);
+
+    // 5) 再与复核对话
+    const afterReviewerChat = await ctl.sendDiscussionChat(created.id, 'reviewer', REVIEWER_CHAT_USER_SECRET);
+    expect(afterReviewerChat.chats.reviewer).toHaveLength(2);
+    expect(afterReviewerChat.chats.reviewer[1]!.postReview).toBe(true);
+
+    // 核对发给复核的请求（包含第 1 次评审和这次复核对话）：绝不含首席原始前缀、首席 resolution 理由或首席对话！
+    expect(reviewer.requests).toHaveLength(2);
+    for (const req of reviewer.requests) {
+      const payload = JSON.stringify(req);
+      expect(payload).not.toContain(CHIEF_RAW_SECRET);
+      expect(payload).not.toContain(CHIEF_RESOLUTION_SECRET);
+      expect(payload).not.toContain(CHIEF_CHAT_USER_SECRET);
+      expect(payload).not.toContain(CHIEF_CHAT_REPLY_SECRET);
+    }
+    const reviewerChatPayload = JSON.stringify(reviewer.requests[1]!);
+    expect(reviewerChatPayload).toContain('保留核心配色逻辑');
+    expect(reviewerChatPayload).toContain('深色图片未处理');
+
+    // 6) 再跟首席发第二句：首席请求绝不含复核对话内容！
+    await ctl.sendDiscussionChat(created.id, 'planner', '继续追问首席');
+    for (const req of planner.requests) {
+      const payload = JSON.stringify(req);
+      expect(payload).not.toContain(REVIEWER_CHAT_USER_SECRET);
+      expect(payload).not.toContain(REVIEWER_CHAT_REPLY_SECRET);
+    }
+
+    // 7) 正式 review 产物原封不动；预算 callsUsed 正确计入对话次数；界面标出“评审后的讨论 · 非独立评审”和修改需求提示
+    const reviewFileAfter = await fs.readFile(path.join(repo, '.studio', 'threads', c2.threadId, reviewArtBefore.file), 'utf8');
+    expect(reviewFileAfter).toBe(reviewFileBefore);
+
+    const finalView = await ctl.getDiscussionView(created.id);
+    // 4 次主流程（requirements/draft/review/revise）+ 3 次对话 = 7 次调用
+    expect(finalView.budget.callsUsed).toBe(7);
+
+    const reviewerTabHtml = renderDiscussBody(finalView, { activeTab: 'reviewer-chat' });
+    expect(reviewerTabHtml).toContain('评审后的讨论 · 非独立评审');
+    expect(reviewerTabHtml).toContain('想改需求，请用「修改需求」');
+    expect(reviewerTabHtml).toContain(REVIEWER_CHAT_REPLY_SECRET);
+    expect(reviewerTabHtml).not.toContain(CHIEF_CHAT_USER_SECRET);
+
+    const plannerTabHtml = renderDiscussBody(finalView, { activeTab: 'planner-chat' });
+    expect(plannerTabHtml).toContain('想改需求，请用「修改需求」');
+    expect(plannerTabHtml).toContain(CHIEF_CHAT_REPLY_SECRET);
+    expect(plannerTabHtml).not.toContain(REVIEWER_CHAT_USER_SECRET);
+
+    // 8) 对话消耗预算达到上限后立即拦截并不再调用思考者
+    const threadRec = await ts.load(c2.threadId);
+    threadRec.budget.maxCalls = threadRec.attempts.length;
+    await ts.save(threadRec);
+    const reqCountBeforeBudgetStop = planner.requests.length;
+    await expect(ctl.sendDiscussionChat(created.id, 'planner', '超预算提问')).rejects.toThrow(/调用次数已达上限/);
+    expect(planner.requests).toHaveLength(reqCountBeforeBudgetStop);
+  });
+
+  it('单思考者模式下禁止发起复核对话', async () => {
+    const planner = scripted();
+    const { ctl } = await makeTempCtl({ planner });
+    const created = await ctl.create('单思考者聊天限制');
+    await expect(ctl.sendDiscussionChat(created.id, 'reviewer', '问复核')).rejects.toThrow(/单思考者模式下没有复核思考者/);
+  });
+});

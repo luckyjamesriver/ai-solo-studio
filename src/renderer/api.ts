@@ -71,8 +71,11 @@ export type { DiscussionView, DiscussionPreset } from '../core/app/discussion-se
 export type {
   BasisStatus,
   ChatStepName,
+  ChatTarget,
   Decision,
   DiscussionBudgetView,
+  DiscussionChatMessage,
+  DiscussionChatsView,
   DiscussionStepStatus,
   PauseKind,
   PendingAdjudicationItem,
@@ -111,6 +114,7 @@ interface StudioApi {
   adjudicateDiscussion(projectId: string, id: string, kind: string, key: string, decision: string, reason: string): Promise<DiscussionView>;
   decideDiscussionApproval(projectId: string, id: string, decision: string): Promise<{ view: DiscussionView; task: TaskView }>;
   modifyDiscussionRequirements(projectId: string, id: string, newRequest: string): Promise<TaskView>;
+  sendDiscussionChat(projectId: string, id: string, target: string, message: string): Promise<DiscussionView>;
   skipDiscussion(projectId: string, id: string): Promise<TaskView>;
   getAcceptanceView(projectId: string, id: string): Promise<UserAcceptanceView>;
   openPreview(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;

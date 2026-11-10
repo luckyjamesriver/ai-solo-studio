@@ -270,6 +270,7 @@ ipcMain.handle('discussion:resolveFailure', (_e, projectId: unknown, id: unknown
 ipcMain.handle('discussion:adjudicate', (_e, projectId: unknown, id: unknown, kind: unknown, key: unknown, decision: unknown, reason: unknown) => controllerFor(projectId).adjudicateDiscussion(id, kind, key, decision, reason));
 ipcMain.handle('discussion:approve', (_e, projectId: unknown, id: unknown, decision: unknown) => controllerFor(projectId).decideDiscussionApproval(id, decision));
 ipcMain.handle('discussion:modifyReqs', (_e, projectId: unknown, id: unknown, newRequest: unknown) => controllerFor(projectId).modifyDiscussionRequirements(id, newRequest));
+ipcMain.handle('discussion:chat', (_e, projectId: unknown, id: unknown, target: unknown, message: unknown) => controllerFor(projectId).sendDiscussionChat(id, target, message));
 ipcMain.handle('discussion:skip', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).skipDiscussion(id));
 // B4-2 + 阶段 2 多项目：验收、保存、放弃、撤销。先校验 projectId 属于已打开项目表，再交对应项目的控制器处理。
 ipcMain.handle('acceptance:get', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).getAcceptanceView(id));

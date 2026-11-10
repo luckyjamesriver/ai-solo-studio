@@ -47,6 +47,11 @@ export interface DiscussionBodyProps {
   onAdjudicate: (item: PendingAdjudicationItem, decision: 'accept' | 'reject') => void;
   onApproveDecision: (decision: 'approve' | 'reject' | 'stop') => void;
   onModifyRequirements: () => void;
+  plannerChatDraft?: string;
+  reviewerChatDraft?: string;
+  onChangePlannerChatDraft?: (text: string) => void;
+  onChangeReviewerChatDraft?: (text: string) => void;
+  onSendChat?: (target: 'planner' | 'reviewer') => void;
 }
 
 function stepMarker(status: DiscussionView['steps'][number]['status']): string {
@@ -85,6 +90,11 @@ export function DiscussionViewBody({
   onAdjudicate,
   onApproveDecision,
   onModifyRequirements,
+  plannerChatDraft = '',
+  reviewerChatDraft = '',
+  onChangePlannerChatDraft,
+  onChangeReviewerChatDraft,
+  onSendChat,
 }: DiscussionBodyProps) {
   const effectiveTab: DiscussionTab =
     !view.independentReview && activeTab === 'reviewer-chat' ? 'summary' : activeTab;
@@ -617,11 +627,58 @@ export function DiscussionViewBody({
             <section className="box" data-testid="discussion-planner-chat-panel">
               <h2>{COPY.discussTabPlannerChat}</h2>
               <p className="muted" style={{ marginTop: '6px' }}>
-                {view.plannerLabel} 独立会话区域；与首席的讨论不会传给复核者。
+                {view.plannerLabel} 独立会话；与首席的讨论不会传给复核思考者，只针对当前方案答疑与推敲。
               </p>
-              <p className="muted" style={{ marginTop: '8px' }} data-testid="chat-modify-hint">
-                {COPY.discussChatReqHint}
-              </p>
+
+              <div className="stack" style={{ marginTop: '12px', gap: '8px' }} data-testid="planner-chat-messages">
+                {view.chats.planner.length === 0 ? (
+                  <p className="muted" data-testid="planner-chat-empty">还没有与首席的对话记录。</p>
+                ) : (
+                  view.chats.planner.map((m) => (
+                    <div
+                      key={m.id}
+                      className={`discuss-chat-msg${m.role === 'user' ? ' from-user' : ''}`}
+                      data-testid={`planner-chat-msg-${m.role}`}
+                    >
+                      <div className="row sb">
+                        <strong>{m.role === 'user' ? '你' : view.plannerLabel}</strong>
+                        <span className="muted">{m.at}</span>
+                      </div>
+                      <p style={{ whiteSpace: 'pre-wrap' }}>{m.text}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div style={{ marginTop: '12px' }}>
+                <textarea
+                  rows={2}
+                  value={plannerChatDraft}
+                  disabled={busy || view.running || view.pauseAt === 'stopped' || view.pauseAt === 'rejected'}
+                  data-testid="planner-chat-input"
+                  onChange={(e) => onChangePlannerChatDraft?.(e.target.value)}
+                  placeholder="向首席提问或确认方案细节…"
+                  style={{ width: '100%' }}
+                />
+                <div className="row sb" style={{ marginTop: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                  <span className="muted" data-testid="planner-chat-modify-hint">{COPY.discussChatReqHint}</span>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={
+                      busy ||
+                      view.running ||
+                      !plannerChatDraft.trim() ||
+                      view.pauseAt === 'stopped' ||
+                      view.pauseAt === 'rejected'
+                    }
+                    data-testid="planner-chat-send"
+                    onClick={() => onSendChat?.('planner')}
+                  >
+                    发送给首席
+                  </button>
+                </div>
+              </div>
             </section>
           )}
 
@@ -629,11 +686,65 @@ export function DiscussionViewBody({
             <section className="box" data-testid="discussion-reviewer-chat-panel">
               <h2>{COPY.discussTabReviewerChat}</h2>
               <p className="muted" style={{ marginTop: '6px' }}>
-                {view.reviewerLabel} 独立会话区域（仅基于冻结需求、方案正文与其本人正式评审产物；不共享首席对话或原始推理）。
+                {view.reviewerLabel} 独立会话（仅基于冻结需求、方案正文与其本人正式评审产物；不共享首席对话或原始推理）。
               </p>
-              <p className="muted" style={{ marginTop: '8px' }} data-testid="chat-modify-hint">
-                {COPY.discussChatReqHint}
-              </p>
+
+              <div className="stack" style={{ marginTop: '12px', gap: '8px' }} data-testid="reviewer-chat-messages">
+                {view.chats.reviewer.length === 0 ? (
+                  <p className="muted" data-testid="reviewer-chat-empty">还没有与复核的对话记录。</p>
+                ) : (
+                  view.chats.reviewer.map((m) => (
+                    <div
+                      key={m.id}
+                      className={`discuss-chat-msg${m.role === 'user' ? ' from-user' : ''}`}
+                      data-testid={`reviewer-chat-msg-${m.role}`}
+                    >
+                      <div className="row sb">
+                        <div className="row" style={{ gap: '6px' }}>
+                          <strong>{m.role === 'user' ? '你' : view.reviewerLabel}</strong>
+                          {m.role === 'assistant' && m.postReview && (
+                            <span className="tag" data-testid="post-review-badge">
+                              {COPY.discussPostReviewBadge}
+                            </span>
+                          )}
+                        </div>
+                        <span className="muted">{m.at}</span>
+                      </div>
+                      <p style={{ whiteSpace: 'pre-wrap' }}>{m.text}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div style={{ marginTop: '12px' }}>
+                <textarea
+                  rows={2}
+                  value={reviewerChatDraft}
+                  disabled={busy || view.running || view.pauseAt === 'stopped' || view.pauseAt === 'rejected'}
+                  data-testid="reviewer-chat-input"
+                  onChange={(e) => onChangeReviewerChatDraft?.(e.target.value)}
+                  placeholder="单独向复核确认评审依据或风险判断…"
+                  style={{ width: '100%' }}
+                />
+                <div className="row sb" style={{ marginTop: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                  <span className="muted" data-testid="reviewer-chat-modify-hint">{COPY.discussChatReqHint}</span>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={
+                      busy ||
+                      view.running ||
+                      !reviewerChatDraft.trim() ||
+                      view.pauseAt === 'stopped' ||
+                      view.pauseAt === 'rejected'
+                    }
+                    data-testid="reviewer-chat-send"
+                    onClick={() => onSendChat?.('reviewer')}
+                  >
+                    发送给复核
+                  </button>
+                </div>
+              </div>
             </section>
           )}
 
@@ -863,6 +974,8 @@ export function DiscussionPage({
   const [showFullPlan, setShowFullPlan] = useState(false);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [modifyText, setModifyText] = useState('');
+  const [plannerChatDraft, setPlannerChatDraft] = useState('');
+  const [reviewerChatDraft, setReviewerChatDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -892,6 +1005,8 @@ export function DiscussionPage({
     setShowFullPlan(false);
     setModifyOpen(false);
     setModifyText(task.request);
+    setPlannerChatDraft('');
+    setReviewerChatDraft('');
     setActionError(null);
     void refreshView().catch((e) => setActionError(e instanceof Error ? e.message : String(e)));
   }, [projectId, task.id, task.request, refreshView]);
@@ -1007,6 +1122,20 @@ export function DiscussionPage({
           })
           .catch((e) => setActionError(e instanceof Error ? e.message : String(e)))
           .finally(() => setBusy(false));
+      }}
+      plannerChatDraft={plannerChatDraft}
+      reviewerChatDraft={reviewerChatDraft}
+      onChangePlannerChatDraft={setPlannerChatDraft}
+      onChangeReviewerChatDraft={setReviewerChatDraft}
+      onSendChat={(target) => {
+        const msg = target === 'planner' ? plannerChatDraft : reviewerChatDraft;
+        if (!msg.trim()) return;
+        void runAction(async () => {
+          const updated = await studio().sendDiscussionChat(projectId, task.id, target, msg);
+          if (target === 'planner') setPlannerChatDraft('');
+          else setReviewerChatDraft('');
+          return updated;
+        });
       }}
     />
   );

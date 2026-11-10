@@ -13,8 +13,8 @@ const electronBin = createRequire(import.meta.url)('electron');
 const TOTAL_TIMEOUT_MS = 30_000;
 // B3-2：新增 8 个任务 API（编号 / 文字 / 计划表单 / 布尔值，没有任何路径参数）；清单仍然固定，多一个少一个都算失败
 // B4-2：新增 9 个验收操作（参数只有编号、条目编号、验收版本）+ 1 个无参数的 revealProject（异常态“在访达中显示项目”）
-// 阶段 5a：新增 9 个讨论与流程引擎驱动操作（固定参数形态 + projectId）
-const EXPECTED_API = ['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'detectEnvironment', 'discardTask', 'editReworkPermissions', 'getAcceptanceView', 'getDisclosure', 'getDiscussionView', 'getTask', 'getWorkbench', 'initProject', 'listOpenProjects', 'listTasks', 'modifyDiscussionRequirements', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealProject', 'reworkTask', 'savePlan', 'saveTask', 'saveUncheckedTask', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoSave'];
+// 阶段 5a：新增 10 个讨论与流程引擎驱动操作（固定参数形态 + projectId）
+const EXPECTED_API = ['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'detectEnvironment', 'discardTask', 'editReworkPermissions', 'getAcceptanceView', 'getDisclosure', 'getDiscussionView', 'getTask', 'getWorkbench', 'initProject', 'listOpenProjects', 'listTasks', 'modifyDiscussionRequirements', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealProject', 'reworkTask', 'savePlan', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoSave'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
