@@ -205,6 +205,14 @@ async function createController(dir: string): Promise<TaskController> {
       const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: '选择允许 AI 修改的另一个文件夹' });
       return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
     },
+    pickReportFile: async () => {
+      const r = await dialog.showOpenDialog(win!, {
+        properties: ['openFile'],
+        title: '选择外部工具生成的任务报告',
+        filters: [{ name: '任务报告（.md / .txt）', extensions: ['md', 'txt'] }],
+      });
+      return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+    },
     prefs: new TaskPrefs(dataDir(), STORE_OPTS),
     storeOptions: STORE_OPTS,
     openPreview: async ({ kind, targetPath }) => {
@@ -357,10 +365,12 @@ ipcMain.handle('tasks:addExtraDir', (_e, projectId: unknown, id: unknown) => con
 ipcMain.handle('tasks:removeExtraDir', (_e, projectId: unknown, id: unknown, key: unknown) => controllerFor(projectId).removeExtraDir(id, key));
 ipcMain.handle('tasks:start', (_e, projectId: unknown, id: unknown, ack: unknown) => controllerFor(projectId).start(id, ack));
 ipcMain.handle('tasks:exportExternal', (_e, projectId: unknown, id: unknown, ack: unknown) => controllerFor(projectId).exportExternalTask(id, ack));
+ipcMain.handle('tasks:importExternal', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).importExternalReport(id));
 ipcMain.handle('tasks:revealHandoff', (_e, projectId: unknown, id: unknown, target: unknown) => controllerFor(projectId).revealHandoff(id, target));
 ipcMain.handle('tasks:stop', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).stop(id));
 ipcMain.handle('tasks:continue', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).continueTask(id));
 ipcMain.handle('tasks:rework', (_e, projectId: unknown, id: unknown, feedback: unknown) => controllerFor(projectId).reworkTask(id, feedback));
+ipcMain.handle('tasks:reworkExternal', (_e, projectId: unknown, id: unknown, feedback: unknown) => controllerFor(projectId).reworkExternalTask(id, feedback));
 ipcMain.handle('tasks:editReworkPermissions', (_e, projectId: unknown, id: unknown, feedback: unknown) => controllerFor(projectId).editReworkPermissions(id, feedback));
 // 阶段 5：讨论与流程引擎驱动（先校验 projectId 属于已打开项目表，再交对应项目的控制器处理）。
 ipcMain.handle('discussion:get', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).getDiscussionView(id));

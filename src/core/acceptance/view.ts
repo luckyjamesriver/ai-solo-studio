@@ -86,6 +86,12 @@ export interface AcceptedRiskView {
   reason: string;
 }
 
+export interface ExternalReportView {
+  badge: string;
+  text: string;
+  discrepancies: string[];
+}
+
 export interface RoundSnapshotView {
   round: number;
   isCurrent: boolean;
@@ -99,6 +105,7 @@ export interface RoundSnapshotView {
   denied: { id: string; text: string; impact: string; acked: boolean }[];
   acceptanceStatus: AcceptanceStatusView;
   aiReport: IncompleteReport;
+  externalReport?: ExternalReportView;
   proof: TaskProofView;
 }
 
@@ -107,6 +114,7 @@ export interface ReworkContextView {
   executorText: string;
   permissionSummary: string;
   hasMultipleExecutors: boolean;
+  isExternalExecution?: boolean;
 }
 
 export type SaveOutcomeKind =
@@ -210,6 +218,8 @@ export interface UserAcceptanceView {
   acceptedRisks: AcceptedRiskView[];
   /** AI 自己报告没做成的事（只是 AI 的说法，已隐去命令与本机路径） */
   aiReport: IncompleteReport;
+  /** 外部工具导入报告的展示摘要（仅供「AI 自己的说法」区域标明来源与仅供参考） */
+  externalReport?: ExternalReportView;
   unexpectedRequests: number;
   actions: { save: ActionState; discard: ActionState; recheck: ActionState; undo: ActionState; retryCleanup: ActionState };
   reworkAction: ActionState;
@@ -550,12 +560,24 @@ function mapAiReport(aiMessages: string[], exit: ExitOutcome | undefined, denied
   return rawReport;
 }
 
-function formatExecutorLabel(t: Pick<Task, 'executorName' | 'executorId' | 'model' | 'timeline'>): string {
+function formatExecutorLabel(t: Pick<Task, 'executionKind' | 'executorName' | 'executorId' | 'model' | 'timeline'>): string {
+  if (t.executionKind === 'external' || t.executorId === 'external') return '外部工具';
   const name = t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex');
   const modelFromTimeline = t.timeline.find((e) => e.kind === 'isolation' && e.text.includes('模型='))
     ?.text.match(/模型=([^，；\s]+)/)?.[1];
   const model = t.model ?? (modelFromTimeline && modelFromTimeline !== '未知' ? modelFromTimeline : undefined);
   return model ? `${name} · ${model}` : name;
+}
+
+function buildExternalReportView(
+  summary: string | undefined,
+  discrepancies: string[] | undefined,
+): ExternalReportView {
+  return {
+    badge: '外部工具的报告，仅供参考',
+    text: scrubAiText(summary ?? '（外部工具未填写正文内容）'),
+    discrepancies: (discrepancies ?? []).map(scrubAiText),
+  };
 }
 
 function buildRoundSnapshot(
@@ -609,6 +631,9 @@ function buildRoundSnapshot(
     denied: roundDenied.map((d, i) => ({ id: `d${i}`, text: deniedText(d), impact: deniedImpactText(d), acked: roundAcks[i] === true })),
     acceptanceStatus: { ...acceptanceStatus, showSaveButton: false },
     aiReport: mapAiReport(r.aiMessages ?? [], r.exit, roundDenied),
+    ...(r.executionKind === 'external' || r.importedReportSummary
+      ? { externalReport: buildExternalReportView(r.importedReportSummary, r.realityDiscrepancies) }
+      : {}),
     proof: buildRoundProof(t, r, {
       ...(ctx.roundPreviews?.get(r.round) ? { previews: ctx.roundPreviews.get(r.round) } : {}),
       ...(ctx.repoPath ? { repoPath: ctx.repoPath } : {}),
@@ -640,6 +665,15 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     ? currentStoredRound.aiMessages
     : t.timeline.filter((e) => e.kind === 'message' && e.source !== 'host').map((e) => e.text);
   const aiReport = mapAiReport(aiMessages, t.exit, denied);
+  const isCurrentExternal =
+    currentStoredRound?.executionKind === 'external' ||
+    (!currentStoredRound?.executionKind && t.executionKind === 'external');
+  const externalReport = isCurrentExternal
+    ? buildExternalReportView(
+        currentStoredRound?.importedReportSummary ?? t.handoff?.importedReportSummary,
+        currentStoredRound?.realityDiscrepancies ?? t.handoff?.lastImport?.realityDiscrepancies,
+      )
+    : undefined;
 
   // ───── 操作按钮 ─────
   const readOnly = !!t.manualReview;
@@ -822,6 +856,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     denied: deniedViews,
     acceptanceStatus,
     aiReport,
+    ...(externalReport ? { externalReport } : {}),
     proof,
   };
   const historicalSnapshots = (t.rounds ?? [])
@@ -845,6 +880,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     notes,
     acceptedRisks,
     aiReport,
+    ...(externalReport ? { externalReport } : {}),
     unexpectedRequests: unexpected,
     actions: { save, discard, recheck, undo, retryCleanup },
     reworkAction,
@@ -879,9 +915,10 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     rounds,
     rework: {
       nextRound: currentRound + 1,
-      executorText: formatExecutorLabel(t),
+      executorText: isCurrentExternal ? '外部工具（也可改由 Codex 继续）' : formatExecutorLabel(t),
       permissionSummary: summarizeCapabilities(t.plan?.capabilities),
       hasMultipleExecutors: false,
+      isExternalExecution: isCurrentExternal,
     },
     preview: {
       kind: ctx.previewKind !== undefined ? ctx.previewKind : (t.worktree?.path ? 'finder' : null),

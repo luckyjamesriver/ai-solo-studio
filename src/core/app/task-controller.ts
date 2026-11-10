@@ -74,12 +74,20 @@ export interface AddDirResult {
   rejected: string | null;
 }
 
+export interface ImportExternalResult {
+  cancelled: boolean;
+  verdict: 'bound' | 'mismatch' | 'unverified' | null;
+  task: TaskView;
+}
+
 export interface ControllerOptions {
   repo: string;
   /** 每个任务开工时用它取得执行体（主进程里是 Codex；测试里是 FakeExecutor） */
   makeExecutor: () => Executor;
   /** 系统文件夹选择框（只有主进程能弹；渲染进程拿不到路径参数的入口） */
   pickDirectory: () => Promise<string | null>;
+  /** 系统文件选择框（导入外部报告，只允许 .md / .txt；只有主进程能弹） */
+  pickReportFile?: () => Promise<string | null>;
   prefs: TaskPrefs;
   /** 记录库的打开选项（主进程里传入：数据目录所在卷检查、租约等待） */
   storeOptions?: OpenOptions;
@@ -394,6 +402,33 @@ export class TaskController {
   }
 
   /**
+   * 导入外部工具报告（Stage 7 提交②）：
+   * 经主进程系统文件框选择 .md / .txt，调用 importReport + 副本实际状态核对，并保存导入记录。
+   * - bound：按工作树实际状态自动暂存未提交改动并进入本应用验收流程（不调用 reviewImportedReport）；
+   * - mismatch / unverified：停在 waiting_external 只读展示核对结果与矛盾项，允许重新导入。
+   */
+  async importExternalReport(id: unknown): Promise<ImportExternalResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    await this.ready();
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (this.active.has(t.id) || this.ops.has(t.id) || this.r().isBusy(t.id)) throw new Error(MESSAGES.busy);
+    if (t.state !== 'waiting_external' || !t.worktree || !t.handoff) {
+      throw new Error('只有「外部执行中」的任务才能导入报告。');
+    }
+    if (!this.o.pickReportFile) throw new Error('当前环境未配置文件选择框，无法选择报告。');
+    const picked = await this.o.pickReportFile();
+    if (!picked) {
+      return { cancelled: true, verdict: null, task: await this.view(t) };
+    }
+    if (!/\.(md|txt)$/i.test(picked)) {
+      throw new Error('只支持导入 .md 或 .txt 格式的任务报告。');
+    }
+    const res = await this.r().importExternalReport(t.id, { reportPath: picked });
+    return { cancelled: false, verdict: res.verdict, task: await this.view(res.task) };
+  }
+
+  /**
    * 停止/中断/出错后在同一任务副本上继续执行（不等待执行结束，立刻返回 running 态视图）：
    * 仅在 reviewing/stopped/timed_out/exec_failed 且非 manualReview 时放行；保留原有 worktree 与已做修改。
    */
@@ -465,6 +500,21 @@ export class TaskController {
       .catch((e: Error) => this.startErrors.set(t.id, this.persistenceMessage(e) ?? e.message))
       .finally(() => this.active.delete(t.id));
     return this.view(prepared);
+  }
+
+  /**
+   * 外部执行任务在验收页点「退回修改」（#09-rework）后选择「再次交给外部工具」：
+   * 沿用同一副本发起第 N+1 轮外部执行并重新生成 .studio/handoff/<taskId>/task.md。
+   */
+  async reworkExternalTask(id: unknown, feedback: unknown): Promise<TaskView> {
+    if (typeof feedback !== 'string' || feedback.length > 2000) throw new Error(VIEW_TEXT.invalidArgument);
+    const t = await this.prepareReworkTarget(id);
+    const instruction = this.buildReworkInstruction(t, feedback, { requireNonEmpty: true });
+    this.startErrors.delete(t.id);
+    const { task: prepared } = await this.r().prepareContinue(t.id, instruction);
+    const input = await this.resolveExternalExportInput(prepared);
+    const exported = await this.r().exportExternal(prepared.id, input);
+    return this.view(exported);
   }
 
   /**

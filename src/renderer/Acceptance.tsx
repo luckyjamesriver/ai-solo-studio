@@ -135,6 +135,7 @@ function FactRows({
 export function Acceptance({
   projectId,
   task,
+  initialView,
   onChanged,
   onBackToProject,
   onOpenHistory,
@@ -142,12 +143,13 @@ export function Acceptance({
 }: {
   projectId: string;
   task: TaskView;
+  initialView?: UserAcceptanceView;
   onChanged: () => void;
   onBackToProject?: () => void;
   onOpenHistory?: () => void;
   onOpenTask?: (taskId: string) => void;
 }) {
-  const [view, setView] = useState<UserAcceptanceView | null>(null);
+  const [view, setView] = useState<UserAcceptanceView | null>(initialView ?? null);
   const [message, setMessage] = useState<{ ok: boolean; text: string; files?: string[] } | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [deferred, setDeferred] = useState(false);
@@ -296,6 +298,7 @@ export function Acceptance({
   const displayDenied = activeRound?.denied ?? v.denied;
   const displayStatus = activeRound?.acceptanceStatus ?? v.acceptanceStatus;
   const displayAiReport = activeRound?.aiReport ?? v.aiReport;
+  const displayExternalReport = activeRound?.externalReport ?? (!activeRound ? v.externalReport : undefined);
   const displayProof = activeRound?.proof ?? v.proof;
 
   if (proofTab) {
@@ -505,11 +508,35 @@ export function Acceptance({
             <section className="incomplete" data-testid="incomplete">
               <div className="row sb">
                 <h2>{COPY.incompleteTitle}</h2>
-                <span className="muted">{COPY.incompleteNotice}</span>
+                {displayExternalReport ? (
+                  <span className="tag" data-testid="external-report-badge">{displayExternalReport.badge}</span>
+                ) : (
+                  <span className="muted">{COPY.incompleteNotice}</span>
+                )}
               </div>
-              {displayAiReport.kind === 'items' && <ul>{displayAiReport.items.map((i) => <li key={i}>{i}</li>)}</ul>}
-              {displayAiReport.kind === 'raw' && (<><p>{COPY.incompleteRaw}</p><blockquote>{displayAiReport.text}</blockquote></>)}
-              {displayAiReport.kind === 'none' && <p className="muted" style={{ marginTop: '6px' }}>{COPY.incompleteNone}</p>}
+              {displayExternalReport ? (
+                <>
+                  {displayExternalReport.discrepancies.length > 0 && (
+                    <div className="wbox" data-testid="external-reality-warning" style={{ marginTop: '8px', padding: '8px 10px' }}>
+                      <strong>{COPY.externalDiscrepancyTitle}</strong>
+                      <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
+                        {displayExternalReport.discrepancies.map((d) => (
+                          <li key={d}>{d}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <blockquote data-testid="external-report-text" style={{ whiteSpace: 'pre-wrap' }}>
+                    {displayExternalReport.text}
+                  </blockquote>
+                </>
+              ) : (
+                <>
+                  {displayAiReport.kind === 'items' && <ul>{displayAiReport.items.map((i) => <li key={i}>{i}</li>)}</ul>}
+                  {displayAiReport.kind === 'raw' && (<><p>{COPY.incompleteRaw}</p><blockquote>{displayAiReport.text}</blockquote></>)}
+                  {displayAiReport.kind === 'none' && <p className="muted" style={{ marginTop: '6px' }}>{COPY.incompleteNone}</p>}
+                </>
+              )}
             </section>
 
             {task.permissions && (
@@ -891,11 +918,36 @@ export function Acceptance({
           {!viewingHistorical && ['saved', 'saved_cleanup_pending', 'undo_failed'].includes(v.state) && !a.undo.enabled && a.undo.reason && <p className="muted" data-testid="undo-reason">{a.undo.reason}</p>}
 
           <section className="incomplete" data-testid="incomplete">
-            <h2>{COPY.incompleteTitle}</h2>
-            <p className="notice">{COPY.incompleteNotice}</p>
-            {displayAiReport.kind === 'items' && <ul>{displayAiReport.items.map((i) => <li key={i}>{i}</li>)}</ul>}
-            {displayAiReport.kind === 'raw' && (<><p>{COPY.incompleteRaw}</p><blockquote>{displayAiReport.text}</blockquote></>)}
-            {displayAiReport.kind === 'none' && <p className="muted">{COPY.incompleteNone}</p>}
+            <div className="row sb">
+              <h2>{COPY.incompleteTitle}</h2>
+              {displayExternalReport && (
+                <span className="tag" data-testid="external-report-badge">{displayExternalReport.badge}</span>
+              )}
+            </div>
+            {displayExternalReport ? (
+              <>
+                {displayExternalReport.discrepancies.length > 0 && (
+                  <div className="wbox" data-testid="external-reality-warning" style={{ marginTop: '8px', padding: '8px 10px' }}>
+                    <strong>{COPY.externalDiscrepancyTitle}</strong>
+                    <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
+                      {displayExternalReport.discrepancies.map((d) => (
+                        <li key={d}>{d}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <blockquote data-testid="external-report-text" style={{ whiteSpace: 'pre-wrap' }}>
+                  {displayExternalReport.text}
+                </blockquote>
+              </>
+            ) : (
+              <>
+                <p className="notice">{COPY.incompleteNotice}</p>
+                {displayAiReport.kind === 'items' && <ul>{displayAiReport.items.map((i) => <li key={i}>{i}</li>)}</ul>}
+                {displayAiReport.kind === 'raw' && (<><p>{COPY.incompleteRaw}</p><blockquote>{displayAiReport.text}</blockquote></>)}
+                {displayAiReport.kind === 'none' && <p className="muted">{COPY.incompleteNone}</p>}
+              </>
+            )}
           </section>
         </div>
       )}

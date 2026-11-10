@@ -51,6 +51,7 @@ export type {
   UserAcceptanceView,
   RoundSnapshotView,
   ReworkContextView,
+  ExternalReportView,
   ViewItem,
   ViewChange,
   ActionState,
@@ -121,7 +122,7 @@ import type { ProjectBriefInput as BriefIn, ProjectBriefView as BriefView } from
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
 import type { SaveProgressEvent } from '../core/task/model.js';
 import type { DiscussionView } from '../core/app/discussion-service.js';
-import type { AcceptanceActionResult, UndoHistoryResult } from '../core/app/task-controller.js';
+import type { AcceptanceActionResult, ImportExternalResult, UndoHistoryResult } from '../core/app/task-controller.js';
 import type { SaveHistoryView } from '../core/acceptance/history.js';
 import type { CloseProjectResult, OpenProjectSummary, WorkbenchView } from '../core/app/open-projects.js';
 import type { TaskView } from '../core/app/task-view.js';
@@ -139,10 +140,12 @@ interface StudioApi {
   removeExtraDir(projectId: string, id: string, key: string): Promise<TaskView>;
   startTask(projectId: string, id: string, ack: boolean): Promise<TaskView>;
   exportExternalTask(projectId: string, id: string, ack: boolean): Promise<TaskView>;
+  importExternalReport(projectId: string, id: string): Promise<ImportExternalResult>;
   revealHandoff(projectId: string, id: string, target: string): Promise<void>;
   stopTask(projectId: string, id: string): Promise<TaskView>;
   continueTask(projectId: string, id: string): Promise<TaskView>;
   reworkTask(projectId: string, id: string, feedback: string): Promise<TaskView>;
+  reworkExternalTask(projectId: string, id: string, feedback: string): Promise<TaskView>;
   editReworkPermissions(projectId: string, id: string, feedback: string): Promise<TaskView>;
   getDiscussionView(projectId: string, id: string): Promise<DiscussionView>;
   startDiscussion(projectId: string, id: string, preset: string): Promise<DiscussionView>;

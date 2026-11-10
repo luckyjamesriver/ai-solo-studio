@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import type { Task, TimelineEntry } from '../task/model.js';
+import type { ExternalImportSummary, Task, TimelineEntry } from '../task/model.js';
 import type { TaskState } from '../task/state.js';
 import type { DeniedOperation } from '../executor/types.js';
 import type { FileChange } from '../git/git.js';
@@ -90,6 +90,17 @@ export interface HandoffView {
   singleThinker: boolean;
   taskContent: string;
   round: number;
+  lastImport?: {
+    atText: string;
+    reportName: string;
+    verdict: ExternalImportSummary['verdict'];
+    checks: { item: string; ok: boolean; detail: string }[];
+    mismatches: string[];
+    unverifiedReasons: string[];
+    notes: string[];
+    readOnlyNotice?: string;
+    realityDiscrepancies?: string[];
+  };
 }
 
 export interface TaskView {
@@ -444,6 +455,23 @@ export function buildTaskView(
         singleThinker: task.handoff.singleThinker,
         taskContent: opts.handoffContent ?? '',
         round: task.handoff.round,
+        ...(task.handoff.lastImport
+          ? {
+              lastImport: {
+                atText: formatShortTime(task.handoff.lastImport.at),
+                reportName: task.handoff.lastImport.reportName,
+                verdict: task.handoff.lastImport.verdict,
+                checks: task.handoff.lastImport.checks,
+                mismatches: task.handoff.lastImport.mismatches,
+                unverifiedReasons: task.handoff.lastImport.unverifiedReasons,
+                notes: task.handoff.lastImport.notes,
+                ...(task.handoff.lastImport.readOnlyNotice ? { readOnlyNotice: task.handoff.lastImport.readOnlyNotice } : {}),
+                ...(task.handoff.lastImport.realityDiscrepancies?.length
+                  ? { realityDiscrepancies: task.handoff.lastImport.realityDiscrepancies }
+                  : {}),
+              },
+            }
+          : {}),
       }
     : null;
 

@@ -25,7 +25,7 @@ export function ReworkPage({ projectId, view, onCancel, onSubmitted }: ReworkPag
   const overallRejected = view.criteria.length === 0 && view.overall.needed && view.overall.rejected;
   const hasAnyRejected = rejectedCriteria.length > 0 || overallRejected;
 
-  const submitRework = async () => {
+  const submitRework = async (mode: 'codex' | 'external' = 'codex') => {
     if (submitting) return;
     if (!feedback.trim() && !hasAnyRejected) {
       setError(COPY.reworkValidationMissing);
@@ -34,7 +34,11 @@ export function ReworkPage({ projectId, view, onCancel, onSubmitted }: ReworkPag
     setSubmitting(true);
     setError(null);
     try {
-      await studio().reworkTask(projectId, view.taskId, feedback);
+      if (mode === 'external') {
+        await studio().reworkExternalTask(projectId, view.taskId, feedback);
+      } else {
+        await studio().reworkTask(projectId, view.taskId, feedback);
+      }
       onSubmitted();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -119,15 +123,37 @@ export function ReworkPage({ projectId, view, onCancel, onSubmitted }: ReworkPag
           </p>
         </div>
 
-        <div className="row" style={{ marginTop: '14px' }}>
-          <button
-            type="button"
-            data-testid="rework-start-button"
-            disabled={submitting}
-            onClick={submitRework}
-          >
-            {COPY.reworkStartButton(view.rework.nextRound)}
-          </button>
+        <div className="row" style={{ marginTop: '14px', flexWrap: 'wrap', gap: '10px' }}>
+          {view.rework.isExternalExecution ? (
+            <>
+              <button
+                type="button"
+                data-testid="rework-external-button"
+                disabled={submitting}
+                onClick={() => void submitRework('external')}
+              >
+                {COPY.externalReworkAgainButton}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                data-testid="rework-codex-button"
+                disabled={submitting}
+                onClick={() => void submitRework('codex')}
+              >
+                {COPY.externalReworkCodexButton}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              data-testid="rework-start-button"
+              disabled={submitting}
+              onClick={() => void submitRework('codex')}
+            >
+              {COPY.reworkStartButton(view.rework.nextRound)}
+            </button>
+          )}
           <button
             type="button"
             className="secondary"

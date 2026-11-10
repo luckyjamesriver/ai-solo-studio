@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as G from '../git/git.js';
-import { exportTask } from '../thinking/handoff/index.js';
+import { exportTask, importReport, saveImportRecord, type ImportResult } from '../thinking/handoff/index.js';
 import { next, canFire, type TaskEvent } from './state.js';
 import { MESSAGES, uncheckedReasonText } from './messages.js';
 import { saveBlockers } from './save-rules.js';
@@ -316,6 +316,7 @@ export class TaskRunner extends EventEmitter {
     this.upsertRound(t, {
       round: roundNo,
       startedAt: t.roundStartedAt,
+      executionKind: 'internal',
       ...(roundFeedback ? { feedback: roundFeedback } : {}),
       ...(t.plan?.capabilities ? { capabilities: structuredClone(t.plan.capabilities) } : {}),
       ...(t.executorId ? { executorId: t.executorId } : {}),
@@ -437,6 +438,10 @@ export class TaskRunner extends EventEmitter {
         branch: await G.currentBranch(this.opts.repo),
         baseHead: t.worktree.baseSha,
       };
+      if (!t.checkAuth) {
+        const digest = await scriptsDigest(this.opts.repo);
+        if (digest) t.checkAuth = { digest, at: new Date().toISOString() };
+      }
       t.executionKind = 'external';
       t.executorId = 'external';
       t.executorName = '外部工具';
@@ -501,6 +506,188 @@ export class TaskRunner extends EventEmitter {
       this.log(t, 'message', `已导出给外部工具执行（第 ${roundNo} 轮）：${t.handoff.taskFileRelPath}`, 'host');
       await this.fire(t, 'export_external');
       return t;
+    } finally {
+      this.leave(id);
+    }
+  }
+
+  /**
+   * 导入外部工具报告并按实际工作树状态核对（Stage 7 提交②）：
+   * - 使用 importReport 进行三档绑定核对（bound / mismatch / unverified），每次都用 saveImportRecord 落盘留存。
+   * - 同时实际检查任务副本（实际分支、HEAD 是否从导出 baseSha 延伸、是否存在未提交改动）。
+   * - 若报告绑定为 bound 但副本实际分支/HEAD 脱离导出基线，升级为 mismatch（只读，不进验收）。
+   * - 若发现未提交/未跟踪改动，记录与报告声明的差异并以工作树实际为准，自动暂存并提交到任务副本分支后进入验收（run Studio 自有检查）。
+   * - 不调用 reviewImportedReport（避免外部审查阻塞本地验收主流程）。
+   */
+  async importExternalReport(
+    id: string,
+    input: { reportPath: string },
+  ): Promise<{ ok: boolean; verdict: 'bound' | 'mismatch' | 'unverified'; task: Task }> {
+    if (!this.enter(id)) throw new Error(MESSAGES.busy);
+    try {
+      const t = await this.load(id);
+      if (t.manualReview) throw new Error(MESSAGES.abnormal);
+      if (t.state !== 'waiting_external' || !t.worktree || !t.handoff) {
+        throw new Error('只有「外部执行中」的任务才能导入外部工具报告。');
+      }
+      if (!/\.(md|txt)$/i.test(input.reportPath)) {
+        throw new Error('只支持导入 .md 或 .txt 格式的任务报告。');
+      }
+      const stat = await fs.stat(input.reportPath).catch(() => null);
+      if (!stat || !stat.isFile()) throw new Error('找不到选择的报告文件。');
+      if (stat.size > 2 * 1024 * 1024) throw new Error('报告文件过大（超过 2 MB），请精简后重试。');
+
+      const repo = this.opts.repo;
+      const reportText = await fs.readFile(input.reportPath, 'utf8');
+      const imported: ImportResult = await importReport({
+        projectRoot: repo,
+        reportPath: input.reportPath,
+        taskId: t.id,
+      });
+
+      const wt = t.worktree;
+      const actualBranch = await G.currentBranch(wt.path);
+      const rawActualHead = await G.headSha(wt.path);
+      const extendsBase = await G.isAncestor(repo, t.handoff.baseSha, rawActualHead);
+
+      if (imported.verdict === 'bound') {
+        if (actualBranch !== wt.branch) {
+          const msg = `任务副本当前分支为 ${actualBranch}，期望 ${wt.branch}`;
+          imported.checks.push({ item: '副本实际分支', ok: false, detail: msg });
+          imported.mismatches.push(`副本实际分支：${msg}`);
+        }
+        if (!extendsBase) {
+          const msg = `副本实际 HEAD ${rawActualHead.slice(0, 8)} 不是导出起点 ${t.handoff.baseSha.slice(0, 8)} 的后代`;
+          imported.checks.push({ item: '副本实际 HEAD', ok: false, detail: msg });
+          imported.mismatches.push(`副本实际 HEAD：${msg}`);
+        }
+        if (imported.mismatches.length > 0) {
+          imported.verdict = 'mismatch';
+          imported.canReview = false;
+          imported.readOnlyNotice =
+            '只读查看：报告或任务副本的实际 Git 状态与任务清单不符，不能进入验收，不能保存或继续。';
+        }
+      }
+
+      const recordFile = await saveImportRecord(repo, imported);
+      const nowIso = new Date().toISOString();
+      const reportName = path.basename(input.reportPath);
+
+      if (imported.verdict !== 'bound') {
+        t.handoff.lastImport = {
+          at: nowIso,
+          reportName,
+          verdict: imported.verdict,
+          checks: imported.checks,
+          mismatches: imported.mismatches,
+          unverifiedReasons: imported.unverifiedReasons,
+          notes: imported.notes,
+          ...(imported.readOnlyNotice ? { readOnlyNotice: imported.readOnlyNotice } : {}),
+          claimed: imported.claimed,
+          worktreeStatus: {
+            branch: actualBranch,
+            head: rawActualHead,
+            extendsBase,
+            dirty: imported.worktree.dirty,
+            untracked: imported.worktree.untracked,
+            ...(imported.worktree.error ? { error: imported.worktree.error } : {}),
+          },
+          recordFile,
+        };
+        this.log(
+          t,
+          'message',
+          `导入外部工具报告（${reportName}）核对未通过（${imported.verdict === 'mismatch' ? '不符' : '来源未核实'}），保持只读等待。`,
+          'host',
+        );
+        await this.persist(t);
+        return { ok: false, verdict: imported.verdict, task: t };
+      }
+
+      // 已绑定：核对报告自述与工作树实际状态的差异（以工作树实际为准）
+      const discrepancies: string[] = [];
+      const claimedEndFull = imported.claimed.endHead ? await G.resolveCommit(wt.path, imported.claimed.endHead) : null;
+      if (claimedEndFull && claimedEndFull !== rawActualHead) {
+        discrepancies.push(
+          `报告声称结束 HEAD 为 ${claimedEndFull.slice(0, 8)}，但任务副本当前实际 HEAD 为 ${rawActualHead.slice(0, 8)}；已以任务副本实际状态为准。`,
+        );
+      }
+
+      const pendingCount = imported.worktree.dirty.length + imported.worktree.untracked.length;
+      let autoCommitted = false;
+      let actualHead = rawActualHead;
+      if (pendingCount > 0) {
+        const claimsCommitted =
+          /已提交|新增提交|git commit/i.test(reportText) ||
+          (!!claimedEndFull && claimedEndFull !== t.handoff.baseSha && rawActualHead === t.handoff.baseSha);
+        if (claimsCommitted) {
+          discrepancies.push(
+            `报告声称已提交或给出了新的提交，但任务副本实际仍有 ${pendingCount} 项未提交改动（HEAD ${rawActualHead.slice(0, 8)}）；已以工作树实际内容为准并自动暂存提交到任务分支。`,
+          );
+        } else {
+          discrepancies.push(
+            `检测到任务副本中有 ${pendingCount} 项未提交改动，已自动暂存并提交到任务分支，以副本实际代码为准。`,
+          );
+        }
+        actualHead = await G.snapshotWorktreePending(
+          repo,
+          wt,
+          `studio: 导入外部报告时暂存任务 ${t.id} 的未提交改动`,
+        );
+        autoCommitted = true;
+      } else if (rawActualHead === t.handoff.baseSha) {
+        discrepancies.push('任务副本实际 HEAD 与导出起点相同且工作区无未提交改动（没有任何文件变化，已以工作树实际为准）。');
+      }
+
+      const summary = summarizeExternalReport(reportText);
+      t.handoff.importedReportSummary = summary;
+      t.handoff.lastImport = {
+        at: nowIso,
+        reportName,
+        verdict: 'bound',
+        checks: imported.checks,
+        mismatches: [],
+        unverifiedReasons: [],
+        notes: imported.notes,
+        claimed: imported.claimed,
+        worktreeStatus: {
+          branch: actualBranch,
+          head: actualHead,
+          extendsBase,
+          dirty: imported.worktree.dirty,
+          untracked: imported.worktree.untracked,
+          autoCommitted,
+        },
+        recordFile,
+        ...(discrepancies.length > 0 ? { realityDiscrepancies: discrepancies } : {}),
+      };
+
+      const roundNo = t.currentRound ?? t.handoff.round ?? 1;
+      const prevRound = t.rounds?.find((r) => r.round === roundNo);
+      this.upsertRound(t, {
+        ...(prevRound ?? {
+          round: roundNo,
+          startedAt: t.roundStartedAt ?? t.handoff.exportedAt,
+          denied: [],
+          deniedAcks: [],
+          criteria: t.criteria.map((c) => ({ text: c.text })),
+          checks: [],
+          aiMessages: [],
+        }),
+        executionKind: 'external',
+        executorId: 'external',
+        executorName: '外部工具',
+        importedReportSummary: summary,
+        ...(discrepancies.length > 0 ? { realityDiscrepancies: discrepancies } : {}),
+      });
+
+      t.exit = { kind: 'exited', code: 0 };
+      t.denied = [];
+      t.deniedAcks = [];
+      delete t.isolationWarnings;
+      this.log(t, 'message', `已导入外部工具报告（${reportName}，已绑定），开始运行本应用自动检查。`, 'host');
+      await this.review(t);
+      return { ok: true, verdict: 'bound', task: t };
     } finally {
       this.leave(id);
     }
@@ -2054,4 +2241,10 @@ function summarizeTrialChecks(
     passedText = hasExplicitTestCount ? `${testPassedCount} 项测试通过` : '自动测试通过';
   }
   return { passedText, failedCheckCounts, totalFailedItems };
+}
+
+function summarizeExternalReport(reportText: string): string {
+  const normalized = reportText.replace(/\r\n/g, '\n').trim();
+  if (!normalized) return '（外部工具未在报告中填写正文内容）';
+  return normalized.length > 3500 ? `${normalized.slice(0, 3500)}\n…（报告较长，已截断）` : normalized;
 }

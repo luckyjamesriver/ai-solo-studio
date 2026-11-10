@@ -280,9 +280,9 @@ describe('安全基线（防回归）', () => {
     // 阶段 5a 修订（按前例同步登记 10 个讨论与流程引擎驱动方法，参数形态固定且带 projectId，无路径参数）
     // 阶段 5b 修订（按前例同步登记项目简介、Claude Key 与 AI 角色设置 IPC 方法，参数形态固定，无路径与明文读取接口）
     // 阶段 6（提交②+③）：新增 reworkConflictTask、getSaveHistory 与 undoFromHistory
-    // 阶段 7（提交①）：新增 exportExternalTask 与 revealHandoff
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'getProjectRoles', 'saveProjectRoles', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'exportExternalTask', 'revealHandoff', 'stopTask', 'continueTask', 'reworkTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'reworkConflictTask', 'getSaveHistory', 'undoFromHistory', 'revealProject']);
-    expect(entries).toHaveLength(60);
+    // 阶段 7（提交①+②）：新增 exportExternalTask、importExternalReport、revealHandoff 与 reworkExternalTask
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'getProjectRoles', 'saveProjectRoles', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'exportExternalTask', 'importExternalReport', 'revealHandoff', 'stopTask', 'continueTask', 'reworkTask', 'reworkExternalTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'reworkConflictTask', 'getSaveHistory', 'undoFromHistory', 'revealProject']);
+    expect(entries).toHaveLength(62);
     const SHAPES = ['', 'id: string', 'secret: string', 'chief: string, reviewer: string, model: string', 'projectId: string', 'projectId: string, brief: ProjectBriefInput', 'projectId: string, mode: string, chief: string, reviewer: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string', 'projectId: string, id: string, preset: string', 'projectId: string, id: string, service: string, allow: boolean', 'projectId: string, id: string, edits: RequirementEditInput[]', 'projectId: string, id: string, choice: string, note: string', 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string', 'projectId: string, id: string, decision: string', 'projectId: string, id: string, newRequest: string', 'projectId: string, id: string, target: string, message: string', 'projectId: string, id: string, target: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
@@ -487,8 +487,10 @@ describe('安全基线（防回归）', () => {
         saveProjectBrief: 'projectId: string, brief: ProjectBriefInput',
         continueTask: 'projectId: string, id: string',
         exportExternalTask: 'projectId: string, id: string, ack: boolean',
+        importExternalReport: 'projectId: string, id: string',
         revealHandoff: 'projectId: string, id: string, target: string',
         reworkTask: 'projectId: string, id: string, feedback: string',
+        reworkExternalTask: 'projectId: string, id: string, feedback: string',
         editReworkPermissions: 'projectId: string, id: string, feedback: string',
         getDiscussionView: 'projectId: string, id: string',
         startDiscussion: 'projectId: string, id: string, preset: string',
@@ -830,8 +832,8 @@ describe('安全基线（防回归）', () => {
     it('每个接收 projectId 的 IPC 处理函数都先校验 projectId 在已打开项目表中', () => {
       const handlerPattern = /ipcMain\.handle\('([^']+)',\s*\(([^)]*)\)\s*=>\s*([^\n]+)\);/g;
       const guarded = [...main.matchAll(handlerPattern)].filter((m) => /\bprojectId\b/.test(m[2]!));
-      // 1 个 projects:close + 3 个 project:status/saveHistory/undoHistory + 2 个 project:Brief + 2 个 project:Roles + 13 个 tasks:* + 10 个 discussion:* + 14 个 acceptance:* = 45 个带 projectId 的处理函数
-      expect(guarded).toHaveLength(45);
+      // 1 个 projects:close + 3 个 project:status/saveHistory/undoHistory + 2 个 project:Brief + 2 个 project:Roles + 15 个 tasks:* + 10 个 discussion:* + 14 个 acceptance:* = 47 个带 projectId 的处理函数
+      expect(guarded).toHaveLength(47);
       const validBody = /^(?:controllerFor\(projectId\)\.\w+\(|projectStatus\(projectId\)|openProjects\.close\(projectId\))/;
       for (const m of guarded) {
         expect(m[3], `handler ${m[1]} 必须首先通过 openProjects 校验 projectId`).toMatch(validBody);
@@ -1169,6 +1171,12 @@ describe('安全基线（防回归）', () => {
         if (f.includes(`${path.sep}thinking${path.sep}claude-cli.ts`)) continue;
         expect(stripComments(s), f).not.toMatch(/\bspawn\([^)]*['"`](?:agy|claude)['"`]|execFile\([^)]*['"`](?:agy|claude)['"`]/);
       }
+      // 提交②：报告文件只能来自主进程文件选择框（仅接受 .md/.txt），核心层二次校验后缀，且本阶段不调用 reviewImportedReport
+      expect(main).toMatch(/pickReportFile:[\s\S]*?extensions:\s*\['md',\s*'txt'\]/);
+      expect(ctl).toMatch(/async importExternalReport[\s\S]*?\\\.\(md\|txt\)\$\/i\.test/);
+      const runnerSrc = stripComments(read('src/core/task/runner.ts'));
+      expect(runnerSrc).not.toContain('reviewImportedReport');
+      expect(ctl).not.toContain('reviewImportedReport');
     });
   });
 });

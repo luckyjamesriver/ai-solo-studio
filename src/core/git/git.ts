@@ -150,6 +150,17 @@ export async function refExists(dir: string, ref: string): Promise<boolean> {
   return gitOk(dir, ['rev-parse', '--verify', '--quiet', ref]);
 }
 
+/** 解析任意修订名到完整的 40 位提交哈希；不存在返回 null。 */
+export async function resolveCommit(dir: string, rev: string): Promise<string | null> {
+  if (!rev || rev.startsWith('-')) return null;
+  try {
+    const out = (await git(dir, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`])).trim();
+    return /^[0-9a-f]{40}$/.test(out) ? out : null;
+  } catch {
+    return null;
+  }
+}
+
 /** a 是否是 b 的祖先（含相同提交） */
 export async function isAncestor(dir: string, a: string, b: string): Promise<boolean> {
   return gitOk(dir, ['merge-base', '--is-ancestor', a, b]);
@@ -225,6 +236,20 @@ export async function computeTree(repo: string, worktreePath: string): Promise<s
 export async function commitTree(dir: string, tree: string, parent: string, message: string): Promise<string> {
   await ensureIdentity(dir);
   return (await git(dir, ['commit-tree', tree, '-p', parent, '-m', message])).trim();
+}
+
+/**
+ * 外部导入报告后将任务副本中尚未提交的改动（含未跟踪文件）固化为副本分支的一个提交：
+ * 先核验无外部驱动，再经临时索引 computeTree + commitTree + reset --hard，绝不触碰主项目。
+ */
+export async function snapshotWorktreePending(repo: string, wt: Worktree, message: string): Promise<string> {
+  const d = await detectExternalDrivers(wt.path);
+  if (!d.supported) throw new Error(`${EXTERNAL_DRIVER_MESSAGE}（${d.drivers.join('；')}）`);
+  const tree = await computeTree(repo, wt.path);
+  const parent = await headSha(wt.path);
+  const sha = await commitTree(repo, tree, parent, message);
+  await git(wt.path, ['reset', '--hard', sha]);
+  return sha;
 }
 
 export async function treeOf(dir: string, rev: string): Promise<string> {

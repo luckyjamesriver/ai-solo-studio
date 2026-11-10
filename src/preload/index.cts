@@ -32,10 +32,12 @@ const api = {
   removeExtraDir: (projectId: string, id: string, key: string) => ipcRenderer.invoke('tasks:removeExtraDir', projectId, id, key),
   startTask: (projectId: string, id: string, ack: boolean) => ipcRenderer.invoke('tasks:start', projectId, id, ack),
   exportExternalTask: (projectId: string, id: string, ack: boolean) => ipcRenderer.invoke('tasks:exportExternal', projectId, id, ack),
+  importExternalReport: (projectId: string, id: string) => ipcRenderer.invoke('tasks:importExternal', projectId, id),
   revealHandoff: (projectId: string, id: string, target: string) => ipcRenderer.invoke('tasks:revealHandoff', projectId, id, target),
   stopTask: (projectId: string, id: string) => ipcRenderer.invoke('tasks:stop', projectId, id),
   continueTask: (projectId: string, id: string) => ipcRenderer.invoke('tasks:continue', projectId, id),
   reworkTask: (projectId: string, id: string, feedback: string) => ipcRenderer.invoke('tasks:rework', projectId, id, feedback),
+  reworkExternalTask: (projectId: string, id: string, feedback: string) => ipcRenderer.invoke('tasks:reworkExternal', projectId, id, feedback),
   editReworkPermissions: (projectId: string, id: string, feedback: string) => ipcRenderer.invoke('tasks:editReworkPermissions', projectId, id, feedback),
   // 阶段 5：讨论与流程引擎驱动（无路径或宽松参数；仅传项目编号、任务编号与明确裁决选项）
   getDiscussionView: (projectId: string, id: string) => ipcRenderer.invoke('discussion:get', projectId, id),
