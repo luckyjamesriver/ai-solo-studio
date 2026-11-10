@@ -11,6 +11,7 @@ import {
   type TaskView,
 } from './api.js';
 import { ProjectBriefForm } from './ProjectBriefForm.js';
+import { SaveHistoryPage } from './SaveHistoryPage.js';
 import { COPY } from './copy.js';
 
 export type ProjectBoardTab = 'tasks' | 'history' | 'settings';
@@ -26,6 +27,7 @@ interface ProjectBoardProps {
   onTabChange: (tab: ProjectBoardTab) => void;
   onCreateTask: (request: string) => Promise<void>;
   onOpenTask: (taskId: string) => void;
+  onHistoryChanged?: () => void;
   onRevealProject: () => void;
   onCloseProject: () => void;
   onOpenDisclosure: () => void;
@@ -47,6 +49,7 @@ export function ProjectBoard({
   onTabChange,
   onCreateTask,
   onOpenTask,
+  onHistoryChanged,
   onRevealProject,
   onCloseProject,
   onOpenDisclosure,
@@ -124,8 +127,6 @@ export function ProjectBoard({
     { key: 'reviewing', title: COPY.boardColReviewing, emptyText: COPY.boardEmptyCol, items: reviewing },
     { key: 'ended', title: COPY.boardColEnded, emptyText: COPY.boardEmptyCol, items: ended },
   ];
-
-  const historyTasks = tasks.filter((t) => ['saved', 'saved_cleanup_pending', 'undone', 'undo_failed'].includes(t.state));
 
   return (
     <main className="main" data-testid="project" aria-label={project.name}>
@@ -257,48 +258,12 @@ export function ProjectBoard({
       )}
 
       {tab === 'history' && (
-        <section data-testid="project-history" aria-label={COPY.boardTabHistory}>
-          <div className="box">
-            <h2>任务保存记录</h2>
-            {historyTasks.length === 0 ? (
-              <p className="muted">{COPY.historyEmpty}</p>
-            ) : (
-              historyTasks.map((t) => (
-                <div className="item" key={t.id}>
-                  <div className="grow">
-                    <strong>{t.goal}</strong>
-                    <div className="muted">
-                      {new Date(t.updatedAt).toLocaleString()} · {t.executorText}
-                      {t.round >= 2 && <span data-testid="history-round-badge"> · {COPY.roundBadge(t.round)}</span>}
-                      {t.saveCheckText && ` · ${t.saveCheckText}`} · {t.layer.statusTag}
-                    </div>
-                  </div>
-                  <button type="button" className="secondary" onClick={() => onOpenTask(t.id)}>
-                    {COPY.historyViewTask}
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-
-          {project.savePoints.length > 0 && (
-            <div className="box" style={{ marginTop: 'var(--space-section)' }}>
-              <h2>项目保存点</h2>
-              <ol className="saves">
-                {project.savePoints.map((s) => (
-                  <li key={s.sha}>
-                    {s.message} <span className="muted">{new Date(s.date).toLocaleString()}</span>
-                    {s.checksText && (
-                      <span className="muted" data-testid="savepoint-check">
-                        {' '}· {s.checksText}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-        </section>
+        <SaveHistoryPage
+          projectId={project.id}
+          refreshKey={`${tasks.length}-${project.savePoints.length}-${tasks.map((t) => `${t.id}:${t.state}`).join(',')}`}
+          onOpenTask={onOpenTask}
+          {...(onHistoryChanged ? { onHistoryChanged } : {})}
+        />
       )}
 
       {tab === 'settings' && (

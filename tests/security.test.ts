@@ -279,9 +279,9 @@ describe('安全基线（防回归）', () => {
     // 阶段 4 修订（按前例同步登记 rejectCriterion / reworkTask / editReworkPermissions，参数形态固定且带 projectId，不放宽任何约束）
     // 阶段 5a 修订（按前例同步登记 10 个讨论与流程引擎驱动方法，参数形态固定且带 projectId，无路径参数）
     // 阶段 5b 修订（按前例同步登记项目简介、Claude Key 与 AI 角色设置 IPC 方法，参数形态固定，无路径与明文读取接口）
-    // 阶段 6（提交②）：新增 reworkConflictTask(projectId, id)
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'getProjectRoles', 'saveProjectRoles', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'reworkTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'reworkConflictTask', 'revealProject']);
-    expect(entries).toHaveLength(56);
+    // 阶段 6（提交②+③）：新增 reworkConflictTask、getSaveHistory 与 undoFromHistory
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'getProjectRoles', 'saveProjectRoles', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'reworkTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'reworkConflictTask', 'getSaveHistory', 'undoFromHistory', 'revealProject']);
+    expect(entries).toHaveLength(58);
     const SHAPES = ['', 'id: string', 'secret: string', 'chief: string, reviewer: string, model: string', 'projectId: string', 'projectId: string, brief: ProjectBriefInput', 'projectId: string, mode: string, chief: string, reviewer: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string', 'projectId: string, id: string, preset: string', 'projectId: string, id: string, service: string, allow: boolean', 'projectId: string, id: string, edits: RequirementEditInput[]', 'projectId: string, id: string, choice: string, note: string', 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string', 'projectId: string, id: string, decision: string', 'projectId: string, id: string, newRequest: string', 'projectId: string, id: string, target: string, message: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
@@ -511,6 +511,8 @@ describe('安全基线（防回归）', () => {
         undoSave: 'projectId: string, id: string',
         retryCleanup: 'projectId: string, id: string',
         reworkConflictTask: 'projectId: string, id: string',
+        getSaveHistory: 'projectId: string',
+        undoFromHistory: 'projectId: string, id: string',
         revealProject: '',
       };
       for (const [name, params] of Object.entries(NEW)) {
@@ -825,8 +827,8 @@ describe('安全基线（防回归）', () => {
     it('每个接收 projectId 的 IPC 处理函数都先校验 projectId 在已打开项目表中', () => {
       const handlerPattern = /ipcMain\.handle\('([^']+)',\s*\(([^)]*)\)\s*=>\s*([^\n]+)\);/g;
       const guarded = [...main.matchAll(handlerPattern)].filter((m) => /\bprojectId\b/.test(m[2]!));
-      // 1 个 projects:close + 1 个 project:status + 2 个 project:Brief + 2 个 project:Roles + 11 个 tasks:* + 10 个 discussion:* + 14 个 acceptance:* = 41 个带 projectId 的处理函数
-      expect(guarded).toHaveLength(41);
+      // 1 个 projects:close + 3 个 project:status/saveHistory/undoHistory + 2 个 project:Brief + 2 个 project:Roles + 11 个 tasks:* + 10 个 discussion:* + 14 个 acceptance:* = 43 个带 projectId 的处理函数
+      expect(guarded).toHaveLength(43);
       const validBody = /^(?:controllerFor\(projectId\)\.\w+\(|projectStatus\(projectId\)|openProjects\.close\(projectId\))/;
       for (const m of guarded) {
         expect(m[3], `handler ${m[1]} 必须首先通过 openProjects 校验 projectId`).toMatch(validBody);
@@ -1142,6 +1144,16 @@ describe('安全基线（防回归）', () => {
       expect(viewSrc).not.toMatch(/以这个任务为准|覆盖保存/);
       const gitSrc = read('src/core/git/git.ts');
       expect(gitSrc).toMatch(/prepareWorktreeRedoOnMain[\s\S]*?merge[\s\S]*?--abort/);
+    });
+
+    it('保存记录页（#12-history）不提供跨后续保存撤销，且复用核心层 previewUndo/undo 判断', () => {
+      const historyPage = read('src/renderer/SaveHistoryPage.tsx');
+      const historyCore = read('src/core/acceptance/history.ts');
+      expect(historyPage).not.toMatch(/跨后续保存撤销|以这个任务为准|覆盖保存|仍然保存|强制保存|让 ?AI ?修改/);
+      expect(historyPage).not.toMatch(/\b(?:rawOutput|currentChecks|evidence|command|stderr|stdout)\b/i);
+      expect(historyCore).not.toMatch(/跨后续保存撤销|以这个任务为准|覆盖保存/);
+      const ctl = read('src/core/app/task-controller.ts');
+      expect(ctl).toMatch(/undoFromHistory[\s\S]*?this\.undoSave/);
     });
   });
 });

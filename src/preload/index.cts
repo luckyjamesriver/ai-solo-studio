@@ -61,6 +61,8 @@ const api = {
   undoSave: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:undo', projectId, id),
   retryCleanup: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:retryCleanup', projectId, id),
   reworkConflictTask: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:reworkConflict', projectId, id),
+  getSaveHistory: (projectId: string) => ipcRenderer.invoke('project:saveHistory', projectId),
+  undoFromHistory: (projectId: string, id: string) => ipcRenderer.invoke('project:undoHistory', projectId, id),
   // 项目状态异常时在访达中显示项目；无参数，位置由主进程决定
   revealProject: () => ipcRenderer.invoke('project:reveal'),
   onSaveProgress: (listener: (ev: SaveProgressEvent) => void) => {

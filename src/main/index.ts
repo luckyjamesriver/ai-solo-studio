@@ -399,6 +399,8 @@ ipcMain.handle('project:openRecent', async (_e, id: unknown): Promise<OpenResult
   return openValidated(r.path);
 });
 ipcMain.handle('project:status', (_e, projectId: unknown) => projectStatus(projectId));
+ipcMain.handle('project:saveHistory', (_e, projectId: unknown) => controllerFor(projectId).getSaveHistory());
+ipcMain.handle('project:undoHistory', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).undoFromHistory(id));
 ipcMain.handle('project:getBrief', (_e, projectId: unknown) => controllerFor(projectId).getProjectBrief());
 ipcMain.handle('project:saveBrief', (_e, projectId: unknown, brief: unknown) => controllerFor(projectId).saveProjectBrief(brief));
 ipcMain.handle('project:getRoles', (_e, projectId: unknown) => controllerFor(projectId).getProjectRoles());

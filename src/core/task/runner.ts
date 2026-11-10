@@ -1354,6 +1354,8 @@ export class TaskRunner extends EventEmitter {
       this.emitSaveProgress(t.id, saveSteps, true);
       recordSnapshot('saved');
 
+      const execName = t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex');
+      const executorText = t.model ? `${execName} · ${t.model}` : execName;
       t.saveRecord = {
         preMergeHead: preHead,
         taskCommit,
@@ -1370,6 +1372,8 @@ export class TaskRunner extends EventEmitter {
           : {}),
         checksSummary,
         ...(checkedAt ? { checkedAt } : {}),
+        savedRound: t.currentRound ?? 1,
+        executorText,
         trialCommit,
       };
       this.opStep(t, '合并到项目', true, mergeCommit);
@@ -1504,6 +1508,7 @@ export class TaskRunner extends EventEmitter {
         this.opStep(t, '恢复到保存之前', true, undoCommit);
         this.endOp(t, 'finished');
         t.op!.undoCommit = undoCommit;
+        t.undoRecord = { commit: undoCommit, undoneAt: new Date().toISOString() };
         await this.fire(t, 'undo');
         return { ok: true, task: t, message: MESSAGES.undone };
       } catch (e) {
@@ -1693,6 +1698,10 @@ export class TaskRunner extends EventEmitter {
               : {}),
             checksSummary: op.checksSummary ?? { passed: 0, failed: 0 },
             ...(op.checkedAt ? { checkedAt: op.checkedAt } : {}),
+            savedRound: t.currentRound ?? 1,
+            executorText: t.model
+              ? `${t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex')} · ${t.model}`
+              : (t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex')),
             ...(op.trialCommit ? { trialCommit: op.trialCommit } : {}),
           };
           delete t.uncheckedConfirm;
@@ -1750,6 +1759,7 @@ export class TaskRunner extends EventEmitter {
           out.push({ taskId: id, action: '撤销在开始前中断，项目保持原样；可以重新撤销' });
         } else if (f.kind === 'undo_done') {
           t.op!.undoCommit = f.head;
+          t.undoRecord ??= { commit: f.head, undoneAt: new Date().toISOString() };
           this.endOp(t, 'finished');
           this.markReconciled(t, '上次撤销已经生效，核对后记录已更新为“已撤销”。');
           await this.fire(t, 'undo');

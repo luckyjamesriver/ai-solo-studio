@@ -147,6 +147,10 @@ export interface SaveRecord {
   checksSummary?: ChecksSummary;
   /** 运行合并后自动检查的时间（未检查时省略） */
   checkedAt?: string;
+  /** 保存时的施工/验收轮次 */
+  savedRound?: number;
+  /** 保存时记录的执行者说明（如 Codex / 模拟执行体） */
+  executorText?: string;
   /** 试合并产生的提交（写入主项目 --ff-only 的源提交） */
   trialCommit?: string;
 }
@@ -280,6 +284,8 @@ export interface Task {
   customCommitChecks?: boolean;
   /** 保存结果（撤销依据） */
   saveRecord?: SaveRecord;
+  /** 撤销成功时产生的恢复提交与时间（供保存记录展示「撤销了 <任务名>」） */
+  undoRecord?: { commit: string; undoneAt: string };
   /** 最近一次保存因“未检查”停下等待确认的状态（版本变化或保存结束即清除） */
   uncheckedConfirm?: UncheckedConfirmPending;
   /** 最近一次保存/放弃/撤销/清理的阶段日志 */

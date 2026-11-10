@@ -435,6 +435,10 @@ export function App() {
             onTabChange={(tab) => setScreen({ kind: 'project', projectId: screen.projectId, tab })}
             onCreateTask={(req) => createTask(screen.projectId, req)}
             onOpenTask={(tid) => openTaskPage(screen.projectId, tid)}
+            onHistoryChanged={() => {
+              loadProjectData(screen.projectId);
+              refreshWorkbench();
+            }}
             onRevealProject={() => studio().revealProject().catch((e: Error) => setError(e.message))}
             onCloseProject={() => closeProject(screen.projectId)}
             onOpenDisclosure={() => setShowDisc(true)}

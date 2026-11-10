@@ -75,13 +75,13 @@ export function SaveResultPanel({
       data-reason={outcome.reason}
     >
       <div className="row sb">
-        <h2>{outcome.kind === 'saved' ? '保存结果' : '保存前检查'}</h2>
+        <h2>{outcome.kind === 'saved' ? '保存结果' : outcome.saveSteps.length === 0 ? '撤销状态' : '保存前检查'}</h2>
         <span className={tagClass} data-testid="save-outcome-tag">
           {outcome.tag}
         </span>
       </div>
 
-      <StepRows saveSteps={outcome.saveSteps} />
+      {outcome.saveSteps.length > 0 && <StepRows saveSteps={outcome.saveSteps} />}
 
       {outcome.kind === 'unchecked_needs_confirm' ? (
         <div

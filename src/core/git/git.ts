@@ -506,6 +506,34 @@ export async function firstParentCommitsAfter(repo: string, fromSha: string): Pr
     });
 }
 
+export interface CommitPoint {
+  sha: string;
+  parents: string[];
+  message: string;
+  date: string;
+}
+
+/** 沿第一父链读取时间线提交（含父提交哈希，供区分根提交与项目外提交）。 */
+export async function savePointsWithParents(dir: string, limit = 100): Promise<CommitPoint[]> {
+  try {
+    const out = await git(dir, ['log', '--first-parent', `-n${limit}`, '--format=%H%x1f%P%x1f%s%x1f%cI']);
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        const [sha = '', p = '', message = '', date = ''] = l.split('\x1f');
+        return {
+          sha,
+          parents: p.trim() ? p.trim().split(' ') : [],
+          message,
+          date,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
 /**
  * 回到某个保存点：以一个新提交恢复该保存点的文件内容，不改写历史。
  * 中途失败时把工作区与索引恢复到调用前的 HEAD（调用前已核验工作区干净，所以其中的改动都是本函数造成的）。

@@ -19,6 +19,8 @@ import { TaskRunner } from '../src/core/task/runner.js';
 import type { SaveProgressEvent } from '../src/core/task/model.js';
 import { SaveResultPanel } from '../src/renderer/SaveResultPanel.js';
 import { SaveConflictPage } from '../src/renderer/SaveConflictPage.js';
+import { SaveHistoryPage } from '../src/renderer/SaveHistoryPage.js';
+import { buildSaveHistoryView } from '../src/core/acceptance/history.js';
 import * as G from '../src/core/git/git.js';
 import { makeRepo, tmpDir, testSandboxRunner } from './helpers.js';
 
@@ -493,6 +495,186 @@ describe('阶段 6 提交②：保存冲突专页与基于最新项目重做（#
     expect(otherBefore).not.toContain('<<<<<<<');
     expect(await G.mergeInProgress(wtPath)).toBe(false);
     expect(await G.dirtyFiles(repo)).toEqual([]);
+  });
+});
+
+describe('阶段 6 提交③：保存记录与撤销界面（#12-history）', () => {
+  it('保存记录按倒序展示检查状态（通过/无脚本/没能运行+确认时间）与项目外的改动；仅最近一次可撤销且撤销后忠实交由核心层 undoCheck 判断', async () => {
+    const repo = await makeRepo({
+      'package.json': JSON.stringify({ name: 's6-h', scripts: { build: 'node -e "process.exit(0)"' } }),
+      'a.txt': '0\n',
+      'b.txt': '0\n',
+      'c.txt': '0\n',
+    });
+    cleanDirs.push(repo);
+    const data = await makeTempDir('data-s6-hist-');
+
+    let step = 0;
+    const baseEx = new FakeExecutor([]);
+    const exWrapper: Executor = {
+      id: baseEx.id,
+      displayName: baseEx.displayName,
+      capabilities: baseEx.capabilities,
+      sandboxRunner: testSandboxRunner(),
+      detect: () => baseEx.detect(),
+      start: (opts) => {
+        step++;
+        const steps: FakeStep[] =
+          step === 1
+            ? [{ do: 'write', path: 'a.txt', content: '1\n' }, { do: 'exit', code: 0 }]
+            : step === 2
+              ? [
+                  { do: 'write', path: 'b.txt', content: '2\n' },
+                  { do: 'write', path: 'package.json', content: JSON.stringify({ name: 's6-h', scripts: {} }) },
+                  { do: 'exit', code: 0 },
+                ]
+              : [
+                  { do: 'write', path: 'c.txt', content: '3\n' },
+                  { do: 'write', path: 'package.json', content: JSON.stringify({ name: 's6-h', scripts: { test: 'node -e "process.exit(0)"' } }) },
+                  { do: 'exit', code: 0 },
+                ];
+        const inner = new FakeExecutor(steps);
+        (inner as unknown as { sandboxRunner: unknown }).sandboxRunner = testSandboxRunner();
+        return inner.start(opts);
+      },
+    };
+
+    const ctl = new TaskController({
+      repo,
+      makeExecutor: () => exWrapper,
+      pickDirectory: async () => null,
+      prefs: new TaskPrefs(data),
+    });
+
+    // 任务 1：有检查脚本且检查通过 → 检查通过
+    const t1 = await ctl.create('任务一：检查通过');
+    await ctl.savePlan(t1.id, { goal: '任务一：检查通过', criteria: [], mode: 'standard', network: false });
+    await ctl.start(t1.id, false);
+    await until(async () => ((await ctl.getAcceptanceView(t1.id)).state === 'reviewing' ? true : false));
+    const v1Ready = await confirmAll(ctl, t1.id);
+    expect((await ctl.saveTask(t1.id, v1Ready.version)).ok).toBe(true);
+
+    // 任务 2：移除检查脚本 → 未检查（没有检查脚本）+ 确认时间
+    const t2 = await ctl.create('任务二：无脚本确认');
+    await ctl.savePlan(t2.id, { goal: '任务二：无脚本确认', criteria: [], mode: 'standard', network: false });
+    await ctl.start(t2.id, false);
+    await until(async () => ((await ctl.getAcceptanceView(t2.id)).state === 'reviewing' ? true : false));
+    const v2Ready = await confirmAll(ctl, t2.id);
+    const v2First = await ctl.saveTask(t2.id, v2Ready.version);
+    expect(v2First.saveOutcome?.kind).toBe('unchecked_needs_confirm');
+    expect((await ctl.saveUncheckedTask(t2.id, v2Ready.version)).ok).toBe(true);
+
+    // 主项目里直接有一次不是通过工作台保存的提交 → 显示为「项目外的改动」
+    await fs.writeFile(path.join(repo, 'outside.txt'), 'manual edit\n');
+    await G_commit(repo, 'manual outside change', 'outside.txt');
+
+    // 任务 3：带检查脚本但无沙箱运行器，走 unchecked_needs_confirm (unavailable) 确认保存 → 未检查（检查没能运行）+ 确认时间
+    const dataNoSb = await makeTempDir('data-s6-nosb-');
+    const exNoSb: Executor = {
+      id: baseEx.id,
+      displayName: baseEx.displayName,
+      capabilities: baseEx.capabilities,
+      detect: () => baseEx.detect(),
+      start: (opts) => {
+        const inner = new FakeExecutor([
+          { do: 'write', path: 'c.txt', content: '3\n' },
+          { do: 'write', path: 'package.json', content: JSON.stringify({ name: 's6-h', scripts: { test: 'node -e "process.exit(0)"' } }) },
+          { do: 'exit', code: 0 },
+        ]);
+        return inner.start(opts);
+      },
+    };
+    const ctlNoSb = new TaskController({
+      repo,
+      makeExecutor: () => exNoSb,
+      pickDirectory: async () => null,
+      prefs: new TaskPrefs(dataNoSb),
+    });
+    const t3 = await ctlNoSb.create('任务三：检查没能运行');
+    await ctlNoSb.savePlan(t3.id, { goal: '任务三：检查没能运行', criteria: [], mode: 'standard', network: false });
+    await ctlNoSb.start(t3.id, false);
+    await until(async () => ((await ctlNoSb.getAcceptanceView(t3.id)).state === 'reviewing' ? true : false));
+    const v3Ready = await confirmAll(ctlNoSb, t3.id);
+    const v3First = await ctlNoSb.saveTask(t3.id, v3Ready.version);
+    expect(v3First.saveOutcome?.kind).toBe('unchecked_needs_confirm');
+    expect((await ctlNoSb.saveUncheckedTask(t3.id, v3Ready.version)).ok).toBe(true);
+
+    const hist1 = await ctlNoSb.getSaveHistory();
+    expect(hist1.projectLock).toBeNull();
+    // 倒序排列：任务三 → 项目外的改动 → 任务二 → 任务一
+    expect(hist1.entries.map((e) => [e.kind, e.title])).toEqual([
+      ['save', '任务三：检查没能运行'],
+      ['external', '项目外的改动'],
+      ['save', '任务二：无脚本确认'],
+      ['save', '任务一：检查通过'],
+    ]);
+    expect(hist1.entries[0]!.checksLabel).toBe('未检查（检查没能运行）');
+    expect(hist1.entries[0]!.uncheckedConfirmedAt).toBeTruthy();
+    expect(hist1.entries[1]!.canViewTask).toBe(false);
+    expect(hist1.entries[2]!.checksLabel).toBe('未检查（没有检查脚本）');
+    expect(hist1.entries[2]!.uncheckedConfirmedAt).toBeTruthy();
+    expect(hist1.entries[3]!.checksLabel).toBe('检查通过');
+
+    // 只有最近一次保存（任务三）可撤销，其余条目均不显示撤销按钮
+    expect(hist1.entries[0]!.showUndo).toBe(true);
+    expect(hist1.entries[0]!.canUndo).toBe(true);
+    expect(hist1.entries[0]!.undoConfirm?.targetSaveText).toContain('任务三：检查没能运行');
+    expect(hist1.entries[0]!.undoConfirm?.restoreStateText).toContain('上一次保存之前');
+    expect(hist1.entries[0]!.undoConfirm?.commitNoteText).toContain('新增一次提交');
+    expect(hist1.entries[1]!.showUndo).toBe(false);
+    expect(hist1.entries[2]!.showUndo).toBe(false);
+    expect(hist1.entries[3]!.showUndo).toBe(false);
+
+    // 撤销任务三
+    const undoRes = await ctlNoSb.undoFromHistory(t3.id);
+    expect(undoRes.ok).toBe(true);
+    const hist2 = undoRes.history;
+    expect(hist2.entries.map((e) => [e.kind, e.title, !!e.undone])).toEqual([
+      ['undo', '撤销了 任务三：检查没能运行', false],
+      ['save', '任务三：检查没能运行', true],
+      ['external', '项目外的改动', false],
+      ['save', '任务二：无脚本确认', false],
+      ['save', '任务一：检查通过', false],
+    ]);
+    // 原条目已标记「已撤销」且不再提供撤销；现在最新的有效记录（任务二）由核心层 undoCheck 如实判定被后续提交挡住
+    expect(hist2.entries[1]!.showUndo).toBe(false);
+    expect(hist2.entries[3]!.showUndo).toBe(true);
+    expect(hist2.entries[3]!.canUndo).toBe(false);
+    expect(hist2.entries[3]!.undoBlockedReason).toBeTruthy();
+
+    // 当在打开记录之后出现后续保存并尝试对旧记录撤销时：返回 undo_refused（列出挡住它的保存 + 没有改动任何文件），渲染复用的状态面板
+    const blockedRes = await ctlNoSb.undoFromHistory(t1.id);
+    expect(blockedRes.ok).toBe(false);
+    expect(blockedRes.saveOutcome?.reason).toBe('undo_refused');
+    expect(blockedRes.saveOutcome?.headline).toContain('任务二：无脚本确认');
+    expect(blockedRes.saveOutcome?.headline).toContain('没有改动任何文件');
+    const panelHtml = renderToStaticMarkup(
+      createElement(SaveResultPanel, {
+        liveSteps: null,
+        outcome: blockedRes.saveOutcome!,
+        busy: false,
+        onAction: () => undefined,
+      }),
+    );
+    expect(panelHtml).toContain('没有改动任何文件');
+
+    // 验证 buildSaveHistoryView 对 projectLock 生成「去处理」跳转，SaveHistoryPage 可静态渲染不报错
+    const lockTask = await ctlNoSb.create('锁定任务');
+    const runner = new TaskRunner({ repo, executor: new FakeExecutor([]) });
+    const rawLock = (await runner.store.get(lockTask.id))!;
+    rawLock.manualReview = { reason: '写入异常', at: '2026-11-11T00:00:00Z' };
+    await runner.store.save(rawLock);
+    const histLocked = await buildSaveHistoryView({
+      commits: await G.savePointsWithParents(repo, 20),
+      tasks: await runner.store.list(),
+      previewUndo: (tx) => runner.previewUndo(tx),
+      projectLock: rawLock,
+    });
+    expect(histLocked.projectLock).toMatchObject({
+      blockingTaskId: lockTask.id,
+      actionLabel: '去处理',
+    });
+    expect(typeof SaveHistoryPage).toBe('function');
   });
 });
 

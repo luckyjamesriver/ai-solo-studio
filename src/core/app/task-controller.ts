@@ -5,6 +5,7 @@ import * as G from '../git/git.js';
 import { GitError } from '../git/git.js';
 import { MESSAGES } from '../task/messages.js';
 import { buildPreviews, buildSingleFilePreview, PREVIEW_LIMITS, type ChangePreview } from '../acceptance/snippets.js';
+import { buildSaveHistoryView, type SaveHistoryView } from '../acceptance/history.js';
 import {
   acceptanceVersion,
   buildSaveOutcomeFromFail,
@@ -53,6 +54,14 @@ export interface PlanInput {
   criteria: string[];
   mode: ModePreference;
   network: boolean;
+}
+
+export interface UndoHistoryResult {
+  ok: boolean;
+  message: string;
+  files?: string[];
+  saveOutcome?: SaveOutcomeView;
+  history: SaveHistoryView;
 }
 
 export interface AddDirResult {
@@ -514,7 +523,7 @@ export class TaskController {
   ): Promise<AcceptanceActionResult> {
     const t = await this.load(id);
     const view = await this.acceptanceView(t);
-    const saveOutcome = view.saveOutcome ?? r.saveOutcome ?? undefined;
+    const saveOutcome = r.saveOutcome ?? view.saveOutcome ?? undefined;
     return {
       ok: r.ok,
       message: r.message,
@@ -708,8 +717,40 @@ export class TaskController {
     await this.load(tid);
     return this.act(tid, async (t) => {
       const r = await this.r().undo(t.id);
-      return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
+      return r.ok
+        ? { ok: true, message: okMessage(r.task) }
+        : { ok: false, ...mapFailure(r), saveOutcome: buildSaveOutcomeFromFail(r, { isUndo: true }) };
     });
+  }
+
+  /** 读取项目级保存记录（#12-history）：按主线提交时间倒序，关联任务记录与最近一次有效保存的撤销可用性。 */
+  async getSaveHistory(): Promise<SaveHistoryView> {
+    await this.ready();
+    const runner = this.r();
+    const [commits, tasks] = await Promise.all([
+      G.savePointsWithParents(this.o.repo, 100),
+      runner.store.list(),
+    ]);
+    const projectLock = tasks.find((t) => !!t.manualReview) ?? null;
+    return buildSaveHistoryView({
+      commits,
+      tasks,
+      previewUndo: (t) => runner.previewUndo(t),
+      projectLock,
+    });
+  }
+
+  /** 在项目「保存记录」页面触发撤销：复用阶段 1 撤销路径，并在失败/被挡时回传对应的单结果状态与刷新后的记录表。 */
+  async undoFromHistory(id: unknown): Promise<UndoHistoryResult> {
+    const res = await this.undoSave(id);
+    const history = await this.getSaveHistory();
+    return {
+      ok: res.ok,
+      message: res.message,
+      ...(res.files ? { files: res.files } : {}),
+      ...(res.saveOutcome ? { saveOutcome: res.saveOutcome } : {}),
+      history,
+    };
   }
 
   async retryCleanup(id: unknown): Promise<AcceptanceActionResult> {

@@ -75,7 +75,14 @@ export type {
 } from '../core/acceptance/view.js';
 export type { SaveProgressEvent, SaveProgressStep, SaveStepKey, SaveStepStatus } from '../core/task/model.js';
 export type { ChangePreview, Hunk } from '../core/acceptance/snippets.js';
-export type { AcceptanceActionResult } from '../core/app/task-controller.js';
+export type { AcceptanceActionResult, UndoHistoryResult } from '../core/app/task-controller.js';
+export type {
+  SaveHistoryEntryKind,
+  SaveHistoryEntryView,
+  SaveHistoryProjectLock,
+  SaveHistoryView,
+  UndoConfirmView,
+} from '../core/acceptance/history.js';
 export type { ClaudeKeySaveResult, ClaudeKeyStatus, ClaudeKeyValidationCategory } from '../core/app/claude-key.js';
 export type {
   AiProviderId,
@@ -113,7 +120,8 @@ import type { ProjectBriefInput as BriefIn, ProjectBriefView as BriefView } from
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
 import type { SaveProgressEvent } from '../core/task/model.js';
 import type { DiscussionView } from '../core/app/discussion-service.js';
-import type { AcceptanceActionResult } from '../core/app/task-controller.js';
+import type { AcceptanceActionResult, UndoHistoryResult } from '../core/app/task-controller.js';
+import type { SaveHistoryView } from '../core/acceptance/history.js';
 import type { CloseProjectResult, OpenProjectSummary, WorkbenchView } from '../core/app/open-projects.js';
 import type { TaskView } from '../core/app/task-view.js';
 /** 计划表单：只有文字、模式与布尔值，没有任何路径 */
@@ -157,6 +165,8 @@ interface StudioApi {
   undoSave(projectId: string, id: string): Promise<AcceptanceActionResult>;
   retryCleanup(projectId: string, id: string): Promise<AcceptanceActionResult>;
   reworkConflictTask(projectId: string, id: string): Promise<AcceptanceActionResult>;
+  getSaveHistory(projectId: string): Promise<SaveHistoryView>;
+  undoFromHistory(projectId: string, id: string): Promise<UndoHistoryResult>;
   revealProject(): Promise<void>;
   onSaveProgress(listener: (ev: SaveProgressEvent) => void): () => void;
   detectEnvironment(): Promise<HealthReport>;

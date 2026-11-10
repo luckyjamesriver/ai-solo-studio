@@ -1015,7 +1015,9 @@ export function buildSaveOutcomeView(
         kind: 'project_locked',
         tag: '项目已锁定',
         warn: true,
-        headline: `${blockingGoal} 的保存出了问题还没处理，这个项目暂时不能保存`,
+        headline: opts.isUndo
+          ? `${blockingGoal} 的保存出了问题还没处理，这个项目暂时不能撤销`
+          : `${blockingGoal} 的保存出了问题还没处理，这个项目暂时不能保存`,
         ...(snap.blockingTaskId ? { blockingTaskId: snap.blockingTaskId } : {}),
         blockingTaskGoal: blockingGoal,
         saveSteps,
@@ -1062,7 +1064,7 @@ export function buildSaveOutcomeFromFail(fail: OpFail, opts: { isUndo?: boolean;
     {
       reason: fail.reason,
       at: new Date().toISOString(),
-      saveSteps: opts.saveSteps ?? defaultSaveSteps(),
+      saveSteps: opts.saveSteps ?? (opts.isUndo ? [] : defaultSaveSteps()),
       ...(fail.files ? { files: fail.files.map(safeRelPath).filter((x): x is string => !!x) } : {}),
       ...(fail.failedChecks ? { failedChecks: fail.failedChecks } : {}),
       ...(fail.failedCheckCounts ? { failedCheckCounts: fail.failedCheckCounts } : {}),

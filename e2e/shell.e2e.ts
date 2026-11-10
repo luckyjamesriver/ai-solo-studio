@@ -869,8 +869,8 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     await a.page.getByTestId('conflict-diff-body').waitFor();
     expect(await a.page.getByTestId('conflict-diff-body').innerText()).not.toMatch(/git merge|git diff/i);
     await a.page.getByTestId('conflict-defer-button').click();
-    await a.page.getByTestId('board').waitFor();
-    expect(await a.page.locator('[data-testid="column-wait_accept"] [data-testid="card"]').first().getAttribute('data-state')).toBe('save_failed_unmerged');
+    await a.page.getByTestId('board-col-reviewing').waitFor();
+    expect(await a.page.locator('[data-testid="board-col-reviewing"] li[data-state="save_failed_unmerged"]').count()).toBe(1);
   });
 
   it('清理失败 → “需要处理”并给出“重试清理” → 重试成功', async () => {
