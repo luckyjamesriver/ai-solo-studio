@@ -630,15 +630,34 @@ export class TaskController {
           const head = await G.headSha(this.o.repo);
           ctx.otherUndoableSave = (await runner.store.list()).some((x) => x.id !== t.id && x.state === 'saved' && x.saveRecord?.mergeCommit === head);
         }
-        if ((t.rounds?.length ?? 0) > 1 && t.worktree?.baseSha) {
+        if ((t.rounds?.length ?? 0) > 0) {
           const roundPreviews = new Map<number, Map<string, ChangePreview>>();
-          const curRound = t.currentRound ?? Math.max(...(t.rounds ?? []).map((r) => r.round));
           for (const r of t.rounds ?? []) {
-            if (r.round !== curRound && r.card && r.acceptedTree) {
-              roundPreviews.set(r.round, await buildPreviews(this.o.repo, { acceptedTree: r.acceptedTree, worktree: t.worktree, card: r.card }));
+            if (!r.card) continue;
+            const rev =
+              (r.roundRef ? await G.resolveCommit(this.o.repo, r.roundRef) : null) ??
+              r.roundCommit ??
+              r.acceptedTree ??
+              null;
+            const baseSha = r.roundBaseSha ?? t.worktree?.baseSha ?? t.binding?.baseHead;
+            if (rev && baseSha) {
+              roundPreviews.set(
+                r.round,
+                await buildPreviews(this.o.repo, {
+                  acceptedTree: rev,
+                  worktree: { path: t.worktree?.path ?? '', branch: t.worktree?.branch ?? '', baseSha },
+                  card: r.card,
+                }),
+              );
             }
           }
-          if (roundPreviews.size > 0) ctx.roundPreviews = roundPreviews;
+          if (roundPreviews.size > 0) {
+            ctx.roundPreviews = roundPreviews;
+            if (!ctx.previews && t.card) {
+              const curRound = t.currentRound ?? Math.max(...(t.rounds ?? []).map((r) => r.round));
+              ctx.previews = roundPreviews.get(curRound);
+            }
+          }
         }
         if (t.state === 'save_failed_unmerged' && t.conflict && t.worktree?.baseSha && t.acceptedTree) {
           ctx.conflictDiffs = await this.buildConflictDiffs(t);

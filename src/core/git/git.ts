@@ -181,6 +181,47 @@ export function taskBranch(taskId: string): string {
   return `studio/task-${taskId}`;
 }
 
+/** 各轮代码保留的 Git 引用名（refs/studio/rounds/<taskId>/<n>，防止被 Git GC 清理）。 */
+export function roundRefName(taskId: string, round: number): string {
+  taskBranch(taskId);
+  if (!Number.isInteger(round) || round < 1) throw new Error(`非法的轮次编号：${round}`);
+  return `refs/studio/rounds/${taskId}/${round}`;
+}
+
+/**
+ * 为某一轮的验收快照创建孤立提交并挂载引用 refs/studio/rounds/<taskId>/<n>：
+ * 提交父节点为该轮基线 parent（roundBaseSha），确保该轮代码与基线均不被 git gc 清理，同时不触碰主分支与工作区。
+ */
+export async function saveRoundRef(
+  repo: string,
+  opts: { taskId: string; round: number; tree: string; parent: string },
+): Promise<{ ref: string; commit: string }> {
+  const ref = roundRefName(opts.taskId, opts.round);
+  const commit = await commitTree(repo, opts.tree, opts.parent, `studio: preserve task ${opts.taskId} round ${opts.round}`);
+  await git(repo, ['update-ref', ref, commit]);
+  return { ref, commit };
+}
+
+/** 列出指定任务目前保留在仓库中的全部轮次 Git 引用。 */
+export async function listRoundRefs(repo: string, taskId: string): Promise<string[]> {
+  taskBranch(taskId);
+  const prefix = `refs/studio/rounds/${taskId}/`;
+  const out = await git(repo, ['for-each-ref', '--format=%(refname)', prefix]).catch(() => '');
+  return out
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith(prefix));
+}
+
+/** 删除指定任务保留的全部轮次 Git 引用（仅在放弃超过保留期时清理）。 */
+export async function deleteRoundRefs(repo: string, taskId: string): Promise<number> {
+  const refs = await listRoundRefs(repo, taskId);
+  for (const ref of refs) {
+    await git(repo, ['update-ref', '-d', ref]);
+  }
+  return refs.length;
+}
+
 /** 为任务创建隔离 worktree，位于 <repo>/.studio/worktrees/<id>。 */
 export async function createWorktree(repo: string, taskId: string): Promise<Worktree> {
   const branch = taskBranch(taskId);

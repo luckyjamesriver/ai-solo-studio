@@ -124,6 +124,84 @@ export function makeHunks(before: string, after: string): { hunks: Hunk[]; omitt
   return { hunks, omitted: all.length - hunks.length };
 }
 
+const MAX_CONFLICT_REF_FULL_LINES = 200;
+const MAX_CONFLICT_SNIPPET_TOTAL_LINES = 140;
+const CONFLICT_SNIPPET_CONTEXT = 5;
+
+export interface ConflictRefSection {
+  startLine: number;
+  endLine: number;
+  text: string;
+}
+
+export interface ConflictRefExtract {
+  truncated: boolean;
+  totalLines: number;
+  sections: ConflictRefSection[];
+}
+
+/**
+ * 为冲突重做提取上一轮冲突文件的参考内容：
+ * - 总行数 <= 200：返回完整文件内容；
+ * - 总行数 > 200：利用 LCS 改动块定位与主线改动冲突/重叠的行段（若无直接坐标重叠则取任务自身的改动块），仅截取冲突相关片段。
+ */
+export function extractConflictSnippet(
+  baseText: string | null,
+  prevText: string,
+  mainText: string | null,
+): ConflictRefExtract {
+  const prevLines = toLines(prevText);
+  const totalLines = prevLines.length;
+  if (totalLines <= MAX_CONFLICT_REF_FULL_LINES) {
+    return {
+      truncated: false,
+      totalLines,
+      sections: [{ startLine: 1, endLine: Math.max(1, totalLines), text: prevLines.join('\n') }],
+    };
+  }
+
+  const baseLines = baseText !== null ? toLines(baseText) : [];
+  const taskBlocks = changeBlocks(baseLines, prevLines);
+  const mainBlocks = mainText !== null ? changeBlocks(baseLines, toLines(mainText)) : [];
+  const overlapping =
+    mainBlocks.length > 0
+      ? taskBlocks.filter((tb) => mainBlocks.some((mb) => tb.aStart <= mb.aEnd + 3 && mb.aStart <= tb.aEnd + 3))
+      : [];
+  const chosen = overlapping.length > 0 ? overlapping : taskBlocks;
+
+  const rawWindows: { start: number; end: number }[] = chosen.length
+    ? chosen.map((b) => ({
+        start: Math.max(0, b.bStart - CONFLICT_SNIPPET_CONTEXT),
+        end: Math.min(totalLines, Math.max(b.bStart + 1, b.bEnd) + CONFLICT_SNIPPET_CONTEXT),
+      }))
+    : [{ start: 0, end: Math.min(totalLines, 60) }];
+
+  const merged: { start: number; end: number }[] = [];
+  for (const w of rawWindows) {
+    const last = merged[merged.length - 1];
+    if (last && w.start <= last.end + CONFLICT_SNIPPET_CONTEXT) {
+      last.end = Math.max(last.end, w.end);
+    } else {
+      merged.push({ ...w });
+    }
+  }
+
+  const sections: ConflictRefSection[] = [];
+  let budget = MAX_CONFLICT_SNIPPET_TOTAL_LINES;
+  for (const w of merged) {
+    if (budget <= 0) break;
+    const capEnd = Math.min(w.end, w.start + budget);
+    const slice = prevLines.slice(w.start, capEnd);
+    sections.push({
+      startLine: w.start + 1,
+      endLine: w.start + slice.length,
+      text: slice.join('\n'),
+    });
+    budget -= slice.length;
+  }
+  return { truncated: true, totalLines, sections };
+}
+
 const unavailable = (): ChangePreview => ({ kind: 'unavailable', note: PREVIEW_TEXT.unavailable });
 
 /** 对任意两个 rev（提交或 tree）之间的单个文件生成轻量片段（供冲突页对比两边改动复用）。 */

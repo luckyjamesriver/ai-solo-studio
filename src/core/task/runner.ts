@@ -38,6 +38,7 @@ import {
 } from '../checks/scripts.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
 import { filterProofOutput, parseTestCases } from '../acceptance/proof.js';
+import { extractConflictSnippet, PREVIEW_LIMITS } from '../acceptance/snippets.js';
 import { deniedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
 import { recordProcess, verifyNoLiveExecutor, type ProcessProbe } from './process-check.js';
@@ -737,6 +738,7 @@ export class TaskRunner extends EventEmitter {
     let changes = await G.diffSummary(wt);
     const tree1 = await G.computeTree(repo, wt.path);
     const checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
+    const roundNo = t.currentRound ?? 1;
     t.roundEndedAt = new Date().toISOString();
     let checks: CheckResult[] = [];
     let checkProofs: StoredCheckProof[] = [];
@@ -767,6 +769,12 @@ export class TaskRunner extends EventEmitter {
     }
     t.currentChecks = checkProofs;
     t.acceptedTree = tree;
+    const savedRoundRef = await G.saveRoundRef(repo, {
+      taskId: t.id,
+      round: roundNo,
+      tree,
+      parent: wt.baseSha,
+    });
     t.card = buildCard({
       exit: t.exit!,
       changes,
@@ -781,7 +789,11 @@ export class TaskRunner extends EventEmitter {
       notes: this.cardNotes(t),
       ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
     });
-    this.syncCurrentRound(t);
+    this.syncCurrentRound(t, {
+      roundBaseSha: wt.baseSha,
+      roundCommit: savedRoundRef.commit,
+      roundRef: savedRoundRef.ref,
+    });
   }
 
   private async review(t: Task): Promise<Task> {
@@ -934,7 +946,10 @@ export class TaskRunner extends EventEmitter {
   }
 
   /** 将当前轮次的完整成果与确认记录写入 Task.rounds 对应条目（不得覆盖历史轮次）。 */
-  private syncCurrentRound(t: Task): void {
+  private syncCurrentRound(
+    t: Task,
+    roundGit?: { roundBaseSha: string; roundCommit: string; roundRef: string },
+  ): void {
     const roundNo = t.currentRound ?? 1;
     t.currentRound = roundNo;
     const prev = t.rounds?.find((r) => r.round === roundNo);
@@ -952,9 +967,9 @@ export class TaskRunner extends EventEmitter {
       ...(t.exit ? { exit: structuredClone(t.exit) } : {}),
       ...(t.gitBinding ? { gitBinding: structuredClone(t.gitBinding) } : {}),
       ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}),
-      ...(prev?.roundBaseSha ? { roundBaseSha: prev.roundBaseSha } : {}),
-      ...(prev?.roundCommit ? { roundCommit: prev.roundCommit } : {}),
-      ...(prev?.roundRef ? { roundRef: prev.roundRef } : {}),
+      ...(roundGit?.roundBaseSha ? { roundBaseSha: roundGit.roundBaseSha } : prev?.roundBaseSha ? { roundBaseSha: prev.roundBaseSha } : {}),
+      ...(roundGit?.roundCommit ? { roundCommit: roundGit.roundCommit } : prev?.roundCommit ? { roundCommit: prev.roundCommit } : {}),
+      ...(roundGit?.roundRef ? { roundRef: roundGit.roundRef } : prev?.roundRef ? { roundRef: prev.roundRef } : {}),
       ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
       denied: structuredClone(t.denied ?? []),
       deniedAcks: [...(t.deniedAcks ?? [])],
@@ -1065,6 +1080,13 @@ export class TaskRunner extends EventEmitter {
       const taskTree = t.acceptedTree ?? (await G.computeTree(repo, t.worktree.path));
       const knownFiles = t.conflict?.files ?? [];
       const againstHead = t.conflict?.againstHead ?? mainHead;
+      const conflictRefsText = await this.buildConflictRedoReferences(
+        repo,
+        t.worktree.baseSha,
+        taskTree,
+        againstHead,
+        knownFiles,
+      );
 
       const upd = await G.prepareWorktreeRedoOnMain(repo, t.worktree, {
         taskId: t.id,
@@ -1085,7 +1107,10 @@ export class TaskRunner extends EventEmitter {
         ? `与已保存的任务「${t.conflict.otherGoal}」的改动发生冲突`
         : '与项目里后来的改动发生冲突';
       const fileText = knownFiles.length ? knownFiles.join('、') : '部分文件';
-      const instruction = `上一次保存时，${fileText} ${conflictTarget}。现已将任务副本更新到主项目最新版本，请基于最新代码重新修改这部分，不要覆盖主项目里新合入的改动。`;
+      const baseInstruction = `上一次保存时，${fileText} ${conflictTarget}。现已将任务副本更新到主项目最新版本，请基于最新代码重新修改这部分，不要覆盖主项目里新合入的改动。`;
+      const instruction = conflictRefsText
+        ? `${baseInstruction}\n\n这是你上一轮的版本，与项目里新的改动冲突了，请在最新版本的基础上重新实现这部分：\n\n${conflictRefsText}`
+        : baseInstruction;
 
       t.worktree.baseSha = mainHead;
       t.binding.baseHead = mainHead;
@@ -1098,6 +1123,50 @@ export class TaskRunner extends EventEmitter {
     } finally {
       this.leave(id);
     }
+  }
+
+  /**
+   * 仅针对发生冲突的文件读取上一轮提交/tree 的版本，供冲突重做反馈参考：
+   * - 总行数 <= 200 附完整内容；
+   * - 总行数 > 200 仅截取与主线变动碰撞的冲突相关片段。
+   */
+  private async buildConflictRedoReferences(
+    repo: string,
+    baseSha: string,
+    taskTree: string,
+    againstHead: string,
+    conflictFiles: string[],
+  ): Promise<string> {
+    if (!conflictFiles.length) return '';
+    const maxBytes = PREVIEW_LIMITS.maxBytes * 2;
+    const blocks: string[] = [];
+    for (const file of conflictFiles.slice(0, PREVIEW_LIMITS.maxFiles)) {
+      const prevBlob = await G.readBlob(repo, taskTree, file, maxBytes).catch(() => ({ kind: 'missing' as const }));
+      if (prevBlob.kind === 'missing') {
+        blocks.push(`### ${file}\n（你在上一轮删除了该文件，而主项目后续修改了它）`);
+        continue;
+      }
+      if (prevBlob.kind === 'too_large' || prevBlob.text.includes('\0') || prevBlob.text.includes('\uFFFD')) {
+        blocks.push(`### ${file}\n（上一轮版本为二进制或过大文件，未附原文）`);
+        continue;
+      }
+      const baseBlob = await G.readBlob(repo, baseSha, file, maxBytes).catch(() => ({ kind: 'missing' as const }));
+      const mainBlob = await G.readBlob(repo, againstHead, file, maxBytes).catch(() => ({ kind: 'missing' as const }));
+      const extract = extractConflictSnippet(
+        baseBlob.kind === 'ok' ? baseBlob.text : null,
+        prevBlob.text,
+        mainBlob.kind === 'ok' ? mainBlob.text : null,
+      );
+      if (!extract.truncated) {
+        blocks.push(`### ${file}（共 ${extract.totalLines} 行，上一轮完整内容）\n\`\`\`\n${extract.sections[0]?.text ?? ''}\n\`\`\``);
+      } else {
+        const snippetParts = extract.sections
+          .map((s) => `第 ${s.startLine}–${s.endLine} 行：\n\`\`\`\n${s.text}\n\`\`\``)
+          .join('\n');
+        blocks.push(`### ${file}（共 ${extract.totalLines} 行，超过 200 行，仅截取冲突相关片段）\n${snippetParts}`);
+      }
+    }
+    return blocks.join('\n\n');
   }
 
   // ───────────────────────── 保存 / 放弃 / 撤销 / 清理（B4） ─────────────────────────
@@ -1929,8 +1998,8 @@ export class TaskRunner extends EventEmitter {
     t.reconciled = { at: new Date().toISOString(), note };
   }
 
-  /** 第二步（有写入）：按识别结果安全收尾。 */
-  async reconcileTasks(): Promise<ReconcileEntry[]> {
+  /** 第二步（有写入）：按识别结果安全收尾，并清理超过 30 天的已放弃任务轮次 Git 引用。 */
+  async reconcileTasks(now = new Date()): Promise<ReconcileEntry[]> {
     const out: ReconcileEntry[] = [];
     for (const { taskId: id, finding: first } of await this.identifyTasks()) {
       if (!this.enter(id)) continue;
@@ -2066,7 +2135,38 @@ export class TaskRunner extends EventEmitter {
         this.leave(id);
       }
     }
+    await this.pruneExpiredDiscardedRoundRefs(now, out);
     return out;
+  }
+
+  /**
+   * 各轮代码引用（refs/studio/rounds/<taskId>/<n>）清理规则：
+   * - 已保存 / 已撤销等任务永久保留作为历史；
+   * - 已放弃（discarded）任务自放弃起保留 30 天，到期后在 reconcileTasks 中自动删除其 refs/studio/rounds/<taskId>/* 引用。
+   */
+  private async pruneExpiredDiscardedRoundRefs(now: Date, out: ReconcileEntry[]): Promise<void> {
+    const retentionMs = ROUND_REF_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    for (const listed of await this.store.list()) {
+      if (listed.state !== 'discarded' || listed.roundRefsPrunedAt) continue;
+      const refTime = Date.parse(listed.discardedAt ?? listed.updatedAt);
+      if (!Number.isFinite(refTime) || now.getTime() - refTime < retentionMs) continue;
+      if (!this.enter(listed.id)) continue;
+      try {
+        const latest = await this.load(listed.id);
+        if (latest.state !== 'discarded' || latest.roundRefsPrunedAt) continue;
+        const ts = Date.parse(latest.discardedAt ?? latest.updatedAt);
+        if (!Number.isFinite(ts) || now.getTime() - ts < retentionMs) continue;
+        const removed = await G.deleteRoundRefs(this.opts.repo, latest.id);
+        latest.roundRefsPrunedAt = now.toISOString();
+        if (removed > 0) {
+          this.log(latest, 'state', `放弃已超过 ${ROUND_REF_RETENTION_DAYS} 天，已清理 ${removed} 个历史轮次 Git 引用`, 'host');
+          out.push({ taskId: latest.id, action: `已清理超过 ${ROUND_REF_RETENTION_DAYS} 天的废弃轮次 Git 引用（${removed} 条）` });
+        }
+        await this.persist(latest);
+      } finally {
+        this.leave(listed.id);
+      }
+    }
   }
 
   // ───────────────────────── 只读预判（界面显示按钮是否可用；真正操作时核心层会再判一次） ─────────────────────────
@@ -2174,6 +2274,8 @@ export function buildPrompt(t: Task): string {
     `\n只在当前目录内修改文件。不要提交 Git、不要推送、不要修改当前目录以外的任何文件。不要读取或列出当前目录以外的任何文件或目录。`,
   ].join('\n');
 }
+
+export const ROUND_REF_RETENTION_DAYS = 30;
 
 function initialSaveSteps(): SaveProgressStep[] {
   return [
