@@ -65,6 +65,16 @@ export function RunView({ task, onStop }: { task: TaskView; onStop: () => void }
               <div className="perm" data-testid="perm-summary" style={{ marginTop: '10px' }}>
                 <strong>本次实际生效的权限：{task.permissions.modeName}</strong>
                 <ul>{task.permissions.lines.map((l) => <li key={l}>{l}</li>)}</ul>
+                {task.permissions.blockedReadLocations && task.permissions.blockedReadLocations.length > 0 && (
+                  <details data-testid="blocked-read-locations" style={{ marginTop: '6px' }}>
+                    <summary style={{ cursor: 'pointer' }}>{COPY.blockedReadLocationsSummary}</summary>
+                    <ul style={{ listStyle: 'none', margin: '6px 0 0', padding: 0, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '2px 10px', fontSize: '12px' }}>
+                      {task.permissions.blockedReadLocations.map((loc) => (
+                        <li key={loc}><code>{loc}</code></li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </div>
             ) : (
               <p className="muted" data-testid="perm-pending" style={{ marginTop: '10px' }}>{COPY.noProgress}</p>

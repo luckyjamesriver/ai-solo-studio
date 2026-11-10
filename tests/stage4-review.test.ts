@@ -11,9 +11,15 @@ import { computeAcceptanceStatus, toUserView } from '../src/core/acceptance/view
 import { saveBlockerCodes } from '../src/core/task/save-rules.js';
 import { TaskController } from '../src/core/app/task-controller.js';
 import { TaskPrefs } from '../src/core/app/prefs.js';
+import { buildTaskView } from '../src/core/app/task-view.js';
+import { describePermissions } from '../src/core/app/permission-text.js';
 import { FakeExecutor } from '../src/core/executor/adapters/fake.js';
+import { sensitiveFallbackList, simulatedPermissions, STANDARD_READ_ACCESS_NOTE } from '../src/core/executor/modes.js';
+import { resolveCapabilities } from '../src/core/capabilities/model.js';
 import { RecordStore } from '../src/core/persistence/index.js';
 import { CheckProofPage } from '../src/renderer/CheckProofPage.js';
+import { PlanCard } from '../src/renderer/PlanCard.js';
+import { RunView } from '../src/renderer/RunView.js';
 import type { Task } from '../src/core/task/model.js';
 import { testSandboxRunner } from './helpers.js';
 
@@ -435,5 +441,44 @@ describe('阶段 4 · 第三节：退回修改与多轮独立记录', () => {
     expect(v3.currentRound).toBe(3);
     expect(v3.rounds.map((r) => r.round)).toEqual([1, 2, 3]);
     expect(v3.rework.permissionSummary).toContain('可联网');
+  });
+});
+
+describe('阶段 4 · 第四节：标准模式读取说明与动态敏感清单展示', () => {
+  it('PlanCard 与 RunView 均展示准确的读取说明，清单动态取自 sensitiveFallbackList 且 RunView 仍只有一个停止按钮', () => {
+    const caps = resolveCapabilities({ constructionMode: 'standard', externalNetwork: 'off', extraWritableDirs: [] });
+    const ep = simulatedPermissions(caps, '/tmp/wt-1');
+    const task: Task = {
+      id: 't-read-copy',
+      request: '测试读取说明',
+      state: 'running',
+      plan: { goal: '测试读取说明', inScope: [], outOfScope: [], criteria: [], risks: [], irreversible: [], capabilities: caps },
+      denied: [],
+      deniedAcks: [],
+      criteria: [],
+      previewed: false,
+      effectivePermissions: ep,
+      timeline: [{ at: '2026-11-10T01:00:00.000Z', kind: 'message', text: '正在工作中' }],
+      createdAt: '2026-11-10T01:00:00.000Z',
+      updatedAt: '2026-11-10T01:00:00.000Z',
+    };
+    const expectedPaths = sensitiveFallbackList('~').map((p) => p.replace(/\\/g, '/'));
+    const tv = buildTaskView(task, { scripts: [], running: true });
+    expect(tv.blockedReadLocations).toEqual(expectedPaths);
+    expect(describePermissions(ep)?.blockedReadLocations).toEqual(expectedPaths);
+
+    const planHtml = renderToStaticMarkup(
+      React.createElement(PlanCard, { projectId: 'p1', task: { ...tv, state: 'planned', running: false }, preferredMode: 'standard', onChanged: () => undefined }),
+    );
+    expect(planHtml).toContain(STANDARD_READ_ACCESS_NOTE);
+    expect(planHtml).toContain('查看被挡住的敏感位置清单');
+    for (const p of expectedPaths) expect(planHtml).toContain(p);
+
+    const runHtml = renderToStaticMarkup(React.createElement(RunView, { task: tv, onStop: () => undefined }));
+    expect(runHtml).toContain(STANDARD_READ_ACCESS_NOTE);
+    expect(runHtml).toContain('查看被挡住的敏感位置清单');
+    for (const p of expectedPaths) expect(runHtml).toContain(p);
+    // RunView 严格维持只有一个 <button>（「停止」）
+    expect([...runHtml.matchAll(/<button\b/g)]).toHaveLength(1);
   });
 });

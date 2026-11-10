@@ -4,7 +4,7 @@
  */
 export const COPY = {
   standardTitle: '标准模式（推荐）',
-  standardDesc: '标准模式：AI 只能修改这个任务的副本；已阻止读取密钥、账号凭证等敏感位置，其他位置 AI 仍可读取；默认不能联网。碰到权限边界时操作会失败，结果里会告诉你。',
+  standardDesc: '标准模式：AI 只能修改这个任务的副本，默认不能联网；读取范围与受保护位置见下方说明。碰到权限边界时操作会失败，结果里会告诉你。',
   fullTrustTitle: '完全信任模式',
   fullTrustDesc: '完全信任模式：AI 拥有你这个账户的全部权限。每个任务开工前都要你单独确认。',
   fullTrustRisk: 'AI 将拥有你这个电脑账户的全部权限：可以读取任何文件、联网、修改项目以外的文件，可能自行推送代码；它读到的内容会发送给 AI 服务商；对项目以外的修改无法撤销。仅对本任务有效。',
@@ -20,7 +20,8 @@ export const COPY = {
   extraDirNone: '没有额外的文件夹：AI 只能修改这个任务的副本。',
   extraDirWritableTag: '可读写',
   extraDirWarn: '这个文件夹不在副本里，AI 会直接修改它，施工中就会变化；停止、放弃、撤销都无法还原这里的改动。',
-  extraDirReadableNote: 'AI 可以读取你电脑上的其他文件（凭证类文件除外）。',
+  extraDirReadableNote: 'AI 可以读取你电脑上的大部分文件。只有常见的密钥和账号凭证位置被挡住（例如 .ssh、云服务凭证）；其他地方保存的密码或密钥文件不在保护范围内。读到的内容会发送给执行者使用的 AI 服务。',
+  blockedReadLocationsSummary: '查看被挡住的敏感位置清单',
   checksTitle: '自动检查',
   checkBuildLabel: '构建检查',
   checkTestLabel: '自动测试',

@@ -94,7 +94,7 @@ describe('阶段 3 · 第一节 3a/4：施工计划确认页与权限现状', ()
       writableRoots: [worktree, outsideNonSensitive],
       summary: 'std',
     })!;
-    expect(desc.lines.join('\n')).toContain('已阻止读取密钥、账号凭证等敏感位置，其他位置 AI 仍可读取');
+    expect(desc.lines.join('\n')).toContain('AI 可以读取你电脑上的大部分文件。只有常见的密钥和账号凭证位置被挡住（例如 .ssh、云服务凭证）；其他地方保存的密码或密钥文件不在保护范围内。读到的内容会发送给执行者使用的 AI 服务。');
   });
 
   it('approved 状态修改验收标准：通过 edit_plan 回到 planned（待开工确认），清除授权并给出提示；重新批准后清除', async () => {
@@ -186,7 +186,7 @@ describe('阶段 3 · 第一节 3a/4：施工计划确认页与权限现状', ()
     expect(html).toContain('改了验收标准，需要重新确认后才能开工');
     expect(html).toContain('/data/shared-assets · 可读写');
     expect(html).toContain('这个文件夹不在副本里，AI 会直接修改它，施工中就会变化；停止、放弃、撤销都无法还原这里的改动。');
-    expect(html).toContain('AI 可以读取你电脑上的其他文件（凭证类文件除外）。');
+    expect(html).toContain('AI 可以读取你电脑上的大部分文件。只有常见的密钥和账号凭证位置被挡住（例如 .ssh、云服务凭证）；其他地方保存的密码或密钥文件不在保护范围内。读到的内容会发送给执行者使用的 AI 服务。');
     expect(html).not.toContain('改为只读');
     expect(html).not.toContain('更换');
     expect(html).not.toContain('导出');

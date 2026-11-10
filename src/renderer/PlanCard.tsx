@@ -258,6 +258,16 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
                         </li>
                       )}
                     </ul>
+                    {task.blockedReadLocations.length > 0 && (
+                      <details className="muted" data-testid="blocked-read-locations" style={{ marginTop: '8px' }}>
+                        <summary style={{ cursor: 'pointer' }}>{COPY.blockedReadLocationsSummary}</summary>
+                        <ul style={{ listStyle: 'none', margin: '6px 0 0', padding: 0, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '2px 10px', fontSize: '12px' }}>
+                          {task.blockedReadLocations.map((loc) => (
+                            <li key={loc}><code>{loc}</code></li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                     {dirError && <p role="alert" className="error" data-testid="extra-dir-error">{dirError}</p>}
                   </div>
                 </div>

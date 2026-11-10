@@ -87,8 +87,11 @@ export function homeDenyList(home = os.homedir()): string[] {
   return [home];
 }
 
+export const STANDARD_READ_ACCESS_NOTE =
+  'AI 可以读取你电脑上的大部分文件。只有常见的密钥和账号凭证位置被挡住（例如 .ssh、云服务凭证）；其他地方保存的密码或密钥文件不在保护范围内。读到的内容会发送给执行者使用的 AI 服务。';
+
 /**
- * 默认读取拒绝清单：固定敏感清单（相对用户主目录）。界面须如实写“已阻止读取这些敏感位置；其他位置 AI 仍可读取”，不得称“已隔离”。
+ * 默认读取拒绝清单：固定敏感清单（相对用户主目录）。界面须如实写明读取边界并由本函数生成清单，不得称“已隔离”。
  * 不含整个 ~/.config（会让 git 对 ~/.config/git/ignore 报警告）；只列凭证类子目录。清单永远不可能完整。
  */
 export function sensitiveFallbackList(home = os.homedir()): string[] {
@@ -98,6 +101,11 @@ export function sensitiveFallbackList(home = os.homedir()): string[] {
     '.codex/auth.json', '.codex/skills',
     'Library/Keychains', 'Library/Application Support/Google/Chrome', 'Library/Application Support/Firefox', 'Library/Safari',
   ].map((r) => path.join(home, r));
+}
+
+/** 界面展示用：从 sensitiveFallbackList('~') 动态生成可读清单（统一正斜杠）。 */
+export function blockedReadLocations(): string[] {
+  return sensitiveFallbackList('~').map((p) => p.replace(/\\/g, '/'));
 }
 
 export function buildStandardMode(o: StandardModeOptions): ModeLaunch {

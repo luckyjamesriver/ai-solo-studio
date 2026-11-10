@@ -1,5 +1,5 @@
 import type { Capabilities } from '../capabilities/model.js';
-import type { EffectivePermissions } from '../executor/modes.js';
+import { blockedReadLocations, STANDARD_READ_ACCESS_NOTE, type EffectivePermissions } from '../executor/modes.js';
 
 export function summarizeCapabilities(caps: Capabilities | undefined): string {
   const mode = caps?.constructionMode === 'full_trust' ? '完全信任' : '标准';
@@ -14,6 +14,8 @@ export interface PermissionSummary {
   modeName: string;
   /** 一句一条的大白话说明 */
   lines: string[];
+  /** 标准模式下实际阻止读取的位置清单（由 sensitiveFallbackList 动态生成） */
+  blockedReadLocations?: string[];
 }
 
 /**
@@ -39,7 +41,8 @@ export function describePermissions(ep: EffectivePermissions | undefined): Permi
     lines: [
       `可修改的位置：${where.join('；')}`,
       net ? (ep.allowedDomains.length ? `联网：已开启，仅限 ${ep.allowedDomains.join('、')}` : '联网：已开启，可访问任意网站') : '联网：不可以',
-      '读取：已阻止读取密钥、账号凭证等敏感位置，其他位置 AI 仍可读取',
+      `读取：${STANDARD_READ_ACCESS_NOTE}`,
     ],
+    blockedReadLocations: blockedReadLocations(),
   };
 }

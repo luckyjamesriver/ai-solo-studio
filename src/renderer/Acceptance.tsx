@@ -277,7 +277,7 @@ export function Acceptance({
       </div>
 
       {activeRound?.feedback && (
-        <p className="muted" data-testid="round-feedback">
+        <p className="muted" data-testid="round-feedback" style={{ whiteSpace: 'pre-line' }}>
           {COPY.roundFeedbackPrefix}{activeRound.feedback}
         </p>
       )}
@@ -401,6 +401,16 @@ export function Acceptance({
               <details className="box">
                 <summary style={{ cursor: 'pointer' }}>这次任务实际生效的权限：{task.permissions.modeName}</summary>
                 <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>{task.permissions.lines.map((l) => <li key={l}>{l}</li>)}</ul>
+                {task.permissions.blockedReadLocations && task.permissions.blockedReadLocations.length > 0 && (
+                  <details className="muted" style={{ marginTop: '6px' }}>
+                    <summary style={{ cursor: 'pointer' }}>{COPY.blockedReadLocationsSummary}</summary>
+                    <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
+                      {task.permissions.blockedReadLocations.map((loc) => (
+                        <li key={loc}><code>{loc}</code></li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </details>
             )}
           </div>

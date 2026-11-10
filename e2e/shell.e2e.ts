@@ -18,6 +18,7 @@ const electronBin = createRequire(import.meta.url)('electron') as string;
 const shotDir = process.env.E2E_SCREENSHOT_DIR;
 const stage2ShotDir = process.env.E2E_STAGE2_SHOT_DIR;
 const stage3ShotDir = process.env.E2E_STAGE3_SHOT_DIR;
+const stage4ShotDir = process.env.E2E_STAGE4_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -73,6 +74,12 @@ const stage2Shot = async (page: Page, name: string) => {
 const stage3Shot = async (page: Page, name: string) => {
   if (!stage3ShotDir) return;
   const target = path.join(stage3ShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
+const stage4Shot = async (page: Page, name: string) => {
+  if (!stage4ShotDir) return;
+  const target = path.join(stage4ShotDir, `${name}.png`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
@@ -233,6 +240,31 @@ async function useFakeExecutor(app: ElectronApplication, script: unknown[]) {
     { codexUrl: distUrl('executor/adapters/codex.js'), codexPath: fileURLToPath(distUrl('executor/adapters/codex.js')), fakePath: fileURLToPath(distUrl('executor/adapters/fake.js')), script },
   );
 }
+async function enableFakeChecks(app: ElectronApplication) {
+  await app.evaluate(
+    async (_e, a) => {
+      const { createRequire } = process.getBuiltinModule('module');
+      const { spawn } = process.getBuiltinModule('child_process');
+      const req = createRequire(a.codexUrl);
+      const { CodexExecutor } = req(a.codexPath);
+      CodexExecutor.prototype.execInSandbox = function (req: { cwd: string; argv: string[]; env?: NodeJS.ProcessEnv }) {
+        return new Promise((resolve) => {
+          const t0 = Date.now();
+          let stdout = '';
+          let stderr = '';
+          const child = spawn(req.argv[0]!, req.argv.slice(1), { cwd: req.cwd, env: req.env, shell: false });
+          child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+          child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+          child.on('error', (e: Error) => resolve({ status: 'unavailable', reason: e.message }));
+          child.on('close', (code: number | null) =>
+            resolve({ status: 'ran', exitCode: code, stdout, stderr, timedOut: false, durationMs: Date.now() - t0 }),
+          );
+        });
+      };
+    },
+    { codexUrl: distUrl('executor/adapters/codex.js'), codexPath: fileURLToPath(distUrl('executor/adapters/codex.js')) },
+  );
+}
 async function openProjectWithFake(proj: string, script: unknown[], data = mk('data')) {
   const a = await launch(data);
   await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
@@ -275,7 +307,7 @@ describe('施工模式界面', () => {
     expect(await a.page.getByTestId('mode-full-trust').isChecked()).toBe(false);
     const planText = await plan.innerText();
     expect(planText).toContain('AI 只能修改这个任务的副本');
-    expect(planText).toContain('其他位置 AI 仍可读取');
+    expect(planText).toContain('AI 可以读取你电脑上的大部分文件。只有常见的密钥和账号凭证位置被挡住（例如 .ssh、云服务凭证）；其他地方保存的密码或密钥文件不在保护范围内。读到的内容会发送给执行者使用的 AI 服务。');
     expect(planText).toContain('允许联网（例如安装依赖）——开启后 AI 可访问任意网站。');
     expect(planText).toContain('允许修改另一个文件夹');
     expect(planText).toContain('这个项目没有自动检查，验收时会显示未检查');
@@ -1303,7 +1335,7 @@ describe('阶段 3：施工计划确认、施工中、停止与中断后页（04
     await a.page.waitForFunction((p) => document.querySelector('[data-testid="extra-dir-list"]')?.textContent?.includes(p), extraDir);
     const planTextExtra = await a.page.getByTestId('plan-card').innerText();
     expect(planTextExtra).toContain('可读写');
-    expect(planTextExtra).toContain('AI 可以读取你电脑上的其他文件（凭证类文件除外）');
+    expect(planTextExtra).toContain('AI 可以读取你电脑上的大部分文件。只有常见的密钥和账号凭证位置被挡住（例如 .ssh、云服务凭证）；其他地方保存的密码或密钥文件不在保护范围内。读到的内容会发送给执行者使用的 AI 服务。');
     expect(planTextExtra).not.toContain('改为只读');
     await stage3Shot(a.page, '02-plan-extra-dir');
 
@@ -1418,5 +1450,147 @@ describe('阶段 3：施工计划确认、施工中、停止与中断后页（04
     await stage3Shot(b.page, '07-failed-interrupted');
     await b.page.getByTestId('go-acceptance-button').click();
     await b.page.getByTestId('result').waitFor({ timeout: 30_000 });
+  });
+});
+
+describe('阶段 4：验收页、检查依据、退回修改、多轮切换与读取说明（07-accept、08-evidence、09-rework）', () => {
+  it('完整闭环：读取说明清单 → 验收未完成 → 检查依据脱敏 → 验收未通过 → 退回修改 → 第 2 轮轮次切换 → 验收通过并保存', async () => {
+    const data = mk('data-s4');
+    const proj = gitProject('s4-review-site', {
+      'package.json': JSON.stringify({
+        name: 's4-review-site',
+        scripts: {
+          build: 'node -e "console.log(\'build ok\')"',
+          test: 'node run-tests.cjs',
+        },
+      }),
+      'run-tests.cjs': [
+        'const fs = require("node:fs");',
+        'const html = fs.readFileSync("index.html", "utf8");',
+        'console.log("> s4-review-site@1.0.0 test");',
+        'console.log("SECRET_API_KEY=sk-proj-e2e-secret-999999");',
+        'console.log("✓ 首页标题渲染正常 (4ms)");',
+        'if (html.includes("round2")) {',
+        '  console.log("✓ 包含 round2 新模块 (2ms)");',
+        '  console.log("Tests 2 passed (2)");',
+        '  process.exit(0);',
+        '} else {',
+        '  console.log("✗ 包含 round2 新模块 (2ms)");',
+        '  console.log("Tests 1 failed | 1 passed (2)");',
+        '  process.exit(1);',
+        '}',
+      ].join('\n'),
+      'index.html': '<h1>initial</h1>\n',
+    });
+
+    const a = await openProjectWithFake(
+      proj,
+      [{ do: 'say', text: '完成第 1 轮改动' }, { do: 'write', path: 'index.html', content: '<h1>round1</h1>\n' }, { do: 'exit', code: 0 }],
+      data,
+    );
+    await enableFakeChecks(a.app);
+    await newTask(a.page, '升级首页并确保全部自动测试通过');
+    await a.page.getByTestId('plan-card').waitFor();
+
+    // 1. 添加两条验收标准，检查新的标准模式读取说明与动态敏感清单
+    await a.page.getByTestId('add-criterion').click();
+    await a.page.getByTestId('criterion-input-0').fill('首页标题清晰可读');
+    await a.page.getByTestId('add-criterion').click();
+    await a.page.getByTestId('criterion-input-1').fill('包含 round2 新模块并通过测试');
+
+    await a.page.locator('[data-testid="blocked-read-locations"] summary').click();
+    const blockedText = await a.page.getByTestId('blocked-read-locations').innerText();
+    expect(blockedText).toContain('~/.ssh');
+    expect(blockedText).toContain('~/.codex/auth.json');
+    await stage4Shot(a.page, '08-read-access-wording');
+
+    // 2. 第 1 轮施工 → 验收未完成
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
+    expect(await a.page.getByTestId('acceptance-status').getAttribute('data-status')).toBe('incomplete');
+    expect(await enabled(a.page, 'save-button')).toBe(false);
+    await stage4Shot(a.page, '01-accept-incomplete');
+
+    // 3. 查看检查依据（#08-evidence）：轮次/时间/沙箱/来源说明/脱敏详细记录
+    await a.page.getByTestId('proof-link-test').click();
+    await a.page.getByTestId('proof-page').waitFor();
+    const proofText = await a.page.getByTestId('proof-page').innerText();
+    expect(proofText).toContain('第 1 轮成果');
+    expect(proofText).toContain('由本应用运行，不是 AI 自报');
+    expect(proofText).toContain('沙箱环境');
+    expect(proofText).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+    expect(proofText).toContain('首页标题渲染正常');
+    expect(proofText).toContain('包含 round2 新模块');
+    expect(await a.page.getByTestId('proof-details').getAttribute('open')).toBeNull();
+    await stage4Shot(a.page, '03-proof-tests');
+
+    await a.page.locator('[data-testid="proof-details"] summary').click();
+    expect(await a.page.getByTestId('proof-details').getAttribute('open')).toBe('');
+    const detailsText = await a.page.getByTestId('proof-details').innerText();
+    expect(detailsText).not.toContain('sk-proj-e2e-secret-999999');
+    expect(detailsText).not.toContain('SECRET_API_KEY');
+    expect(detailsText).not.toContain('s4-review-site@1.0.0');
+    await stage4Shot(a.page, '04-proof-details-expanded');
+    await a.page.getByTestId('proof-back-button').click();
+    await a.page.getByTestId('result').waitFor();
+
+    // 4. 第 1 条「符合」，第 2 条「不符合」并写说明 → 验收未通过（无保存按钮，退回修改为主按钮）
+    await a.page.getByTestId('confirm-c0').click();
+    await a.page.getByTestId('reject-c1').click();
+    await a.page.getByTestId('reject-note-c1').fill('测试第 2 项尚未通过，缺少 round2 标记');
+    await a.page.getByTestId('save-note-c1').click();
+    await a.page.waitForFunction(
+      () =>
+        document.querySelector('[data-testid="acceptance-status"]')?.getAttribute('data-status') === 'failed' &&
+        !document.querySelector('[data-testid="pending-feedback"]') &&
+        !document.querySelector('[data-testid="save-note-c1"]'),
+    );
+    expect(await a.page.getByTestId('save-button').count()).toBe(0);
+    expect(await a.page.getByTestId('rework-button').getAttribute('class')).not.toContain('secondary');
+    await stage4Shot(a.page, '02-accept-failed');
+
+    // 5. 退回修改页（#09-rework）→ 填写反馈 → 第 2 轮施工
+    await a.page.getByTestId('rework-button').click();
+    await a.page.getByTestId('rework-page').waitFor();
+    const reworkText = await a.page.getByTestId('rework-page').innerText();
+    expect(reworkText).toContain('包含 round2 新模块并通过测试');
+    expect(reworkText).toContain('测试第 2 项尚未通过，缺少 round2 标记');
+    expect(reworkText).toContain('沿用上一轮');
+    await a.page.getByTestId('rework-feedback').fill('请补充 round2 新模块并确保测试全部通过');
+    await stage4Shot(a.page, '05-rework');
+
+    await useFakeExecutor(a.app, [{ do: 'say', text: '完成第 2 轮修改' }, { do: 'write', path: 'index.html', content: '<h1>round2</h1>\n' }, { do: 'exit', code: 0 }]);
+    await a.page.getByTestId('rework-start-button').click();
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="round-tab-2"]')?.getAttribute('data-active') === 'true');
+
+    // 验证第 2 轮视图 + 轮次切换器 + 切换查看第 1 轮只读历史
+    expect(await a.page.getByTestId('round-feedback').innerText()).toContain('请补充 round2 新模块');
+    await stage4Shot(a.page, '06-accept-round2-switcher');
+
+    await a.page.getByTestId('round-tab-1').click();
+    await a.page.getByTestId('historical-round-notice').waitFor();
+    expect(await a.page.getByTestId('save-button').count()).toBe(0);
+    await a.page.getByTestId('round-tab-2').click();
+    await a.page.waitForFunction(() => !document.querySelector('[data-testid="historical-round-notice"]'));
+
+    // 返回项目看板确认卡片显示「第 2 轮」，再回到任务页完成第 2 轮验收并保存
+    await a.page.getByTestId('breadcrumb-project').click();
+    await a.page.getByTestId('project').waitFor();
+    expect(await a.page.getByTestId('task-round-badge').innerText()).toContain('第 2 轮');
+    await a.page.locator('.card .card-title').first().click();
+    await a.page.getByTestId('result').waitFor();
+
+    // 6. 第 2 轮两条全部符合 → 验收通过 → 保存到主项目
+    await a.page.getByTestId('confirm-c0').click();
+    await a.page.getByTestId('confirm-c1').click();
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="acceptance-status"]')?.getAttribute('data-status') === 'passed');
+    expect(await enabled(a.page, 'save-button')).toBe(true);
+    await stage4Shot(a.page, '07-accept-passed');
+
+    await a.page.getByTestId('save-button').click();
+    await inState(a.page, 'saved');
+    expect(await a.page.getByTestId('save-record-check').innerText()).toBe('检查通过');
+    expect(readProj(proj)).toBe('<h1>round2</h1>\n');
   });
 });

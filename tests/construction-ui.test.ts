@@ -268,10 +268,15 @@ describe('任务控制器：额外目录', () => {
 describe('生效权限摘要的中文映射', () => {
   const caps = (o: Partial<Parameters<typeof simulatedPermissions>[0]> = {}) => ({ constructionMode: 'standard' as const, externalNetwork: 'off' as const, extraWritableDirs: [], allowedNetworkDomains: [], ...o });
   it('标准 / 联网 / 额外文件夹 / 完全信任 / 没有记录', () => {
-    expect(describePermissions(simulatedPermissions(caps(), '/w/t1'))).toEqual({
-      modeName: '标准模式',
-      lines: ['可修改的位置：任务副本', '联网：不可以', '读取：已阻止读取密钥、账号凭证等敏感位置，其他位置 AI 仍可读取'],
-    });
+    const std = describePermissions(simulatedPermissions(caps(), '/w/t1'))!;
+    expect(std.modeName).toBe('标准模式');
+    expect(std.lines).toEqual([
+      '可修改的位置：任务副本',
+      '联网：不可以',
+      '读取：AI 可以读取你电脑上的大部分文件。只有常见的密钥和账号凭证位置被挡住（例如 .ssh、云服务凭证）；其他地方保存的密码或密钥文件不在保护范围内。读到的内容会发送给执行者使用的 AI 服务。',
+    ]);
+    expect(std.blockedReadLocations?.length).toBeGreaterThan(5);
+    expect(std.blockedReadLocations).toContain('~/.ssh');
     const net = describePermissions(simulatedPermissions(caps({ externalNetwork: 'on', extraWritableDirs: ['/data/out'] }), '/w/t1'))!;
     expect(net.lines[0]).toBe('可修改的位置：任务副本；你选定的文件夹：/data/out');
     expect(net.lines[1]).toBe('联网：已开启，可访问任意网站');

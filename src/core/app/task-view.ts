@@ -5,6 +5,7 @@ import type { TaskState } from '../task/state.js';
 import type { DeniedOperation } from '../executor/types.js';
 import type { FileChange } from '../git/git.js';
 import { describePermissions, type PermissionSummary } from './permission-text.js';
+import { blockedReadLocations } from '../executor/modes.js';
 import { extractIncomplete } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
@@ -83,6 +84,8 @@ export interface TaskView {
   mode: 'standard' | 'full_trust';
   network: boolean;
   extraDirs: ExtraDirView[];
+  /** 标准模式下阻止读取的敏感位置清单（由 sensitiveFallbackList 动态生成） */
+  blockedReadLocations: string[];
   /** 方案批准后修改验收标准导致退回待开工确认时的提示 */
   reapproveNotice: string | null;
   /** 完全信任任务：列表与施工视图持续显示标记 */
@@ -401,6 +404,7 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     mode: caps?.constructionMode ?? 'standard',
     network: caps?.externalNetwork === 'on',
     extraDirs,
+    blockedReadLocations: caps?.constructionMode === 'full_trust' ? [] : blockedReadLocations(),
     reapproveNotice: task.reapproveNotice ?? null,
     fullTrust: caps?.constructionMode === 'full_trust',
     fullTrustConfirmed: !!task.fullTrustConfirmedAt,
