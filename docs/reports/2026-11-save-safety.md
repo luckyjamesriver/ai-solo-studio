@@ -166,4 +166,7 @@
    - **处理**：修正作用域位置并改为 `toMatchObject({ ok: false, reason: 'unchecked_needs_confirm' })`，同时将 `createTrialWorktree` 调用次数改为通过 `vi.mocked(G.createTrialWorktree)` 核对，随后类型检查、单测与 E2E 一次全过。
 
 ### 6.5 补丁提交与 GitHub CI 记录
-- 待推送后补全提交与 CI 运行链接。
+- **补丁提交**：`fix(save): require user confirmation when checks did not run` — [6a9746aa611245b675f736605881b253c527bcfb](https://github.com/luckyjamesriver/ai-solo-studio/commit/6a9746aa611245b675f736605881b253c527bcfb)
+- **CI 运行链接**：[42766167423](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42766167423)（**Success**，双平台通过）
+  1. **`test (ubuntu-latest)`**（[129663056058](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42766167423/job/129663056058)，耗时 40s）：`typecheck`、`npm test`、`npm run build` 全部通过
+  2. **`test (macos-latest)`**（[129663056524](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42766167423/job/129663056524)，耗时 4m31s）：`typecheck`、`npm test`、`npm run build`、`Install Electron binary (macOS)`、`Electron end-to-end (macOS)`（34/34）全部通过
