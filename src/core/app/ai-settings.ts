@@ -66,11 +66,11 @@ export const DEFAULT_GLOBAL_AI_ROLES: GlobalAiRoles = {
   claudeModel: DEFAULT_CLAUDE_API_MODEL,
 };
 
-/** 已知可用的 Anthropic 模型选项，同时允许输入任意模型 ID。 */
+/** 已知可用的当前一代 Anthropic 模型选项（2026-11-11 查证），同时允许输入任意模型 ID。 */
 export const SUGGESTED_CLAUDE_MODELS = [
   DEFAULT_CLAUDE_API_MODEL,
-  'claude-sonnet-4-6',
-  'claude-haiku-4-5',
+  'claude-sonnet-5-5',
+  'claude-haiku-5-5',
 ];
 
 const GLOBAL_ROLES_RECORD_ID = 'ai-roles';

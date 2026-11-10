@@ -21,6 +21,7 @@ import { SaveResultPanel } from '../src/renderer/SaveResultPanel.js';
 import { SaveConflictPage } from '../src/renderer/SaveConflictPage.js';
 import { SaveHistoryPage } from '../src/renderer/SaveHistoryPage.js';
 import { buildSaveHistoryView } from '../src/core/acceptance/history.js';
+import { SUGGESTED_CLAUDE_MODELS, DEFAULT_GLOBAL_AI_ROLES } from '../src/core/app/ai-settings.js';
 import * as G from '../src/core/git/git.js';
 import { makeRepo, tmpDir, testSandboxRunner } from './helpers.js';
 
@@ -675,6 +676,21 @@ describe('阶段 6 提交③：保存记录与撤销界面（#12-history）', ()
       actionLabel: '去处理',
     });
     expect(typeof SaveHistoryPage).toBe('function');
+  });
+});
+
+describe('阶段 6 提交④：设置页 Claude 备选模型列表更新', () => {
+  it('默认与备选 Claude 模型统一采用 2026-11-11 官方当前一代模型 ID（不再滞留 claude-sonnet-4-6 / claude-haiku-4-5）', async () => {
+    expect(DEFAULT_GLOBAL_AI_ROLES.claudeModel).toBe('claude-opus-5-5');
+    expect(SUGGESTED_CLAUDE_MODELS).toEqual([
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+    ]);
+    const settingsSrc = await fs.readFile(path.resolve('src/renderer/SettingsPage.tsx'), 'utf8');
+    expect(settingsSrc).toContain("'claude-sonnet-5-5'");
+    expect(settingsSrc).toContain("'claude-haiku-5-5'");
+    expect(settingsSrc).not.toMatch(/claude-sonnet-4-6|claude-haiku-4-5/);
   });
 });
 

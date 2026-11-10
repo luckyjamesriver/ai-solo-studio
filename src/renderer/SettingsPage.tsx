@@ -426,7 +426,7 @@ export function SettingsPage({
                   style={{ minWidth: '180px' }}
                 />
                 <datalist id={modelListId}>
-                  {(aiSettings?.availableClaudeModels ?? ['claude-opus-5-5', 'claude-sonnet-4-6', 'claude-haiku-4-5']).map((m) => (
+                  {(aiSettings?.availableClaudeModels ?? ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']).map((m) => (
                     <option key={m} value={m} />
                   ))}
                 </datalist>
