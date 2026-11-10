@@ -89,4 +89,6 @@
 6. 首次推送 `rebuild` 的 CI（Run [`42837836184`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42837836184)）在 `ubuntu-latest` 全绿，在 `macos-latest` E2E 执行 `conflict-site` 偶发 `git commit` 遭遇 `.git/index.lock: File exists`（由于 `confirmOverall` 后的 `projectStatus` 触发后台只读 `git status` 未关闭可选锁引起）；在 [`src/core/git/git.ts`](../../src/core/git/git.ts) `hostGitEnv` 加入 `GIT_OPTIONAL_LOCKS: '0'` 后重新跑通全套本地单测与 E2E 并重推 CI。
 
 ### GitHub Actions CI（`rebuild` 分支）
-- 等待新一次双平台 CI 完成并补充链接。
+- 验证运行（`f23692c`，含全部代码、测试、9 张阶段 5 截图与 `GIT_OPTIONAL_LOCKS: '0'` 修复）：[https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42840074027](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42840074027)
+  - `test (ubuntu-latest)`：`success`（[job 129912604885](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42840074027/job/129912604885)，含 `typecheck`、`npm test`、`build`）
+  - `test (macos-latest)`：`success`（[job 129912605259](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42840074027/job/129912605259)，含 `typecheck`、`npm test`、`build` 与 macOS 全部 42 项 Electron E2E）
