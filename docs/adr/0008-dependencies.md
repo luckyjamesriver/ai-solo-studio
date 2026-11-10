@@ -51,5 +51,15 @@
 - proper-lockfile 4.1.2：**用途**：数据目录与项目的跨进程文件锁，是单实例锁之外的第二道保险（ADR 0005 场景 ⑧）。**理由**：跨进程互斥与过期锁处理容易写错；无原生模块。退路：自写基于 mkdir 的锁。
 - zod 4.6.7：**用途**：读取记录时的结构校验（含 schema_version 检查、拒绝无法解析或结构不对的“半成品”）。**理由**：校验规则要与 TypeScript 类型保持一致；零依赖、纯 JS。
 
+### 字体资产（OFL-1.1，随应用渲染层打包，不新增 npm 依赖）
+维护者已批准将 SIL Open Font License 1.1（OFL-1.1）用于以下 4 套随应用离线下发的字体；完整许可证与原作者版权声明文本一并放在 `src/renderer/fonts/`：
+
+| 字体名称 | 用途 | 来源网址 | 版本 | 许可证 | 子集与文件（`src/renderer/fonts/`） |
+|---|---|---|---|---|---|
+| Noto Serif SC | 中文正文字体（UI v2.1 §10）与标题回落 | `https://github.com/google/fonts/tree/main/ofl/notoserifsc`（上游 `https://github.com/notofonts/noto-cjk`） | 2.003 | OFL-1.1 | `NotoSerifSC-VF.woff2`（`2,558,860` B，GB2312 一/二级 + 基础拉丁与界面标点子集；`NotoSerifSC-OFL-1.1.txt`） |
+| Noto Sans SC | 中文标签、小标题、按钮、导航与表单控件字体 | `https://github.com/google/fonts/tree/main/ofl/notosanssc`（上游 `https://github.com/notofonts/noto-cjk`） | 2.004 | OFL-1.1 | `NotoSansSC-VF.woff2`（`1,870,600` B，GB2312 一/二级 + 基础拉丁与界面标点子集；`NotoSansSC-OFL-1.1.txt`） |
+| Lato | 英文正文与界面控件字体 | `https://github.com/google/fonts/tree/main/ofl/lato` | 2.015 | OFL-1.1 | `Lato-Regular.woff2`（`45,564` B）、`Lato-Bold.woff2`（`45,312` B）；`Lato-OFL-1.1.txt` |
+| Instrument Serif | 页面大标题（26px 常规字重） | `https://github.com/google/fonts/tree/main/ofl/instrumentserif`（上游 `https://github.com/Instrument/instrument-serif`） | 1.000 | OFL-1.1 | `InstrumentSerif-Regular.woff2`（`13,312` B）；`InstrumentSerif-OFL-1.1.txt` |
+
 ## 6. 后果
 每次加依赖都有记录可查；许可证问题在合并前暴露。后续任务：实现 CI 许可证检查脚本；对现有依赖按本文口径做一次完整核对。
