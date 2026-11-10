@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type {
   ChiefRoleChoice,
   ClaudeKeySaveResult,
@@ -131,9 +131,10 @@ export function SettingsPage({
   const [roleBusy, setRoleBusy] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
   const [roleNotice, setRoleNotice] = useState<string | null>(null);
+  const rolesDirtyRef = useRef(false);
 
   useEffect(() => {
-    if (!aiSettings) return;
+    if (!aiSettings || rolesDirtyRef.current) return;
     setChiefDraft(aiSettings.roles.chief);
     setReviewerDraft(aiSettings.roles.reviewer);
     setModelDraft(aiSettings.roles.claudeModel);
@@ -184,6 +185,7 @@ export function SettingsPage({
     setKeyNotice(null);
     setRoleNotice(null);
     try {
+      rolesDirtyRef.current = false;
       await onDeleteClaudeKey();
       setSecretDraft('');
       setKeyNotice('已删除 Anthropic API Key；使用 Claude 的角色已自动回退为「未设置」，将在下次讨论前提示重新配置。');
@@ -201,6 +203,7 @@ export function SettingsPage({
     setRoleError(null);
     setRoleNotice(null);
     try {
+      rolesDirtyRef.current = false;
       await onSaveAiRoles(chiefDraft, reviewerDraft, modelDraft);
       setRoleNotice('默认角色设置已保存（已开始中的讨论线程不受影响）。');
     } catch (err) {
@@ -353,6 +356,7 @@ export function SettingsPage({
                   data-testid="global-role-chief"
                   value={chiefDraft}
                   onChange={(e) => {
+                    rolesDirtyRef.current = true;
                     setChiefDraft(e.target.value as ChiefRoleChoice);
                     setRoleError(null);
                     setRoleNotice(null);
@@ -380,6 +384,7 @@ export function SettingsPage({
                   data-testid="global-role-reviewer"
                   value={reviewerDraft}
                   onChange={(e) => {
+                    rolesDirtyRef.current = true;
                     setReviewerDraft(e.target.value as ReviewerRoleChoice);
                     setRoleError(null);
                     setRoleNotice(null);
@@ -419,6 +424,7 @@ export function SettingsPage({
                   data-testid="global-claude-model"
                   value={modelDraft}
                   onChange={(e) => {
+                    rolesDirtyRef.current = true;
                     setModelDraft(e.target.value);
                     setRoleError(null);
                     setRoleNotice(null);

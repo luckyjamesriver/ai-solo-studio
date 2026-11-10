@@ -758,7 +758,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
       ? buildSaveOutcomeView({
           reason: 'abnormal',
           at: t.manualReview.at,
-          saveSteps: effectiveLastSave?.saveSteps ?? defaultSaveSteps(),
+          saveSteps: effectiveLastSave?.saveSteps ?? [],
           ...(t.manualReview.files ? { files: t.manualReview.files } : {}),
         })
       : ctx.saveCheck?.reason === 'project_locked' && (!effectiveLastSave || effectiveLastSave.reason === 'project_locked')
@@ -906,7 +906,10 @@ export function buildSaveOutcomeView(
   snap: LastSaveSnapshot,
   opts: { isUndo?: boolean; failOverride?: OpFail } = {},
 ): SaveOutcomeView {
-  const saveSteps = snap.saveSteps?.length ? snap.saveSteps : defaultSaveSteps();
+  const saveSteps =
+    snap.saveSteps?.length || opts.isUndo || snap.reason === 'abnormal'
+      ? (snap.saveSteps ?? [])
+      : defaultSaveSteps();
   switch (snap.reason) {
     case 'saved':
       return {

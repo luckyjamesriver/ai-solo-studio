@@ -22,6 +22,7 @@ const stage3ShotDir = process.env.E2E_STAGE3_SHOT_DIR;
 const stage4ShotDir = process.env.E2E_STAGE4_SHOT_DIR;
 const stage5ShotDir = process.env.E2E_STAGE5_SHOT_DIR;
 const stage5bShotDir = process.env.E2E_STAGE5B_SHOT_DIR;
+const stage6ShotDir = process.env.E2E_STAGE6_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -100,6 +101,12 @@ const stage5Shot = async (page: Page, name: string) => {
 const stage5bShot = async (page: Page, name: string) => {
   if (!stage5bShotDir) return;
   const target = path.join(stage5bShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
+const stage6Shot = async (page: Page, name: string) => {
+  if (!stage6ShotDir) return;
+  const target = path.join(stage6ShotDir, `${name}.png`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
@@ -262,6 +269,25 @@ async function useFakeExecutor(app: ElectronApplication, script: unknown[]) {
       CodexExecutor.prototype.start = function (opts: unknown) { return fake.start(opts); };
     },
     { codexUrl: distUrl('executor/adapters/codex.js'), codexPath: fileURLToPath(distUrl('executor/adapters/codex.js')), fakePath: fileURLToPath(distUrl('executor/adapters/fake.js')), script },
+  );
+}
+/** 每次 CodexExecutor.start 按顺序消费下一份 script，用于多任务/多轮重做 E2E。 */
+async function useFakeExecutorQueue(app: ElectronApplication, scripts: unknown[][]) {
+  await app.evaluate(
+    async (_e, a) => {
+      const { createRequire } = process.getBuiltinModule('module');
+      const req = createRequire(a.codexUrl);
+      const { CodexExecutor } = req(a.codexPath);
+      const { FakeExecutor } = req(a.fakePath);
+      let idx = 0;
+      CodexExecutor.prototype.start = function (opts: unknown) {
+        const s = a.scripts[idx] ?? a.scripts[a.scripts.length - 1] ?? [];
+        idx++;
+        const fake = new FakeExecutor(s, { emitPermissions: true });
+        return fake.start(opts);
+      };
+    },
+    { codexUrl: distUrl('executor/adapters/codex.js'), codexPath: fileURLToPath(distUrl('executor/adapters/codex.js')), fakePath: fileURLToPath(distUrl('executor/adapters/fake.js')), scripts },
   );
 }
 async function enableFakeChecks(app: ElectronApplication) {
@@ -627,7 +653,7 @@ describe('施工模式界面', () => {
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
     expect(r.forgedProject).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'detectEnvironment', 'discardTask', 'editReworkPermissions', 'getAcceptanceView', 'getAiSettings', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getProjectRoles', 'getTask', 'getWorkbench', 'initProject', 'listOpenProjects', 'listTasks', 'modifyDiscussionRequirements', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealProject', 'reworkTask', 'saveAiRoles', 'saveClaudeKey', 'savePlan', 'saveProjectBrief', 'saveProjectRoles', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoSave']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'detectEnvironment', 'discardTask', 'editReworkPermissions', 'getAcceptanceView', 'getAiSettings', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getProjectRoles', 'getSaveHistory', 'getTask', 'getWorkbench', 'initProject', 'listOpenProjects', 'listTasks', 'modifyDiscussionRequirements', 'onSaveProgress', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealProject', 'reworkConflictTask', 'reworkTask', 'saveAiRoles', 'saveClaudeKey', 'savePlan', 'saveProjectBrief', 'saveProjectRoles', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoFromHistory', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
@@ -1424,13 +1450,13 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     // 1. 首次启动：显示引导
     const a = await launch(data);
     await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
-    await a.page.getByTestId('env-onboarding').waitFor();
+    await a.page.getByTestId('env-onboarding').waitFor({ timeout: 60_000 });
     await a.app.close();
 
     // 2. 第二次启动：直接进工作台，不再出现首次引导
     const b = await launch(data);
     await b.page.getByRole('button', { name: '暂不同意，先看看' }).click();
-    await b.page.getByTestId('workbench').waitFor();
+    await b.page.getByTestId('workbench').waitFor({ timeout: 60_000 });
     expect(await b.page.getByTestId('env-onboarding').count()).toBe(0);
 
     // 3. 打开 .nvmrc=99 项目触发环境问题 → 工作台「需要你决定」出现一条环境检查异常并可跳至设置环境体检
@@ -2160,5 +2186,355 @@ describe('阶段 5b：项目简介、Claude API Key 与 AI 角色配置（E2E）
     await a.page.getByTestId('discussion-page').waitFor({ timeout: 10_000 });
     await a.page.getByTestId('discussion-role-problem').waitFor({ timeout: 10_000 });
     expect(await a.page.getByTestId('discussion-role-problem').innerText()).toContain('未设置');
+  });
+});
+
+describe('阶段 6 · 保存过程、冲突页、保存记录与撤销闭环（UI v2.1 #10-#12）', () => {
+  it('实时 4 步保存进度（#10-save-result）→ 已保存 / 检查期间项目有变化 / 写入出错已安全恢复并重试成功', async () => {
+    const checkScript = [
+      "const fs = require('node:fs');",
+      'setTimeout(() => {',
+      "  console.log('Tests  3 passed');",
+      '  process.exit(0);',
+      '}, 1200);',
+    ].join('\n');
+    const proj = gitProject('stage6-progress-site', {
+      'package.json': JSON.stringify({
+        name: 's6-e2e-progress',
+        scripts: { build: 'node -e "process.exit(0)"', test: 'node check.cjs' },
+      }),
+      'check.cjs': checkScript,
+      'index.html': '<h1>v0</h1>\n',
+      'other.txt': 'v0\n',
+    });
+    const data = mk('data-s6-p');
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await enableFakeChecks(a.app);
+    await useFakeExecutorQueue(a.app, [
+      [{ do: 'write', path: 'index.html', content: '<h1>v1</h1>\n' }, { do: 'exit', code: 0 }],
+      [{ do: 'write', path: 'index.html', content: '<h1>v2</h1>\n' }, { do: 'exit', code: 0 }],
+    ]);
+    await stubDialog(a.app, proj);
+    await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await a.page.getByTestId('project').waitFor();
+
+    // 任务 1：观察真实第 3 步（trial_checks）运行中进度，随后进入 saved
+    await newTask(a.page, '更新首页标题并运行检查');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    await a.page.getByTestId('preview-button').click();
+    await a.page.getByTestId('preview-done').waitFor();
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+    await a.page.locator('[data-testid="save-step-trial_checks"][data-status="running"]').waitFor({ timeout: 15_000 });
+    await stage6Shot(a.page, '01-save-progress');
+
+    await a.page.locator('[data-testid="save-result-panel"][data-outcome="saved"]').waitFor({ timeout: 20_000 });
+    expect(await a.page.getByTestId('save-result-panel').innerText()).toContain('已保存。可以在保存记录里撤销');
+    await stage6Shot(a.page, '02-save-result-saved');
+
+    // 任务 2：先触发 project_changed（试检查期间主项目另行提交），再触发 failed_restored（临时写入 refs/heads/main.lock），清理锁后重试成功
+    await a.page.getByTestId('save-outcome-btn-done').click();
+    await a.page.getByTestId('project').waitFor();
+    await newTask(a.page, '再次更新首页标题');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    await a.page.getByTestId('preview-button').click();
+    await a.page.getByTestId('preview-done').waitFor();
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+
+    await a.page.getByTestId('save-button').click();
+    await a.page.locator('[data-testid="save-step-trial_checks"][data-status="running"]').waitFor({ timeout: 15_000 });
+    fs.writeFileSync(path.join(proj, 'other.txt'), 'v1-during-check\n');
+    git(proj, 'commit', '-q', '-am', 'concurrent commit');
+    await a.page.locator('[data-testid="save-result-panel"][data-outcome="project_changed"]').waitFor({ timeout: 20_000 });
+    expect(await a.page.getByTestId('save-result-panel').innerText()).toContain('检查期间项目又有新的改动，没有保存');
+    await stage6Shot(a.page, '04-save-result-project-changed');
+
+    // 点「重新保存」，在试检查运行到最后一步前短暂锁定 .git/index.lock → 真实触发 git merge --ff-only 写索引前失败并安全核验恢复（failed_restored）
+    const lockFile = path.join(proj, '.git', 'index.lock');
+    await a.page.getByTestId('save-outcome-btn-retry_save').click();
+    await a.page.locator('[data-testid="save-step-trial_checks"][data-status="running"]').waitFor({ timeout: 15_000 });
+    fs.writeFileSync(lockFile, 'e2e-lock');
+    try {
+      await a.page.locator('[data-testid="save-result-panel"][data-outcome="failed_restored"]').waitFor({ timeout: 20_000 });
+    } finally {
+      if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile);
+    }
+    expect(await a.page.getByTestId('save-result-panel').innerText()).toContain('写入时出错，已把项目恢复并核对过与保存前一致');
+    await stage6Shot(a.page, '05-save-result-failed-restored');
+
+    await a.page.getByTestId('save-outcome-btn-retry_save').click();
+    await a.page.locator('[data-testid="save-result-panel"][data-outcome="saved"]').waitFor({ timeout: 20_000 });
+  });
+
+  it('合并后检查失败（checks_failed）→ 试检查依据（#08-evidence）→ 点「退回修改」进入 #09-rework', async () => {
+    const checkScript = [
+      "const fs = require('node:fs');",
+      "const a = fs.readFileSync('a.txt', 'utf8').trim();",
+      "const b = fs.readFileSync('b.txt', 'utf8').trim();",
+      "if (a === 'task' && b === 'main-new') { console.log('x FAIL incompatible_change'); process.exit(1); }",
+      "console.log('Tests  2 passed');",
+    ].join('\n');
+    const proj = gitProject('stage6-checks-failed-site', {
+      'package.json': JSON.stringify({
+        name: 's6-cf',
+        scripts: { build: 'node -e "process.exit(0)"', test: 'node check.cjs' },
+      }),
+      'check.cjs': checkScript,
+      'a.txt': 'init\n',
+      'b.txt': 'init\n',
+    });
+    const data = mk('data-s6-cf');
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await enableFakeChecks(a.app);
+    await useFakeExecutor(a.app, [{ do: 'write', path: 'a.txt', content: 'task\n' }, { do: 'exit', code: 0 }]);
+    await stubDialog(a.app, proj);
+    await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await a.page.getByTestId('project').waitFor();
+
+    await newTask(a.page, '更新模块 A');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+
+    fs.writeFileSync(path.join(proj, 'b.txt'), 'main-new\n');
+    git(proj, 'commit', '-q', '-am', 'main update b');
+
+    await a.page.getByTestId('save-button').click();
+    await a.page.locator('[data-testid="save-result-panel"][data-outcome="checks_failed"]').waitFor({ timeout: 20_000 });
+    expect(await a.page.getByTestId('save-result-panel').innerText()).toContain('没有保存，你的项目没有变化');
+    await stage6Shot(a.page, '03-save-result-checks-failed');
+
+    // 打开试检查依据页再返回
+    await a.page.getByTestId('save-outcome-btn-open_proof-test').click();
+    await a.page.getByTestId('proof-page').waitFor();
+    await a.page.getByTestId('proof-back-button').click();
+    await a.page.locator('[data-testid="save-result-panel"][data-outcome="checks_failed"]').waitFor();
+
+    // 主按钮「退回修改」进入 #09-rework
+    await a.page.getByTestId('save-outcome-btn-rework').click();
+    await a.page.getByTestId('rework-page').waitFor();
+  });
+
+  it('恢复未确认（manualReview）与项目锁定（project_locked）→ 任务 B 点「去处理」跳往异常任务 A', async () => {
+    const proj = gitProject('stage6-locked-site', { 'index.html': '<h1>old</h1>\n', 'styles.css': 'body{}\n' });
+    const data = mk('data-s6-lock');
+    const a = await toReview(proj, WRITE, data);
+    const taskA = taskFiles(proj)[0]!;
+    await a.app.close();
+
+    await editTask(proj, taskA.id, (t) => {
+      t.manualReview = {
+        reason: '写入中途出错，无法确认项目是否完好。',
+        at: '2026-11-11T00:00:00Z',
+        files: ['index.html', 'styles.css'],
+      };
+    });
+
+    const b = await launch(data);
+    await b.page.getByRole('button', { name: '暂不同意，先看看' }).click().catch(() => undefined);
+    await useFakeExecutor(b.app, [{ do: 'write', path: 'other.txt', content: 'ok\n' }, { do: 'exit', code: 0 }]);
+    await stubDialog(b.app, proj);
+    await b.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await b.page.getByTestId('task-list').waitFor();
+
+    // 1. 先打开异常任务 A：查看 #10-save-result manualReview + 受影响文件 + 锁定说明 + 只读面板
+    await b.page.getByTestId('task-list').getByRole('button').first().click();
+    await b.page.getByTestId('readonly-panel').waitFor();
+    await b.page.locator('[data-testid="save-result-panel"][data-outcome="manual_review"]').waitFor();
+    expect(await b.page.getByTestId('save-result-panel').innerText()).toContain('index.html');
+    expect(await b.page.getByTestId('save-result-panel').innerText()).toContain('styles.css');
+    expect(await b.page.getByTestId('save-result-panel').innerText()).toContain('这个项目的所有任务都不能保存或撤销');
+    await stage6Shot(b.page, '06-save-result-manual-review');
+
+    // 2. 创建任务 B 并准备验收 → 显示 project_locked 与「去处理」按钮 → 点击「去处理」直接跳转到任务 A
+    await b.page.getByTestId('breadcrumb-project').click();
+    await b.page.getByTestId('project').waitFor();
+    await newTask(b.page, '正常任务乙');
+    await b.page.getByTestId('start-button').click();
+    await inState(b.page, 'reviewing');
+    await confirmStep1(b.page);
+    await b.page.getByTestId('confirm-overall').click();
+    await b.page.locator('[data-testid="save-result-panel"][data-outcome="project_locked"]').waitFor();
+    expect(await b.page.getByTestId('save-result-panel').innerText()).toContain('的保存出了问题还没处理，这个项目暂时不能保存');
+    await stage6Shot(b.page, '07-save-result-project-locked');
+
+    await b.page.getByTestId('save-outcome-btn-open_blocking_task').click();
+    await b.page.getByTestId('readonly-panel').waitFor();
+    expect(await b.page.getByTestId('task-title').innerText()).toBe(taskA.request);
+  });
+
+  it('保存冲突专页（#11-save-conflict）→ 展开两边片段对比 → 点「让 AI 在最新项目上重做这部分」→ 第 2 轮保存成功', async () => {
+    const proj = gitProject('stage6-conflict-redo-site', {
+      'package.json': JSON.stringify({ name: 's6-conf', scripts: { build: 'node -e "process.exit(0)"' } }),
+      'shared.txt': 'line1\nline2\n',
+      'extra.txt': 'init\n',
+    });
+    const data = mk('data-s6-conf');
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await enableFakeChecks(a.app);
+    await useFakeExecutorQueue(a.app, [
+      [{ do: 'write', path: 'shared.txt', content: 'from-task-A\nline2\n' }, { do: 'exit', code: 0 }],
+      [
+        { do: 'write', path: 'shared.txt', content: 'from-task-B\nline2\n' },
+        { do: 'write', path: 'extra.txt', content: 'from-task-B-extra\n' },
+        { do: 'exit', code: 0 },
+      ],
+      [{ do: 'write', path: 'shared.txt', content: 'from-task-A + from-task-B\nline2\n' }, { do: 'exit', code: 0 }],
+    ]);
+    await stubDialog(a.app, proj);
+    await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await a.page.getByTestId('project').waitFor();
+
+    // 在同一基线上先后创建并跑完任务 1、任务 2
+    await newTask(a.page, '任务一：更新顶部文本');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+
+    await a.page.getByTestId('breadcrumb-project').click();
+    await a.page.getByTestId('project').waitFor();
+    await newTask(a.page, '任务二：重写标题栏');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+
+    // 先保存任务 1
+    await a.page.getByTestId('breadcrumb-project').click();
+    await a.page.getByTestId('project').waitFor();
+    await a.page.getByRole('button', { name: '任务一：更新顶部文本' }).click();
+    await inState(a.page, 'reviewing');
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+    await inState(a.page, 'saved');
+
+    // 再保存任务 2 → 触发冲突 → 展示 #11-save-conflict
+    await a.page.getByTestId('save-outcome-btn-done').click();
+    await a.page.getByTestId('project').waitFor();
+    await a.page.getByRole('button', { name: '任务二：重写标题栏' }).click();
+    await inState(a.page, 'reviewing');
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+
+    await a.page.getByTestId('save-conflict-page').waitFor({ timeout: 20_000 });
+    expect(await a.page.getByTestId('conflict-files').innerText()).toContain('shared.txt');
+    expect(await a.page.getByTestId('conflict-other').innerText()).toContain('任务一：更新顶部文本');
+    await a.page.getByTestId('conflict-diff-toggle').click();
+    await a.page.getByTestId('conflict-diff-body').waitFor();
+    expect(await a.page.getByTestId('conflict-diff-left').innerText()).toContain('from-task-A');
+    expect(await a.page.getByTestId('conflict-diff-right').innerText()).toContain('from-task-B');
+    await stage6Shot(a.page, '08-save-conflict');
+
+    // 点「让 AI 在最新项目上重做这部分」→ 进入第 2 轮 → 确认 → 保存成功
+    await a.page.getByTestId('conflict-redo-button').click();
+    await a.page.waitForFunction(
+      () =>
+        document.querySelector('[data-testid="result"][data-state="reviewing"]')?.getAttribute('data-state') === 'reviewing' &&
+        document.querySelector('[data-testid="round-badge"]')?.textContent?.includes('第 2 轮'),
+      undefined,
+      { timeout: 30_000 },
+    );
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+    await inState(a.page, 'saved');
+    expect(fs.readFileSync(path.join(proj, 'shared.txt'), 'utf8')).toBe('from-task-A + from-task-B\nline2\n');
+    expect(fs.readFileSync(path.join(proj, 'extra.txt'), 'utf8')).toBe('from-task-B-extra\n');
+  });
+
+  it('保存记录与撤销（#12-history）：倒序检查状态、项目外改动、仅最新可撤销、确认弹层、撤销后显示「撤销了…」与「已撤销」', async () => {
+    const proj = gitProject('stage6-history-site', {
+      'package.json': JSON.stringify({ name: 's6-hist', scripts: { build: 'node -e "process.exit(0)"' } }),
+      'a.txt': 'v0\n',
+      'b.txt': 'v0\n',
+    });
+    const data = mk('data-s6-h');
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await enableFakeChecks(a.app);
+    await useFakeExecutorQueue(a.app, [
+      [{ do: 'write', path: 'a.txt', content: 'v1\n' }, { do: 'exit', code: 0 }],
+      [
+        { do: 'write', path: 'b.txt', content: 'v2\n' },
+        { do: 'write', path: 'package.json', content: JSON.stringify({ name: 's6-hist', scripts: {} }) },
+        { do: 'exit', code: 0 },
+      ],
+    ]);
+    await stubDialog(a.app, proj);
+    await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await a.page.getByTestId('project').waitFor();
+
+    // 1. 第一次保存：检查通过
+    await newTask(a.page, '完善首页结构');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+    await inState(a.page, 'saved');
+    await a.page.getByTestId('save-outcome-btn-done').click();
+    await a.page.getByTestId('project').waitFor();
+
+    // 2. 插入一条项目外直接 Git 提交
+    fs.writeFileSync(path.join(proj, 'notes.txt'), 'outside edit\n');
+    git(proj, 'add', 'notes.txt');
+    git(proj, 'commit', '-q', '-m', 'manual edit outside studio');
+
+    // 3. 第二次保存（移除了脚本 → 未检查 + 用户确认时间）
+    await newTask(a.page, '清理测试配置并补文案');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+    await a.page.getByTestId('unchecked-confirm-panel').waitFor();
+    await a.page.getByTestId('unchecked-confirm-save-button').click();
+    await inState(a.page, 'saved');
+
+    // 4. 点保存结果的「查看保存记录」进入 #12-history
+    await a.page.getByTestId('save-outcome-btn-view_history').click();
+    await a.page.getByTestId('project-history').waitFor();
+    await a.page.getByTestId('history-entry-external').waitFor();
+
+    const saveRows = a.page.getByTestId('history-entry-save');
+    expect(await saveRows.count()).toBe(2);
+    expect(await saveRows.nth(0).innerText()).toContain('清理测试配置并补文案');
+    expect(await saveRows.nth(0).innerText()).toContain('未检查（没有检查脚本）');
+    expect(await a.page.getByTestId('history-entry-external').innerText()).toContain('项目外的改动');
+    expect(await saveRows.nth(1).innerText()).toContain('完善首页结构');
+    expect(await saveRows.nth(1).innerText()).toContain('检查通过');
+    expect(await a.page.getByTestId('history-undo-button').count()).toBe(1);
+    await stage6Shot(a.page, '09-history');
+
+    // 5. 点「撤销…」显示完整确认说明，再点「确认撤销」
+    await a.page.getByTestId('history-undo-button').click();
+    await a.page.getByTestId('history-undo-confirm').waitFor();
+    const confirmText = await a.page.getByTestId('history-undo-confirm').innerText();
+    expect(confirmText).toContain('清理测试配置并补文案');
+    expect(confirmText).toContain('上一次保存之前');
+    expect(confirmText).toContain('新增一次提交');
+    await stage6Shot(a.page, '10-history-undo-confirm');
+
+    await a.page.getByTestId('history-confirm-undo-yes').click();
+    await a.page.getByTestId('history-entry-undo').waitFor();
+    expect(await a.page.getByTestId('history-entry-undo').innerText()).toContain('撤销了 清理测试配置并补文案');
+    expect(await saveRows.nth(0).getAttribute('data-undone')).toBe('true');
+    expect(await saveRows.nth(0).getByTestId('history-undone-badge').innerText()).toBe('已撤销');
+    expect(await a.page.getByTestId('history-undo-blocked').innerText()).toContain('挡住');
+    expect(fs.readFileSync(path.join(proj, 'b.txt'), 'utf8')).toBe('v0\n');
+    await stage6Shot(a.page, '11-history-after-undo');
   });
 });

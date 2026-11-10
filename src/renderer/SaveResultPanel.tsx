@@ -75,7 +75,15 @@ export function SaveResultPanel({
       data-reason={outcome.reason}
     >
       <div className="row sb">
-        <h2>{outcome.kind === 'saved' ? '保存结果' : outcome.saveSteps.length === 0 ? '撤销状态' : '保存前检查'}</h2>
+        <h2>
+          {outcome.kind === 'saved'
+            ? '保存结果'
+            : outcome.kind === 'manual_review'
+              ? '保存未确认 · 已暂停操作'
+              : outcome.saveSteps.length === 0
+                ? '撤销状态'
+                : '保存前检查'}
+        </h2>
         <span className={tagClass} data-testid="save-outcome-tag">
           {outcome.tag}
         </span>

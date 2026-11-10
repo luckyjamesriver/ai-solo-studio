@@ -327,7 +327,7 @@ function buildStoppedInfo(task: Task, opts: { running: boolean; worktreeChanges?
     extraDirs.length > 0 || fullTrust ? `${MESSAGES.discardDone}${MESSAGES.discardExtra}` : MESSAGES.discardDone;
 
   return {
-    token: `${task.id}:${task.acceptanceRev ?? 0}:${task.state}:${task.exit?.kind ?? ''}`,
+    token: `${task.id}:${task.currentRound ?? 1}:${task.exit?.kind ?? ''}`,
     reasonLabel,
     reasonDetail,
     isAbnormal,

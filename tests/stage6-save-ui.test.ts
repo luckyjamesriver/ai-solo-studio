@@ -22,6 +22,7 @@ import { SaveConflictPage } from '../src/renderer/SaveConflictPage.js';
 import { SaveHistoryPage } from '../src/renderer/SaveHistoryPage.js';
 import { buildSaveHistoryView } from '../src/core/acceptance/history.js';
 import { SUGGESTED_CLAUDE_MODELS, DEFAULT_GLOBAL_AI_ROLES } from '../src/core/app/ai-settings.js';
+import { buildTaskView } from '../src/core/app/task-view.js';
 import * as G from '../src/core/git/git.js';
 import { makeRepo, tmpDir, testSandboxRunner } from './helpers.js';
 
@@ -691,6 +692,33 @@ describe('阶段 6 提交④：设置页 Claude 备选模型列表更新', () =>
     expect(settingsSrc).toContain("'claude-sonnet-5-5'");
     expect(settingsSrc).toContain("'claude-haiku-5-5'");
     expect(settingsSrc).not.toMatch(/claude-sonnet-4-6|claude-haiku-4-5/);
+  });
+
+  it('停止页 token 在同轮次从 stopped 过渡到 reviewing（含 acceptanceRev 增加）时保持稳定，不弹回停下页', () => {
+    const baseTask = {
+      id: 'task-stop-1',
+      request: '改标题',
+      state: 'stopped' as const,
+      currentRound: 1,
+      acceptanceRev: 0,
+      exit: { kind: 'stopped' as const },
+      denied: [],
+      deniedAcks: [],
+      criteria: [],
+      previewed: false,
+      timeline: [],
+      createdAt: '2026-11-11T00:00:00Z',
+      updatedAt: '2026-11-11T00:00:00Z',
+    };
+    const v1 = buildTaskView(baseTask, { scripts: [], running: false });
+    const v2 = buildTaskView({ ...baseTask, state: 'reviewing', acceptanceRev: 1 }, { scripts: [], running: false });
+    const v3 = buildTaskView({ ...baseTask, state: 'reviewing', acceptanceRev: 2 }, { scripts: [], running: false });
+    expect(v1.stoppedInfo?.token).toBeTruthy();
+    expect(v2.stoppedInfo?.token).toBe(v1.stoppedInfo?.token);
+    expect(v3.stoppedInfo?.token).toBe(v1.stoppedInfo?.token);
+    // 进入下一轮后再停下则生成新的 token，允许下一轮再次呈现停下页
+    const vNextRound = buildTaskView({ ...baseTask, state: 'stopped', currentRound: 2, acceptanceRev: 2 }, { scripts: [], running: false });
+    expect(vNextRound.stoppedInfo?.token).not.toBe(v1.stoppedInfo?.token);
   });
 });
 
