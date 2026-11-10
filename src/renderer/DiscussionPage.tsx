@@ -990,11 +990,21 @@ export function DiscussionViewBody({
               </span>
               <span className="muted">耗时</span>
               <span data-testid="budget-duration">{view.budget.durationSec} 秒</span>
+              {view.budget.hasTokenUsage && (
+                <>
+                  <span className="muted">Token 用量</span>
+                  <span data-testid="budget-tokens">
+                    输入 {view.budget.inputTokens.toLocaleString()} / 输出 {view.budget.outputTokens.toLocaleString()}
+                  </span>
+                </>
+              )}
               <span className="muted">费用</span>
               <span data-testid="budget-cost">
                 {view.budget.knownCostUsd !== null
                   ? `$${view.budget.knownCostUsd.toFixed(4)}`
-                  : '仅按次数与时长统计'}
+                  : view.budget.hasTokenUsage
+                    ? '不估算金额（仅统计 token 与次数）'
+                    : '仅按次数与时长统计'}
               </span>
             </div>
             <p className="muted" style={{ marginTop: '8px' }}>

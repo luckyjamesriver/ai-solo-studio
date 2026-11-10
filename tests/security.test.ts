@@ -246,12 +246,12 @@ describe('安全基线（防回归）', () => {
   });
 
   it('M3-A2：流程引擎与交接模块只依赖 Thinker 接口，不引用任何具体思考者实现', () => {
-    const concrete = /ClaudeCliThinker|CodexThinker|FakeThinker|claude-cli(?:\.js)?['"]|\/codex(?:\.js)?['"]|\/fake(?:\.js)?['"]|DEV_PERSONAL_ENV/;
+    const concrete = /ClaudeApiThinker|ClaudeCliThinker|CodexThinker|FakeThinker|claude-api(?:\.js)?['"]|claude-cli(?:\.js)?['"]|\/codex(?:\.js)?['"]|\/fake(?:\.js)?['"]|DEV_PERSONAL_ENV/;
     const files = [...walk('src/core/thinking/flow'), ...walk('src/core/thinking/handoff')].filter((x) => /\.ts$/.test(x));
     expect(files.length).toBeGreaterThan(5);
     for (const f of files) expect(read(f), f).not.toMatch(concrete);
     // 具体实现只允许出现在入口层（cli/presets.ts）
-    const users = walk('src/core/thinking').filter((x) => /\.ts$/.test(x) && concrete.test(read(x)) && !/thinking\/(claude-cli|codex|fake|index)\.ts$/.test(x));
+    const users = walk('src/core/thinking').filter((x) => /\.ts$/.test(x) && concrete.test(read(x)) && !/thinking\/(claude-api|claude-cli|codex|fake|index)\.ts$/.test(x));
     expect(users.map((u) => path.relative('src/core/thinking', u))).toEqual(['cli/presets.ts']);
     // 断言自身有效：样例确实会被匹配
     expect("import { CodexThinker } from '../codex.js';").toMatch(concrete);

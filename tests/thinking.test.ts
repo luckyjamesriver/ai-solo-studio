@@ -3,9 +3,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import http from 'node:http';
 import {
-  FakeThinker, CodexThinker, ClaudeCliThinker, claudeCliArgs, buildThinkPrompt, parseStructured, classifyServiceError, DEV_PERSONAL_ENV,
-  type OutputSchema, type ThinkRequest,
+  FakeThinker,
+  CodexThinker,
+  ClaudeCliThinker,
+  ClaudeApiThinker,
+  DEFAULT_CLAUDE_API_MODEL,
+  ANTHROPIC_API_VERSION,
+  claudeCliArgs,
+  buildThinkPrompt,
+  parseStructured,
+  classifyServiceError,
+  DEV_PERSONAL_ENV,
+  type OutputSchema,
+  type ThinkRequest,
 } from '../src/core/thinking/index.js';
 import { tmpDir } from './helpers.js';
 
@@ -235,5 +247,133 @@ describe('ClaudeCliThinker（假 claude）', () => {
 
   it('超时 → timeout', async () => {
     expect((await make('hang', { timeoutMs: 400 }).thinker.think(req())).status).toBe('timeout');
+  });
+});
+
+describe('ClaudeApiThinker（本地假 Anthropic API）', () => {
+  async function startMockApi(
+    responder: (req: { headers: http.IncomingHttpHeaders; body: Record<string, unknown> }, res: http.ServerResponse) => void,
+  ) {
+    const captured: Array<{ headers: http.IncomingHttpHeaders; body: Record<string, unknown> }> = [];
+    const server = http.createServer((incoming, res) => {
+      const chunks: Buffer[] = [];
+      incoming.on('data', (c) => chunks.push(c as Buffer));
+      incoming.on('end', () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>;
+        captured.push({ headers: incoming.headers, body });
+        responder({ headers: incoming.headers, body }, res);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = (server.address() as { port: number }).port;
+    return {
+      url: `http://127.0.0.1:${port}/v1/messages`,
+      captured,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it('请求不含 tools，默认使用当前官方模型与版本头；支持 thinking 块前置，记录 token 用量但不虚构费用', async () => {
+    const SECRET = 'sk-ant-CANARY-THINKER-2468';
+    const srv = await startMockApi((_r, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          id: 'msg_1',
+          type: 'message',
+          model: DEFAULT_CLAUDE_API_MODEL,
+          stop_reason: 'end_turn',
+          content: [
+            { type: 'thinking', thinking: 'internal chain' },
+            { type: 'text', text: '{"verdict":"ok","points":["方案清晰"]}' },
+            { type: 'tool_use', id: 'tu_1', name: 'Read', input: { path: '/etc/passwd' } },
+          ],
+          usage: { input_tokens: 320, output_tokens: 85 },
+        }),
+      );
+    });
+    try {
+      const thinker = new ClaudeApiThinker({
+        endpoint: srv.url,
+        getSecret: async () => SECRET,
+      });
+      expect((await thinker.detect()).available).toBe(true);
+      expect(thinker.service).toBe('Anthropic');
+
+      const r = await thinker.think(req());
+      expect(r.status).toBe('complete');
+      expect(r.content).toEqual({ verdict: 'ok', points: ['方案清晰'] });
+      expect(r.model).toBe(DEFAULT_CLAUDE_API_MODEL);
+      expect(r.usage).toEqual({ inputTokens: 320, outputTokens: 85 });
+      expect(r.usage?.costUsd).toBeUndefined(); // 不虚构金额
+      expect(r.refusedToolRequests).toEqual(['Read']);
+
+      const sentReq = srv.captured[0]!;
+      expect(sentReq.headers['anthropic-version']).toBe(ANTHROPIC_API_VERSION);
+      expect(sentReq.headers['x-api-key']).toBe(SECRET);
+      expect(sentReq.body.model).toBe(DEFAULT_CLAUDE_API_MODEL);
+      expect(sentReq.body.tools).toBeUndefined();
+      expect(sentReq.body.temperature).toBeUndefined();
+
+      // 模型可配置
+      const custom = new ClaudeApiThinker({
+        endpoint: srv.url,
+        model: 'claude-sonnet-4-6',
+        getSecret: async () => SECRET,
+      });
+      await custom.think(req());
+      expect(srv.captured[1]!.body.model).toBe('claude-sonnet-4-6');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('错误分类：Key 无效 / 额度用尽 / 限流 / 网络错误 / 超时 / 缺 Key，且绝不泄露 Key', async () => {
+    const SECRET = 'sk-ant-CANARY-ERR-1357';
+    let nextStatus = 401;
+    let nextBody: unknown = { type: 'error', error: { type: 'authentication_error', message: `bad key ${SECRET}` } };
+
+    const srv = await startMockApi((_r, res) => {
+      if (nextStatus === 0) return; // intentionally hang for timeout test
+      res.writeHead(nextStatus, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(nextBody));
+    });
+    try {
+      const thinker = new ClaudeApiThinker({ endpoint: srv.url, getSecret: async () => SECRET });
+
+      // 401 -> auth_error 且 Key 被脱敏
+      const rAuth = await thinker.think(req());
+      expect(rAuth.status).toBe('auth_error');
+      expect(rAuth.error).not.toContain(SECRET);
+      expect(rAuth.rawText).not.toContain(SECRET);
+
+      // 402 billing_error -> quota_exhausted
+      nextStatus = 402;
+      nextBody = { type: 'error', error: { type: 'billing_error', message: 'credit balance is too low' } };
+      expect((await thinker.think(req())).status).toBe('quota_exhausted');
+
+      // 529 overloaded_error -> rate_limited
+      nextStatus = 529;
+      nextBody = { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } };
+      expect((await thinker.think(req())).status).toBe('rate_limited');
+
+      // 超时 -> timeout
+      nextStatus = 0;
+      expect((await thinker.think(req({ timeoutMs: 120 }))).status).toBe('timeout');
+
+      // 网络错误 -> failed 且含网络错误描述
+      const offline = new ClaudeApiThinker({ endpoint: 'http://127.0.0.1:1/v1/messages', getSecret: async () => SECRET });
+      const rNet = await offline.think(req());
+      expect(rNet.status).toBe('failed');
+      expect(rNet.error).toContain('网络错误');
+      expect(rNet.error).not.toContain(SECRET);
+
+      // 缺 Key -> auth_error 且 detect 不可用
+      const noKey = new ClaudeApiThinker({ endpoint: srv.url, getSecret: async () => null });
+      expect((await noKey.detect()).available).toBe(false);
+      expect((await noKey.think(req())).status).toBe('auth_error');
+    } finally {
+      await srv.close();
+    }
   });
 });

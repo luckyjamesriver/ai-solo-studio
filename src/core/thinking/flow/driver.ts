@@ -74,9 +74,12 @@ export interface DiscussionBudgetView {
   callsMax: number;
   durationSec: number;
   maxDurationSec: number;
-  /** 仅当实际返回了费用数据的思考者参与时才提供；只用次数计量的实现（如 Codex）为 null，绝不虚构金额 */
+  /** 仅当实际返回了费用数据的思考者参与时才提供；只用次数/token 计量的实现绝不虚构金额 */
   knownCostUsd: number | null;
   maxCostUsd: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  hasTokenUsage: boolean;
 }
 
 export interface DiscussionSnapshot {
@@ -249,6 +252,11 @@ function formatBudget(rec: ThreadRecord): DiscussionBudgetView {
   const durationMs = rec.attempts.reduce((s, a) => s + a.durationMs, 0);
   const costAttempts = rec.attempts.filter((a) => typeof a.usage?.costUsd === 'number');
   const knownCostUsd = costAttempts.length > 0 ? costAttempts.reduce((s, a) => s + (a.usage?.costUsd ?? 0), 0) : null;
+  const tokenAttempts = rec.attempts.filter(
+    (a) => typeof a.usage?.inputTokens === 'number' || typeof a.usage?.outputTokens === 'number',
+  );
+  const inputTokens = tokenAttempts.reduce((s, a) => s + (a.usage?.inputTokens ?? 0), 0);
+  const outputTokens = tokenAttempts.reduce((s, a) => s + (a.usage?.outputTokens ?? 0), 0);
   return {
     callsUsed,
     callsMax: rec.budget.maxCalls,
@@ -256,6 +264,9 @@ function formatBudget(rec: ThreadRecord): DiscussionBudgetView {
     maxDurationSec: Math.round(rec.budget.maxTotalCallMs / 1000),
     knownCostUsd,
     maxCostUsd: rec.budget.maxCostUsd ?? null,
+    inputTokens,
+    outputTokens,
+    hasTokenUsage: tokenAttempts.length > 0,
   };
 }
 

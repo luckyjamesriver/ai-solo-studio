@@ -895,3 +895,34 @@ describe('阶段 5b 提交①：项目简介作为普通项目必带层', () => 
     expect(briefView.readOnlyNote).toBe('本项目使用 docs/PROJECT_CONTEXT.md');
   });
 });
+
+describe('阶段 5b 提交③：Claude API token 用量展示（零虚构金额）', () => {
+  it('仅有 token 用量而无 API 费用字段时，只显示输入/输出 token 数与不估算提示，不显示虚假美元金额', async () => {
+    const planner = scripted();
+    const origThink = planner.think.bind(planner);
+    planner.think = async (req) => ({
+      ...(await origThink(req)),
+      usage: { inputTokens: 1200, outputTokens: 340 },
+    });
+    const { ctl } = await makeTempCtl({ planner });
+    const created = await ctl.create('测试只显示 token 用量');
+    await ctl.startDiscussion(created.id, 'codex-single');
+    await ctl.waitDiscussion(created.id);
+    const consentV = await ctl.getDiscussionView(created.id);
+    await ctl.confirmDiscussionSend(created.id, consentV.pendingConsentService!, true);
+    await ctl.waitDiscussion(created.id);
+
+    const view = await ctl.getDiscussionView(created.id);
+    expect(view.budget.hasTokenUsage).toBe(true);
+    expect(view.budget.inputTokens).toBe(1200);
+    expect(view.budget.outputTokens).toBe(340);
+    expect(view.budget.knownCostUsd).toBeNull();
+
+    const html = renderDiscussBody(view);
+    expect(html).toContain('Token 用量');
+    expect(html).toMatch(/1,?200/);
+    expect(html).toContain('340');
+    expect(html).toContain('不估算金额（仅统计 token 与次数）');
+    expect(html).not.toMatch(/\$\d+\.\d+/);
+  });
+});

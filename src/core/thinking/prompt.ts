@@ -2,10 +2,10 @@ import type { OutputSchema, SchemaNode, SentItem, ThinkRequest } from './types.j
 
 const bytes = (s: string) => Buffer.byteLength(s, 'utf8');
 
-/** 构造发给思考者的完整提示词，并同时给出发送资料清单（名称+字节数）。 */
-export function buildThinkPrompt(req: ThinkRequest): { prompt: string; sent: SentItem[] } {
+/** 构造发给思考者的 system 与 user 分段提示词、合并文本及发送资料清单（名称+字节数）。 */
+export function buildThinkPromptParts(req: ThinkRequest): { system: string; user: string; prompt: string; sent: SentItem[] } {
   const sent: SentItem[] = [];
-  const parts: string[] = [];
+  const userParts: string[] = [];
   const add = (layer: SentItem['layer'], name: string, text: string) => sent.push({ name, bytes: bytes(text), layer });
 
   const system = [
@@ -14,21 +14,20 @@ export function buildThinkPrompt(req: ThinkRequest): { prompt: string; sent: Sen
     '硬性规则：你没有任何工具。不要读写文件、不要运行命令、不要联网搜索，也不要请求这些能力。只能依据下面提供的资料回答；资料不够时，在输出里列出你还需要哪些证据，不要自己编造事实。',
   ].join('\n');
   add('system', 'system', system);
-  parts.push(system);
 
   const section = (layer: 'required' | 'optional', title: string, items: { name: string; text: string }[]) => {
     if (!items.length) return;
-    parts.push(`\n## ${title}`);
+    userParts.push(`## ${title}`);
     for (const it of items) {
       add(layer, it.name, it.text);
-      parts.push(`\n### 资料：${it.name}\n${it.text}`);
+      userParts.push(`\n### 资料：${it.name}\n${it.text}`);
     }
   };
   section('required', '必带资料（项目目标与不变约束）', req.context.required);
   section('optional', '按需资料（与当前任务相关）', req.context.optional ?? []);
 
   add('task', 'task', req.task);
-  parts.push(`\n## 本次任务\n${req.task}`);
+  userParts.push(`\n## 本次任务\n${req.task}`);
 
   const format = [
     '\n## 输出格式',
@@ -36,9 +35,16 @@ export function buildThinkPrompt(req: ThinkRequest): { prompt: string; sent: Sen
     JSON.stringify(req.output, null, 2),
   ].join('\n');
   add('system', 'output-schema', format);
-  parts.push(format);
+  userParts.push(format);
 
-  return { prompt: parts.join('\n'), sent };
+  const user = userParts.join('\n').trim();
+  return { system, user, prompt: `${system}\n\n${user}`, sent };
+}
+
+/** 构造发给思考者的完整提示词，并同时给出发送资料清单（名称+字节数）。 */
+export function buildThinkPrompt(req: ThinkRequest): { prompt: string; sent: SentItem[] } {
+  const { prompt, sent } = buildThinkPromptParts(req);
+  return { prompt, sent };
 }
 
 function validateNode(node: SchemaNode, v: unknown, path: string, errs: string[]): void {

@@ -1,12 +1,12 @@
+import {
+  ANTHROPIC_API_VERSION,
+  ANTHROPIC_MESSAGES_URL,
+  DEFAULT_CLAUDE_API_MODEL,
+  redactSecret,
+} from '../thinking/claude-api.js';
 import { AppStore, type AppStoreOptions } from './app-store.js';
 
-/** 默认 Anthropic Messages 模型（2026-11-10 查证：https://platform.claude.com/docs/en/about-claude/models/overview）。 */
-export const DEFAULT_CLAUDE_API_MODEL = 'claude-opus-5-5';
-
-/** 当前 Anthropic API 版本请求头（2026-11-10 查证：https://platform.claude.com/docs/en/api/versioning）。 */
-export const ANTHROPIC_API_VERSION = '2026-10-21';
-
-export const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+export { ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL, DEFAULT_CLAUDE_API_MODEL, redactSecret };
 
 const CLAUDE_KEY_RECORD_ID = 'claude-api-key';
 
@@ -36,15 +36,6 @@ export interface ValidateClaudeKeyOptions {
   endpoint?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
-}
-
-/** 隐去已知密钥值以及任何 `sk-ant-...` 样式片段，防止密钥泄漏到报错、日志或界面文案中。 */
-export function redactSecret(text: string, secret?: string): string {
-  let out = text;
-  if (secret && secret.length > 0) {
-    out = out.split(secret).join('[已隐去密钥]');
-  }
-  return out.replace(/sk-ant-[A-Za-z0-9_-]{6,}/g, '[已隐去密钥]');
 }
 
 function summarizeAnthropicHttpError(
