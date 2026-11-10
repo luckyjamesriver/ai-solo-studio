@@ -23,6 +23,7 @@ const stage4ShotDir = process.env.E2E_STAGE4_SHOT_DIR;
 const stage5ShotDir = process.env.E2E_STAGE5_SHOT_DIR;
 const stage5bShotDir = process.env.E2E_STAGE5B_SHOT_DIR;
 const stage6ShotDir = process.env.E2E_STAGE6_SHOT_DIR;
+const stage7ShotDir = process.env.E2E_STAGE7_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -107,6 +108,12 @@ const stage5bShot = async (page: Page, name: string) => {
 const stage6Shot = async (page: Page, name: string) => {
   if (!stage6ShotDir) return;
   const target = path.join(stage6ShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
+const stage7Shot = async (page: Page, name: string) => {
+  if (!stage7ShotDir) return;
+  const target = path.join(stage7ShotDir, `${name}.png`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
@@ -2536,5 +2543,193 @@ describe('阶段 6 · 保存过程、冲突页、保存记录与撤销闭环（U
     expect(await a.page.getByTestId('history-undo-blocked').innerText()).toContain('挡住');
     expect(fs.readFileSync(path.join(proj, 'b.txt'), 'utf8')).toBe('v0\n');
     await stage6Shot(a.page, '11-history-after-undo');
+  });
+});
+
+describe('阶段 7：外部执行交接与各轮代码保留（E2E）', () => {
+  it('导出确认 → 外部执行等待页与工作台不计入待决定 → 导入不符只读 → 导入绑定含工作树实际差异并保存 → 退回修改双选择', async () => {
+    const proj = gitProject('stage7-handoff-site', {
+      'package.json': JSON.stringify({ name: 's7-handoff', scripts: { test: 'node -e "process.exit(0)"' } }),
+      'index.html': '<h1>首页 v0</h1>\n<footer>old</footer>\n',
+    });
+    const reportDir = mk('s7-reports');
+    const data = mk('data-s7-handoff');
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await enableFakeChecks(a.app);
+    await stubDialog(a.app, proj);
+    await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await a.page.getByTestId('project').waitFor();
+
+    // 1. 创建任务 → 跳过讨论进入施工计划确认页 → 点「交给外部工具执行」弹出确认说明
+    await newTask(a.page, '请用外部工具更新页脚');
+    await a.page.getByTestId('external-handoff-button').click();
+    await a.page.getByTestId('external-confirm-panel').waitFor();
+    const dialogText = await a.page.getByTestId('external-confirm-panel').innerText();
+    expect(dialogText).toContain('导出的只是任务说明');
+    expect(dialogText).toContain('只在导出后给出的任务副本文件夹里工作');
+    expect(dialogText).toContain('导入不等于通过');
+    await stage7Shot(a.page, '01-external-confirm-dialog');
+
+    // 2. 确认导出 → 进入外部执行等待页，显示副本路径、task.md 路径及按钮
+    await a.page.getByTestId('external-confirm-export').click();
+    await a.page.getByTestId('external-waiting-page').waitFor({ timeout: 20_000 });
+    const wtPath = (await a.page.getByTestId('handoff-worktree-path').innerText()).trim();
+    const taskFileRel = (await a.page.getByTestId('handoff-taskfile-path').innerText()).trim();
+    expect(taskFileRel).toMatch(/\.studio\/handoff\/.+\/task\.md$/);
+    expect(fs.existsSync(path.join(proj, taskFileRel))).toBe(true);
+    await stage7Shot(a.page, '02-external-waiting');
+
+    // 3. 切回待我处理工作台：显示在正在运行分组且标为「外部执行中」，「需要你决定」角标为 0
+    await a.page.getByTestId('nav-workbench').click();
+    await a.page.getByTestId('workbench').waitFor();
+    expect(await a.page.getByTestId('workbench').innerText()).toContain('需要你决定（0）');
+    expect(await a.page.getByTestId('wb-running').innerText()).toContain('外部执行中');
+    await stage7Shot(a.page, '03-workbench-external-badge');
+
+    // 从工作台进入任务，校验导入「不符（mismatch）」只读限制
+    await a.page.locator('[data-testid^="wb-act-"]').first().click();
+    await a.page.getByTestId('external-waiting-page').waitFor();
+
+    const realRepo = fs.realpathSync(proj);
+    const realWt = fs.realpathSync(wtPath);
+    const tRec = taskFiles(proj)[0]!;
+    const branch = tRec.worktree!.branch as string;
+    const baseSha = tRec.worktree!.baseSha as string;
+
+    const badReport = path.join(reportDir, 'bad-mismatch.txt');
+    fs.writeFileSync(
+      badReport,
+      [
+        `任务编号：${tRec.id}`,
+        `仓库：${realRepo}`,
+        '分支：wrong-external-branch',
+        `工作树路径：${realWt}`,
+        `开始 HEAD：${baseSha}`,
+        `结束 HEAD：${baseSha}`,
+        '声称已完成修改。',
+      ].join('\n'),
+    );
+    await stubDialog(a.app, badReport);
+    await a.page.getByTestId('handoff-import-button').click();
+    await a.page.getByTestId('handoff-import-mismatch').waitFor({ timeout: 20_000 });
+    expect(await a.page.getByTestId('handoff-mismatch-list').innerText()).toContain('wrong-external-branch');
+    expect(await a.page.getByTestId('handoff-import-button').innerText()).toContain('重新导入报告');
+    await stage7Shot(a.page, '04-import-mismatch-readonly');
+
+    // 4. 在外部副本中写入实际修改（故意未提交，且报告声称已提交）→ 导入已绑定报告 → 显示工作树实际差异与「外部工具的报告，仅供参考」
+    fs.writeFileSync(path.join(wtPath, 'index.html'), '<h1>首页 v0</h1>\n<footer>外部工具已完成页脚</footer>\n');
+    const goodReport = path.join(reportDir, 'good-bound.md');
+    fs.writeFileSync(
+      goodReport,
+      [
+        `任务编号：${tRec.id}`,
+        `仓库：${realRepo}`,
+        `分支：${branch}`,
+        `工作树路径：${realWt}`,
+        `开始 HEAD：${baseSha}`,
+        `结束 HEAD：${baseSha}`,
+        '',
+        '已经更新页脚文案，已提交并通过自测。',
+      ].join('\n'),
+    );
+    await stubDialog(a.app, goodReport);
+    await a.page.getByTestId('handoff-import-button').click();
+    await inState(a.page, 'reviewing');
+    await a.page.getByTestId('external-reality-warning').waitFor();
+    expect(await a.page.getByTestId('external-report-badge').innerText()).toBe('外部工具的报告，仅供参考');
+    expect(await a.page.getByTestId('external-report-text').innerText()).toContain('已经更新页脚文案');
+    await stage7Shot(a.page, '05-external-acceptance');
+
+    // 5. 点「退回修改」验证可选「再次交给外部工具」与「改由 Codex 继续」
+    await a.page.getByTestId('rework-button').click();
+    await a.page.getByTestId('rework-page').waitFor();
+    expect(await a.page.getByTestId('rework-external-button').innerText()).toBe('再次交给外部工具');
+    expect(await a.page.getByTestId('rework-codex-button').innerText()).toBe('改由 Codex 继续');
+    await stage7Shot(a.page, '06-external-rework-choice');
+
+    // 取消返回验收并保存成果回主项目
+    await a.page.getByTestId('rework-cancel-button').click();
+    await inState(a.page, 'reviewing');
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+    await inState(a.page, 'saved');
+    expect(fs.readFileSync(path.join(proj, 'index.html'), 'utf8')).toContain('外部工具已完成页脚');
+    await stage7Shot(a.page, '07-external-saved');
+  });
+
+  it('冲突重做进入第 2 轮后仍可切回第 1 轮从 refs/studio/rounds 查看第 1 轮原始代码改动', async () => {
+    const proj = gitProject('stage7-round-refs-site', {
+      'package.json': JSON.stringify({ name: 's7-rounds', scripts: { build: 'node -e "process.exit(0)"' } }),
+      'shared.txt': 'line1\nline2\n',
+    });
+    const data = mk('data-s7-rounds');
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await enableFakeChecks(a.app);
+    await useFakeExecutorQueue(a.app, [
+      [{ do: 'write', path: 'shared.txt', content: 'from-A\nline2\n' }, { do: 'exit', code: 0 }],
+      [{ do: 'write', path: 'shared.txt', content: 'from-B-r1\nline2\n' }, { do: 'exit', code: 0 }],
+      [{ do: 'write', path: 'shared.txt', content: 'from-A + from-B-r2\nline2\n' }, { do: 'exit', code: 0 }],
+    ]);
+    await stubDialog(a.app, proj);
+    await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
+    await a.page.getByTestId('project').waitFor();
+
+    // A、B 均在基线开工
+    await newTask(a.page, '先发任务 A');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    await a.page.getByTestId('breadcrumb-project').click();
+    await a.page.getByTestId('project').waitFor();
+
+    await newTask(a.page, '冲突任务 B');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    await a.page.getByTestId('breadcrumb-project').click();
+    await a.page.getByTestId('project').waitFor();
+
+    // 保存 A
+    await a.page.getByRole('button', { name: '先发任务 A' }).click();
+    await inState(a.page, 'reviewing');
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+    await inState(a.page, 'saved');
+    await a.page.getByTestId('save-outcome-btn-done').click();
+    await a.page.getByTestId('project').waitFor();
+
+    // 保存 B 遇冲突 → 点「让 AI 在最新项目上重做这部分」进第 2 轮
+    await a.page.getByRole('button', { name: '冲突任务 B' }).click();
+    await inState(a.page, 'reviewing');
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+    await a.page.getByTestId('save-conflict-page').waitFor({ timeout: 20_000 });
+
+    await a.page.getByTestId('conflict-redo-button').click();
+    await a.page.waitForFunction(
+      () =>
+        document.querySelector('[data-testid="result"][data-state="reviewing"]')?.getAttribute('data-state') === 'reviewing' &&
+        document.querySelector('[data-testid="round-badge"]')?.textContent?.includes('第 2 轮'),
+      undefined,
+      { timeout: 30_000 },
+    );
+
+    // 校验 refs/studio/rounds/<taskB>/1 与 /2 均真实写入 Git 引用
+    const bTask = taskFiles(proj).find((t) => t.request === '冲突任务 B')!;
+    const refsOut = execFileSync('git', ['for-each-ref', '--format=%(refname)', `refs/studio/rounds/${bTask.id}/`], { cwd: proj, encoding: 'utf8' });
+    expect(refsOut).toContain(`refs/studio/rounds/${bTask.id}/1`);
+    expect(refsOut).toContain(`refs/studio/rounds/${bTask.id}/2`);
+
+    // 切回第 1 轮，仍可完整看到第 1 轮改动内容 from-B-r1（未被 worktree 更新覆盖）
+    await a.page.getByTestId('round-tab-1').click();
+    await a.page.getByTestId('historical-round-notice').waitFor();
+    expect(await a.page.getByTestId('changes').innerText()).toContain('from-B-r1');
+    await stage7Shot(a.page, '08-round1-historical-diff');
   });
 });
