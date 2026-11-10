@@ -103,9 +103,17 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
     try { onChanged(await studio().startTask(projectId, task.id, true)); } catch (e) { fail(e); }
   };
   const cancelTrust = async () => {
-    setShowTrust(false);
     setMode('standard');
-    try { onChanged(await studio().savePlan(projectId, task.id, form('standard'))); } catch (e) { fail(e); }
+    const p = studio().savePlan(projectId, task.id, form('standard'));
+    savePromiseRef.current = p;
+    try {
+      onChanged(await p);
+    } catch (e) {
+      fail(e);
+    } finally {
+      if (savePromiseRef.current === p) savePromiseRef.current = null;
+      setShowTrust(false);
+    }
   };
 
   return (
