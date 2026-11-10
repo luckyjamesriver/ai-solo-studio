@@ -9,7 +9,7 @@ import { Acceptance } from './Acceptance.js';
 const BUSY = ['running', 'exec_succeeded', 'exec_failed', 'stopped', 'timed_out'];
 
 /** 任务区：新建任务、任务列表、选中任务的计划卡 / 施工视图 / 结果。 */
-export function Tasks() {
+export function Tasks({ projectId }: { projectId: string }) {
   const [tasks, setTasks] = useState<TaskView[]>([]);
   const [preferred, setPreferred] = useState<'standard' | 'full_trust'>('standard');
   const [selected, setSelected] = useState<string | null>(null);
@@ -22,7 +22,7 @@ export function Tasks() {
   const refresh = useCallback(() => {
     const seq = ++refreshSeq.current;
     studio()
-      .listTasks()
+      .listTasks(projectId)
       .then((r) => {
         if (!mountedRef.current || seq !== refreshSeq.current) return;
         setTasks(r.tasks);
@@ -32,7 +32,7 @@ export function Tasks() {
         if (!mountedRef.current || seq !== refreshSeq.current) return;
         setError(e.message);
       });
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -60,14 +60,14 @@ export function Tasks() {
     setError(null);
     try {
       refreshSeq.current++;
-      const t = await studio().createTask(request);
+      const t = await studio().createTask(projectId, request);
       refreshSeq.current++;
       upsert(t);
       setSelected(t.id);
       setRequest('');
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
-  const stop = async () => { if (current) try { upsert(await studio().stopTask(current.id)); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } };
+  const stop = async () => { if (current) try { upsert(await studio().stopTask(projectId, current.id)); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } };
 
   return (
     <section aria-labelledby="task-h" data-testid="tasks">
@@ -95,8 +95,8 @@ export function Tasks() {
           {current.running || current.state === 'running'
             ? <RunView task={current} onStop={stop} />
             : ['draft', 'planned', 'approved'].includes(current.state)
-              ? <PlanCard key={current.id} task={current} preferredMode={preferred} onChanged={(t) => { upsert(t); refresh(); }} />
-              : <Acceptance key={current.id} task={current} onChanged={refresh} />}
+              ? <PlanCard key={current.id} projectId={projectId} task={current} preferredMode={preferred} onChanged={(t) => { upsert(t); refresh(); }} />
+              : <Acceptance key={current.id} projectId={projectId} task={current} onChanged={refresh} />}
         </div>
       )}
     </section>

@@ -56,10 +56,36 @@ export class TaskController {
 
   constructor(private readonly o: ControllerOptions) {}
 
+  get repoPath(): string {
+    return this.o.repo;
+  }
+
   /** 懒创建：第一次真正用到任务功能时才取得执行体 */
   private r(): TaskRunner {
     this.runner ??= new TaskRunner({ repo: this.o.repo, executor: this.o.makeExecutor(), ...(this.o.storeOptions ? { storeOptions: this.o.storeOptions } : {}) });
     return this.runner;
+  }
+
+  /** 打开并取得本项目的持久化存储实例（取得 APFS/目录锁并完成存储对账）。 */
+  openRecordStore() {
+    return this.r().store.recordStore();
+  }
+
+  isTaskActive(id: string): boolean {
+    return this.active.has(id) || this.ops.has(id);
+  }
+
+  async listTasksRaw(): Promise<Task[]> {
+    await this.ready();
+    return this.r().store.list();
+  }
+
+  /** 是否仍有任务在施工、启停或保存/撤销/放弃等独占操作中。 */
+  async hasRunningTasks(): Promise<boolean> {
+    if (this.active.size > 0 || this.ops.size > 0) return true;
+    await this.ready();
+    const tasks = await this.r().store.list();
+    return tasks.some((t) => t.state === 'running' || this.r().isBusy(t.id));
   }
 
   private async view(t: Task): Promise<TaskView> {
@@ -229,7 +255,7 @@ export class TaskController {
   /** 用户验收视图：计算实时判定（保存前提、撤销条件、改动片段），再交给 view.ts 生成 */
   private async acceptanceView(t: Task): Promise<UserAcceptanceView> {
     const runner = this.r();
-    const busy = this.ops.has(t.id) || runner.isBusy(t.id);
+    const busy = this.active.has(t.id) || this.ops.has(t.id) || runner.isBusy(t.id);
     const ctx: ViewContext = { busy };
     if (t.worktree?.path) {
       try {

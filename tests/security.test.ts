@@ -274,11 +274,10 @@ describe('安全基线（防回归）', () => {
     // B3-2 修订（任务界面必需的新 API；原清单是前 8 项）：清单仍然固定，参数形态逐一列出——
     // 只允许 编号 / 布尔 / 需求文字 / 计划表单（文字、模式、布尔）/ 选项键；任何参数都不得叫 path/dir/folder/file，
     // 额外文件夹由主进程弹系统选择框取得，渲染进程不传路径。
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
-    expect(entries).toHaveLength(29);
-    // B4-2 修订（只增不减）：新增 10 个方法（9 个验收操作 + 1 个无参数的 revealProject）；新增的参数形态只有
-    // “编号 / 条目编号 / 验收版本（字符串）”，原有形态一个不变。
-    const SHAPES = ['', 'id: string', 'consent: boolean', 'request: string', 'id: string, plan: PlanInput', 'id: string, key: string', 'id: string, ack: boolean', 'id: string, version: string', 'id: string, itemId: string, version: string'];
+    // 阶段 2 第一部分修订（A3，仅同步方法清单/参数形态）：每个任务、项目状态与验收方法最前面加 projectId: string，并登记 projects:listOpen / projects:close / workbench:get 三个方法，不得出现宽松类型。
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
+    expect(entries).toHaveLength(32);
+    const SHAPES = ['', 'id: string', 'projectId: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
       expect(e.params, `${e.name} 不得有路径类参数`).not.toMatch(/\b(?:path|paths|dir|dirs|folder|file|filename|cwd|url)\b\s*:/i);
@@ -290,7 +289,7 @@ describe('安全基线（防回归）', () => {
     // 每个 IPC 通道在主进程中都有处理函数，且主进程处理函数的参数形态同样固定
     const main = read('src/main/index.ts');
     for (const e of entries) expect(main, e.channel).toContain(`ipcMain.handle('${e.channel}'`);
-    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, consent: unknown', '_e, request: unknown', '_e, id: unknown, plan: unknown', '_e, id: unknown, key: unknown', '_e, id: unknown, ack: unknown', '_e, id: unknown, version: unknown', '_e, id: unknown, itemId: unknown, version: unknown'];
+    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, projectId: unknown', '_e, consent: unknown', '_e, projectId: unknown, request: unknown', '_e, projectId: unknown, id: unknown', '_e, projectId: unknown, id: unknown, plan: unknown', '_e, projectId: unknown, id: unknown, key: unknown', '_e, projectId: unknown, id: unknown, ack: unknown', '_e, projectId: unknown, id: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown'];
     for (const m of main.matchAll(/ipcMain\.handle\('[^']+',\s*(?:async\s*)?\(([^)]*)\)/g)) {
       expect(MAIN_SHAPES, m[1]).toContain(m[1]);
     }
@@ -459,21 +458,24 @@ describe('安全基线（防回归）', () => {
       }
     });
 
-    it('新增 IPC 的 preload 方法：参数只有 id / itemId / version（字符串），revealProject 无参数；主进程处理函数与通道一一对应', () => {
+    it('新增 IPC 的 preload 方法：参数只有已打开项目编号 / id / itemId / version（字符串），revealProject / listOpenProjects / getWorkbench 无参数；主进程处理函数与通道一一对应', () => {
       const preload = read('src/preload/index.cts');
       const NEW: Record<string, string> = {
-        getAcceptanceView: 'id: string',
-        openPreview: 'id: string, version: string',
-        skipPreview: 'id: string, version: string',
-        confirmCriterion: 'id: string, itemId: string, version: string',
-        confirmOverall: 'id: string, version: string',
-        ackDenied: 'id: string, itemId: string, version: string',
-        recheck: 'id: string',
-        saveTask: 'id: string, version: string',
-        saveUncheckedTask: 'id: string, version: string',
-        discardTask: 'id: string',
-        undoSave: 'id: string',
-        retryCleanup: 'id: string',
+        listOpenProjects: '',
+        closeProject: 'projectId: string',
+        getWorkbench: '',
+        getAcceptanceView: 'projectId: string, id: string',
+        openPreview: 'projectId: string, id: string, version: string',
+        skipPreview: 'projectId: string, id: string, version: string',
+        confirmCriterion: 'projectId: string, id: string, itemId: string, version: string',
+        confirmOverall: 'projectId: string, id: string, version: string',
+        ackDenied: 'projectId: string, id: string, itemId: string, version: string',
+        recheck: 'projectId: string, id: string',
+        saveTask: 'projectId: string, id: string, version: string',
+        saveUncheckedTask: 'projectId: string, id: string, version: string',
+        discardTask: 'projectId: string, id: string',
+        undoSave: 'projectId: string, id: string',
+        retryCleanup: 'projectId: string, id: string',
         revealProject: '',
       };
       for (const [name, params] of Object.entries(NEW)) {
@@ -661,8 +663,8 @@ describe('安全基线（防回归）', () => {
         }
       }
       const preload = read('src/preload/index.cts');
-      expect(preload).toMatch(/^\s{2}saveUncheckedTask: \(id: string, version: string\) => ipcRenderer\.invoke\('acceptance:saveUnchecked', id, version\),/m);
-      expect(main).toMatch(/ipcMain\.handle\('acceptance:saveUnchecked', async \(_e, id: unknown, version: unknown\) => \(await tasks\(\)\)\.saveUncheckedTask\(id, version\)\);/);
+      expect(preload).toMatch(/^\s{2}saveUncheckedTask: \(projectId: string, id: string, version: string\) => ipcRenderer\.invoke\('acceptance:saveUnchecked', projectId, id, version\),/m);
+      expect(main).toMatch(/ipcMain\.handle\('acceptance:saveUnchecked', \(_e, projectId: unknown, id: unknown, version: unknown\) => controllerFor\(projectId\)\.saveUncheckedTask\(id, version\)\);/);
 
       const ctl = stripComments(read('src/core/app/task-controller.ts'));
       expect(ctl).toMatch(/private async runSave\(id: unknown, version: unknown, confirmUnchecked: boolean\)/);
@@ -781,6 +783,71 @@ describe('安全基线（防回归）', () => {
       expect(s4).toMatchObject({ ok: false, message: MESSAGES.acceptanceInvalid });
       expect(u4).toMatchObject({ ok: false, message: MESSAGES.acceptanceInvalid });
       expect(fs.readFileSync(path.join(f4.repo, 'index.html'), 'utf8')).toBe('old\n');
+    });
+  });
+
+  describe('阶段 2 第一部分：多项目归属校验（只增不减）', () => {
+    it('每个接收 projectId 的 IPC 处理函数都先校验 projectId 在已打开项目表中', () => {
+      const handlerPattern = /ipcMain\.handle\('([^']+)',\s*\(([^)]*)\)\s*=>\s*([^\n]+)\);/g;
+      const guarded = [...main.matchAll(handlerPattern)].filter((m) => /\bprojectId\b/.test(m[2]!));
+      // 1 个 projects:close + 1 个 project:status + 8 个 tasks:* + 12 个 acceptance:* = 22 个带 projectId 的处理函数
+      expect(guarded).toHaveLength(22);
+      const validBody = /^(?:controllerFor\(projectId\)\.\w+\(|projectStatus\(projectId\)|openProjects\.close\(projectId\))/;
+      for (const m of guarded) {
+        expect(m[3], `handler ${m[1]} 必须首先通过 openProjects 校验 projectId`).toMatch(validBody);
+      }
+      // 底层入口 controllerFor / projectStatus / openProjects.close 都先经过 openProjects.require(projectId)
+      expect(main).toMatch(/function controllerFor\(projectId: unknown\): TaskController \{\s*return openProjects\.require\(projectId\)\.controller;\s*\}/);
+      expect(main).toMatch(/async function projectStatus\(projectId: unknown\) \{\s*const entry = openProjects\.setActive\(projectId\);/);
+      const openMgr = stripComments(read('src/core/app/open-projects.ts'));
+      expect(openMgr).toMatch(/setActive\(projectId: unknown\)[\s\S]*?const entry = this\.require\(projectId\);/);
+      expect(openMgr).toMatch(/async close\(projectId: unknown\)[\s\S]*?const entry = this\.require\(projectId\);/);
+      expect(openMgr).toContain('const PROJECT_ID_RE = /^[a-z0-9-]{1,64}$/;');
+      // 断言自身有效：跳过 openProjects 校验的样例会被拦截
+      expect('controller.saveTask(id, version)').not.toMatch(validBody);
+    });
+
+    it('伪造或未打开的 projectId 调用 OpenProjectManager 时立即被拒绝且不触碰已打开项目', async () => {
+      const os = await import('node:os');
+      const { OpenProjectManager } = await import('../src/core/app/open-projects.js');
+      const { TaskController } = await import('../src/core/app/task-controller.js');
+      const { TaskPrefs } = await import('../src/core/app/prefs.js');
+      const { FakeExecutor } = await import('../src/core/executor/adapters/fake.js');
+
+      const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-sec-proj-')));
+      const data = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-sec-data-')));
+      try {
+        const ctl = new TaskController({
+          repo,
+          makeExecutor: () => new FakeExecutor([]),
+          pickDirectory: async () => null,
+          prefs: new TaskPrefs(data),
+        });
+        let closed = false;
+        const mgr = new OpenProjectManager<{ close(): Promise<void> }>();
+        mgr.open({
+          id: 'open-proj-1',
+          path: repo,
+          controller: ctl,
+          recordStore: {
+            close: async () => {
+              closed = true;
+            },
+          },
+        });
+
+        for (const forged of ['../evil', '../../etc/passwd', 'OPEN-UPPER', 'unopened-proj', '', null, 123] as unknown[]) {
+          expect(() => mgr.require(forged)).toThrow(/无效的项目编号|找不到这个已打开的项目/);
+          expect(() => mgr.setActive(forged)).toThrow(/无效的项目编号|找不到这个已打开的项目/);
+          await expect(mgr.close(forged)).rejects.toThrow(/无效的项目编号|找不到这个已打开的项目/);
+        }
+        expect(mgr.size).toBe(1);
+        expect(mgr.activeId).toBe('open-proj-1');
+        expect(closed).toBe(false);
+      } finally {
+        fs.rmSync(repo, { recursive: true, force: true });
+        fs.rmSync(data, { recursive: true, force: true });
+      }
     });
   });
 });

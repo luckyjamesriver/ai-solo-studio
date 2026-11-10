@@ -417,20 +417,23 @@ describe('施工模式界面', () => {
     const a = await openProjectWithFake(proj, []);
     const r = await a.page.evaluate(async () => {
       type Fn = (...x: unknown[]) => Promise<unknown>;
-      const s = (window as unknown as { studio: { createTask: Fn; savePlan: Fn; startTask: Fn; getTask: Fn } }).studio;
-      const t = (await s.createTask('x')) as { id: string };
+      const s = (window as unknown as { studio: { listOpenProjects: () => Promise<{ id: string }[]>; createTask: Fn; savePlan: Fn; startTask: Fn; getTask: Fn } }).studio;
+      const projectId = (await s.listOpenProjects())[0]!.id;
+      const t = (await s.createTask(projectId, 'x')) as { id: string };
       const bad = async (f: () => Promise<unknown>) => f().then(() => 'ok', (e: Error) => e.message);
       return {
-        badMode: await bad(() => s.savePlan(t.id, { goal: 'g', criteria: [], mode: 'yolo', network: false })),
-        fullTrustNoAck: await (async () => { await s.savePlan(t.id, { goal: 'g', criteria: [], mode: 'full_trust', network: false }); return bad(() => s.startTask(t.id, false)); })(),
-        badId: await bad(() => s.getTask('../../etc/passwd')),
+        badMode: await bad(() => s.savePlan(projectId, t.id, { goal: 'g', criteria: [], mode: 'yolo', network: false })),
+        fullTrustNoAck: await (async () => { await s.savePlan(projectId, t.id, { goal: 'g', criteria: [], mode: 'full_trust', network: false }); return bad(() => s.startTask(projectId, t.id, false)); })(),
+        badId: await bad(() => s.getTask(projectId, '../../etc/passwd')),
+        forgedProject: await bad(() => s.getTask('nonexistent-project', t.id)),
         apis: Object.keys(s).sort(),
       };
     });
     expect(r.badMode).toContain('无效的模式');
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'saveUncheckedTask', 'skipPreview', 'startTask', 'stopTask', 'undoSave']);
+    expect(r.forgedProject).toContain('找不到');
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'getWorkbench', 'initProject', 'listOpenProjects', 'listTasks', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'saveUncheckedTask', 'skipPreview', 'startTask', 'stopTask', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
@@ -565,9 +568,10 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     fs.writeFileSync(path.join(proj, 'later.txt'), 'x');
     // 撤销条件由主进程实时判定：直接向主进程取最新视图
     const v = await a.page.evaluate(async () => {
-      const s = (window as unknown as { studio: { listTasks: () => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (id: string) => Promise<{ actions: { undo: { enabled: boolean; reason?: string } } }> } }).studio;
-      const t = (await s.listTasks()).tasks[0]!;
-      return s.getAcceptanceView(t.id);
+      const s = (window as unknown as { studio: { listOpenProjects: () => Promise<{ id: string }[]>; listTasks: (projectId: string) => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (projectId: string, id: string) => Promise<{ actions: { undo: { enabled: boolean; reason?: string } } }> } }).studio;
+      const projectId = (await s.listOpenProjects())[0]!.id;
+      const t = (await s.listTasks(projectId)).tasks[0]!;
+      return s.getAcceptanceView(projectId, t.id);
     });
     expect(v.actions.undo.enabled).toBe(false);
     expect(v.actions.undo.reason).toBe('这次保存之后项目还有其他修改，暂时不能只撤销这一项');
@@ -630,9 +634,10 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     await a.page.getByTestId('confirm-overall').click();
     await a.page.getByTestId('save-files').waitFor();
     const r = await a.page.evaluate(async () => {
-      const s = (window as unknown as { studio: { listTasks: () => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (id: string) => Promise<{ actions: { save: { enabled: boolean; files?: string[] } } }> } }).studio;
-      const t = (await s.listTasks()).tasks[0]!;
-      return s.getAcceptanceView(t.id);
+      const s = (window as unknown as { studio: { listOpenProjects: () => Promise<{ id: string }[]>; listTasks: (projectId: string) => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (projectId: string, id: string) => Promise<{ actions: { save: { enabled: boolean; files?: string[] } } }> } }).studio;
+      const projectId = (await s.listOpenProjects())[0]!.id;
+      const t = (await s.listTasks(projectId)).tasks[0]!;
+      return s.getAcceptanceView(projectId, t.id);
     });
     expect(r.actions.save.enabled).toBe(false);
     expect(r.actions.save.files).toEqual(['notes.txt']);
@@ -683,25 +688,28 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
     const r = await a.page.evaluate(async () => {
       type Fn = (...x: unknown[]) => Promise<{ ok: boolean; message: string; view: { version: string } }>;
-      const s = (window as unknown as { studio: { listTasks: () => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (id: string) => Promise<{ version: string }>; saveTask: Fn; saveUncheckedTask: Fn; confirmCriterion: Fn } }).studio;
-      const id = (await s.listTasks()).tasks[0]!.id;
-      const version = (await s.getAcceptanceView(id)).version;
-      await s.saveTask(id, version);
-      const both = await Promise.all([s.saveUncheckedTask(id, version), s.saveUncheckedTask(id, version)]);
+      const s = (window as unknown as { studio: { listOpenProjects: () => Promise<{ id: string }[]>; listTasks: (projectId: string) => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (projectId: string, id: string) => Promise<{ version: string }>; saveTask: Fn; saveUncheckedTask: Fn; confirmCriterion: Fn } }).studio;
+      const projectId = (await s.listOpenProjects())[0]!.id;
+      const id = (await s.listTasks(projectId)).tasks[0]!.id;
+      const version = (await s.getAcceptanceView(projectId, id)).version;
+      await s.saveTask(projectId, id, version);
+      const both = await Promise.all([s.saveUncheckedTask(projectId, id, version), s.saveUncheckedTask(projectId, id, version)]);
       const bad = (f: () => Promise<unknown>) => f().then(() => 'ok', (e: Error) => e.message);
       return {
         oks: both.filter((x) => x.ok).length,
         others: both.filter((x) => !x.ok).map((x) => x.message),
-        forgedVersion: await bad(() => s.saveTask(id, 'latest')),
-        forgedUncheckedVersion: await bad(() => s.saveUncheckedTask(id, 'latest')),
-        forgedId: await bad(() => s.saveTask('../x', version)),
-        forgedItem: await bad(() => s.confirmCriterion(id, 'exit', version)),
+        forgedVersion: await bad(() => s.saveTask(projectId, id, 'latest')),
+        forgedUncheckedVersion: await bad(() => s.saveUncheckedTask(projectId, id, 'latest')),
+        forgedId: await bad(() => s.saveTask(projectId, '../x', version)),
+        forgedProject: await bad(() => s.saveTask('../evil', id, version)),
+        forgedItem: await bad(() => s.confirmCriterion(projectId, id, 'exit', version)),
       };
     });
     expect(r.oks).toBe(1);
     expect(r.forgedVersion).toContain('无效的参数');
     expect(r.forgedUncheckedVersion).toContain('无效的参数');
     expect(r.forgedId).toContain('无效的参数');
+    expect(r.forgedProject).toContain('无效的项目编号');
     expect(r.forgedItem).toContain('无效的参数');
     expect(git(proj, 'rev-list', '--count', 'HEAD').toString().trim()).toBe('3'); // 初始 + 任务提交 + 合并提交，只保存了一次
   });
@@ -1012,5 +1020,99 @@ describe('环境体检', () => {
       expect(await a.page.getByTestId('via-node').innerText()).toContain('通过补全路径找到');
       expect(await a.app.evaluate(() => process.env.PATH)).toBe(minimal);
     }
+  });
+});
+
+describe('多项目后台（阶段 2 第一部分）', () => {
+  it('同时打开两个项目分别创建/运行任务互不干扰；施工中关闭被拒绝；停止后可关闭且可重开；伪造 projectId 被拒绝', async () => {
+    const p1 = gitProject('multi-a', { 'a.txt': 'a\n' });
+    const p2 = gitProject('multi-b', { 'b.txt': 'b\n' });
+    const a = await openProjectWithFake(p1, [{ do: 'hang' }]);
+    await stubDialog(a.app, p2);
+
+    const res = await a.page.evaluate(async () => {
+      type AnyStudio = {
+        chooseProject: () => Promise<{ kind: string; status: { id: string; name: string } }>;
+        listOpenProjects: () => Promise<{ id: string; name: string; runningCount: number }[]>;
+        createTask: (projectId: string, req: string) => Promise<{ id: string }>;
+        savePlan: (projectId: string, id: string, plan: { goal: string; criteria: string[]; mode: 'standard'; network: boolean }) => Promise<unknown>;
+        startTask: (projectId: string, id: string, ack: boolean) => Promise<unknown>;
+        stopTask: (projectId: string, id: string) => Promise<unknown>;
+        getTask: (projectId: string, id: string) => Promise<{ state: string }>;
+        listTasks: (projectId: string) => Promise<{ tasks: { id: string; request: string; state: string }[] }>;
+        getWorkbench: () => Promise<{ counts: { needsDecision: number; running: number; recentEnded: number }; running: { projectId: string; taskName: string }[] }>;
+        closeProject: (projectId: string) => Promise<{ ok: boolean; reason?: string }>;
+        projectStatus: (projectId: string) => Promise<{ id: string; name: string }>;
+      };
+      const s = (window as unknown as { studio: AnyStudio }).studio;
+      const open1 = (await s.listOpenProjects())[0]!;
+      const opened2 = await s.chooseProject();
+      const open2 = opened2.status;
+      const bothOpen = await s.listOpenProjects();
+
+      const t1 = await s.createTask(open1.id, '项目A持续施工');
+      await s.savePlan(open1.id, t1.id, { goal: '项目A持续施工', criteria: [], mode: 'standard', network: false });
+      const t2 = await s.createTask(open2.id, '项目B计划');
+      await s.startTask(open1.id, t1.id, false);
+      for (let i = 0; i < 100; i++) {
+        if ((await s.getTask(open1.id, t1.id)).state === 'running') break;
+        await new Promise((r) => setTimeout(r, 30));
+      }
+
+      const wbRunning = await s.getWorkbench();
+      const closeBusy = await s.closeProject(open1.id);
+      const list1 = await s.listTasks(open1.id);
+      const list2 = await s.listTasks(open2.id);
+
+      const forged = await s.listTasks('../evil').then(() => 'ok', (e: Error) => e.message);
+      const unknown = await s.closeProject('nonexistent-proj').then(() => 'ok', (e: Error) => e.message);
+
+      await s.stopTask(open1.id, t1.id);
+      for (let i = 0; i < 100; i++) {
+        if ((await s.getTask(open1.id, t1.id)).state !== 'running') break;
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      let closeIdle = await s.closeProject(open1.id);
+      for (let i = 0; i < 50 && !closeIdle.ok; i++) {
+        await new Promise((r) => setTimeout(r, 30));
+        closeIdle = await s.closeProject(open1.id);
+      }
+      const afterClose = await s.listOpenProjects();
+      return {
+        open1Id: open1.id,
+        open2Id: open2.id,
+        bothLen: bothOpen.length,
+        wbRunningCount: wbRunning.counts.running,
+        wbRunningProject: wbRunning.running[0]?.projectId,
+        closeBusy,
+        list1Len: list1.tasks.length,
+        list2Len: list2.tasks.length,
+        forged,
+        unknown,
+        closeIdle,
+        afterCloseIds: afterClose.map((p) => p.id),
+      };
+    });
+
+    expect(res.bothLen).toBe(2);
+    expect(res.wbRunningCount).toBe(1);
+    expect(res.wbRunningProject).toBe(res.open1Id);
+    expect(res.closeBusy.ok).toBe(false);
+    expect(res.closeBusy.reason).toContain('正在施工');
+    expect(res.list1Len).toBe(1);
+    expect(res.list2Len).toBe(1);
+    expect(res.forged).toContain('无效的项目编号');
+    expect(res.unknown).toContain('找不到');
+    expect(res.closeIdle).toEqual({ ok: true });
+    expect(res.afterCloseIds).toEqual([res.open2Id]);
+
+    await stubDialog(a.app, p1);
+    const reopened = await a.page.evaluate(async () => {
+      const s = (window as unknown as { studio: { chooseProject: () => Promise<{ kind: string; status: { id: string } }>; listOpenProjects: () => Promise<{ id: string }[]> } }).studio;
+      const r = await s.chooseProject();
+      const list = await s.listOpenProjects();
+      return { kind: r.kind, id: r.status.id, count: list.length };
+    });
+    expect(reopened).toEqual({ kind: 'opened', id: res.open1Id, count: 2 });
   });
 });

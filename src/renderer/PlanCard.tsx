@@ -23,7 +23,7 @@ function TrustPanel({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: 
 }
 
 /** 计划卡：模式二选一（默认标准）、扩展权限（仅标准模式）、将运行的检查。 */
-export function PlanCard({ task, preferredMode, onChanged }: { task: TaskView; preferredMode: 'standard' | 'full_trust'; onChanged: (t: TaskView) => void }) {
+export function PlanCard({ projectId, task, preferredMode, onChanged }: { projectId: string; task: TaskView; preferredMode: 'standard' | 'full_trust'; onChanged: (t: TaskView) => void }) {
   const hasPlan = task.state !== 'draft';
   const [goal, setGoal] = useState(task.goal);
   const [criteria, setCriteria] = useState(task.criteria.join('\n'));
@@ -41,31 +41,31 @@ export function PlanCard({ task, preferredMode, onChanged }: { task: TaskView; p
     setError(null);
     setDirError(null);
     try {
-      await studio().savePlan(task.id, form('standard')); // 先保存当前表单，保证计划存在
-      const r = await studio().addExtraDir(task.id);
+      await studio().savePlan(projectId, task.id, form('standard')); // 先保存当前表单，保证计划存在
+      const r = await studio().addExtraDir(projectId, task.id);
       if (r.rejected) setDirError(r.rejected);
       onChanged(r.view);
     } catch (e) { fail(e); }
   };
-  const removeDir = async (key: string) => { try { onChanged(await studio().removeExtraDir(task.id, key)); } catch (e) { fail(e); } };
+  const removeDir = async (key: string) => { try { onChanged(await studio().removeExtraDir(projectId, task.id, key)); } catch (e) { fail(e); } };
 
   const clickStart = async () => {
     setError(null);
     try {
-      const saved = await studio().savePlan(task.id, form());
+      const saved = await studio().savePlan(projectId, task.id, form());
       onChanged(saved);
       if (mode === 'full_trust') setShowTrust(true); // 完全信任：每个任务都要重新确认，偏好不能跳过
-      else onChanged(await studio().startTask(task.id, false));
+      else onChanged(await studio().startTask(projectId, task.id, false));
     } catch (e) { fail(e); }
   };
   const confirmTrust = async () => {
     setShowTrust(false);
-    try { onChanged(await studio().startTask(task.id, true)); } catch (e) { fail(e); }
+    try { onChanged(await studio().startTask(projectId, task.id, true)); } catch (e) { fail(e); }
   };
   const cancelTrust = async () => {
     setShowTrust(false);
     setMode('standard');
-    try { onChanged(await studio().savePlan(task.id, form('standard'))); } catch (e) { fail(e); }
+    try { onChanged(await studio().savePlan(projectId, task.id, form('standard'))); } catch (e) { fail(e); }
   };
 
   return (

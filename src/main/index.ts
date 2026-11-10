@@ -13,6 +13,7 @@ import { DisclosureStore, buildDisclosure } from '../core/app/disclosure.js';
 import { TaskStore } from '../core/task/store.js';
 import { TaskController } from '../core/app/task-controller.js';
 import { TaskPrefs } from '../core/app/prefs.js';
+import { OpenProjectManager } from '../core/app/open-projects.js';
 import { localApfsProbe, RecordStore, VolumeNotSupportedError, WriterLockedError, type OpenOptions } from '../core/persistence/index.js';
 
 /**
@@ -23,8 +24,8 @@ const STORE_OPTS: OpenOptions = { volumeProbe: localApfsProbe, lockWaitMs: 12_00
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 let win: BrowserWindow | null = null;
-/** 当前打开的项目（已规范化的真实路径）。渲染进程不能传任意路径，只能操作用户通过系统对话框选中的项目，或按编号打开最近项目。 */
-let project: string | null = null;
+/** 已打开项目表：键为项目 id（沿用 recent.ts 的 id），值为该项目的 TaskController 与 RecordStore。 */
+const openProjects = new OpenProjectManager<RecordStore>();
 /** 等待用户确认“创建版本记录”的非 Git 文件夹。确认前不会打开，也不会改动任何东西。 */
 let pendingInit: string | null = null;
 
@@ -58,105 +59,20 @@ function createWindow() {
 }
 
 function requireProject(): string {
-  if (!project) throw new Error('还没有打开项目。');
-  return project;
+  const activeId = openProjects.activeId;
+  if (!activeId) throw new Error('还没有打开项目。');
+  return openProjects.require(activeId).path;
 }
 
-async function projectStatus() {
-  const dir = requireProject();
-  const repo = await G.isRepo(dir);
-  const taskList = repo ? await new TaskStore(dir, STORE_OPTS).list() : [];
-  const byMerge = new Map(taskList.filter((t) => t.saveRecord?.mergeCommit).map((t) => [t.saveRecord!.mergeCommit, t.saveRecord!]));
-  const savePoints = repo
-    ? (await G.savePoints(dir, 20)).map((sp) => {
-        const rec = byMerge.get(sp.sha);
-        if (!rec) return sp;
-        const checked = rec.checked === true;
-        return { ...sp, checked, checksText: (checked ? '检查通过' : '未检查') as '检查通过' | '未检查' };
-      })
-    : [];
-  return {
-    path: dir,
-    name: path.basename(dir),
-    isRepo: repo,
-    uncommitted: repo ? await G.uncommittedCount(dir) : 0,
-    savePoints,
-    tasks: taskList,
-  };
+function controllerFor(projectId: unknown): TaskController {
+  return openProjects.require(projectId).controller;
 }
 
-type OpenResult =
-  | { kind: 'opened'; status: Awaited<ReturnType<typeof projectStatus>> }
-  | { kind: 'needs_init'; name: string; path: string }
-  | { kind: 'rejected'; reason: string }
-  | { kind: 'cancelled' }
-  | { kind: 'declined' };
-
-/** 校验 → 判断是否 Git 项目 → 打开或进入“等待确认创建版本记录”。所有入口（对话框、最近项目）都经过这里。 */
-async function openValidated(input: string): Promise<OpenResult> {
-  pendingInit = null;
-  const v = await validateProjectPath(input);
-  if (!v.ok) return { kind: 'rejected', reason: v.reason };
-  if (!(await resolveTool('git', {}))) return { kind: 'rejected', reason: '没有找到 Git，请先在“你的电脑准备好了吗”里按提示安装 Git。' };
-  const root = await G.repoRoot(v.path);
-  if (root && root !== v.path) {
-    return { kind: 'rejected', reason: `这个文件夹在另一个版本记录（${path.basename(root)}）的内部。请选择项目的最外层文件夹。` };
-  }
-  if (!root) {
-    pendingInit = v.path;
-    return { kind: 'needs_init', name: path.basename(v.path), path: v.path };
-  }
-  project = v.path;
-  try {
-    await recent().record(v.path);
-    return { kind: 'opened', status: await projectStatus() };
-  } catch (e) {
-    // 数据目录不在本地 APFS，或被另一个写入者占用：不打开这个项目，如实说明（不写任何数据）
-    if (e instanceof VolumeNotSupportedError || e instanceof WriterLockedError) {
-      project = null;
-      return { kind: 'rejected', reason: e.message };
-    }
-    throw e;
-  }
-}
-
-async function health(): Promise<HealthReport> {
-  const tools = await resolveHostTools(TOOLS);
-  setSupplementalPath(tools.supplementalDirs);
-  const codexTool = tools.tools.codex;
-  const exec = codexTool ? new CodexExecutor({ command: codexTool.path }) : null;
-  const probe = exec ? { detect: () => exec.detect(), preflight: () => exec.preflight(project ?? dataDir()) } : null;
-  const report = await runHealthCheck({
-    tools,
-    processPath: process.env.PATH ?? '',
-    projectDir: project,
-    executor: 'codex',
-    codex: probe,
-    verifiedCodexVersion: VERIFIED_CODEX_VERSION,
-  });
-  return { ...report, project: project ? { name: path.basename(project) } : null };
-}
-
-async function disclosure() {
-  const codex = await resolveTool('codex', {});
-  const content = buildDisclosure({ codexInstalled: !!codex, devPersonalClaude: process.env[DEV_PERSONAL_ENV] === '1' && !app.isPackaged });
-  return { content, accepted: await disclosureStore().get() };
-}
-
-/**
- * 任务控制器：每个打开的项目一个。执行体用 Codex（路径来自环境体检的发现结果）。
- * 额外可写目录只能通过这里弹出的系统选择框取得，渲染进程不传任何路径。
- */
-// 每个项目保留自己的控制器（切换项目再切回来时沿用同一个：它记着哪些任务正在操作，启动核对也只做一次）
-const controllers = new Map<string, TaskController>();
-async function tasks(): Promise<TaskController> {
-  const dir = requireProject();
-  const existing = controllers.get(dir);
-  if (existing) return existing;
+async function createController(dir: string): Promise<TaskController> {
   const found = await resolveHostTools(TOOLS);
   setSupplementalPath(found.supplementalDirs);
   const codexPath = found.tools.codex?.path ?? 'codex';
-  const ctl = new TaskController({
+  return new TaskController({
     repo: dir,
     makeExecutor: () => new CodexExecutor({ command: codexPath }),
     pickDirectory: async () => {
@@ -174,32 +90,135 @@ async function tasks(): Promise<TaskController> {
       }
     },
   });
-  controllers.set(dir, ctl);
-  return ctl;
+}
+
+async function projectStatus(projectId: unknown) {
+  const entry = openProjects.setActive(projectId);
+  const dir = entry.path;
+  const repo = await G.isRepo(dir);
+  const taskList = repo ? await entry.controller.listTasksRaw() : [];
+  const byMerge = new Map(taskList.filter((t) => t.saveRecord?.mergeCommit).map((t) => [t.saveRecord!.mergeCommit, t.saveRecord!]));
+  const savePoints = repo
+    ? (await G.savePoints(dir, 20)).map((sp) => {
+        const rec = byMerge.get(sp.sha);
+        if (!rec) return sp;
+        const checked = rec.checked === true;
+        return { ...sp, checked, checksText: (checked ? '检查通过' : '未检查') as '检查通过' | '未检查' };
+      })
+    : [];
+  return {
+    id: entry.id,
+    path: dir,
+    name: entry.name,
+    isRepo: repo,
+    uncommitted: repo ? await G.uncommittedCount(dir) : 0,
+    savePoints,
+    tasks: taskList,
+  };
+}
+
+type OpenResult =
+  | { kind: 'opened'; status: Awaited<ReturnType<typeof projectStatus>> }
+  | { kind: 'needs_init'; name: string; path: string }
+  | { kind: 'rejected'; reason: string }
+  | { kind: 'cancelled' }
+  | { kind: 'declined' };
+
+async function registerOpenedRepo(dir: string): Promise<OpenResult> {
+  const existing = openProjects.findByPath(dir);
+  if (existing) {
+    await recent().record(dir);
+    return { kind: 'opened', status: await projectStatus(existing.id) };
+  }
+  const ctrl = await createController(dir);
+  let recordStore: RecordStore;
+  try {
+    recordStore = await ctrl.openRecordStore();
+  } catch (e) {
+    // 数据目录不在本地 APFS，或被另一个写入者占用：不打开这个项目，如实说明（不写任何数据）
+    if (e instanceof VolumeNotSupportedError || e instanceof WriterLockedError) {
+      return { kind: 'rejected', reason: e.message };
+    }
+    throw e;
+  }
+  const rec = await recent().record(dir);
+  openProjects.open({
+    id: rec.id,
+    path: dir,
+    name: path.basename(dir),
+    controller: ctrl,
+    recordStore,
+  });
+  return { kind: 'opened', status: await projectStatus(rec.id) };
+}
+
+/** 校验 → 判断是否 Git 项目 → 打开或进入“等待确认创建版本记录”。所有入口（对话框、最近项目）都经过这里。 */
+async function openValidated(input: string): Promise<OpenResult> {
+  pendingInit = null;
+  const v = await validateProjectPath(input);
+  if (!v.ok) return { kind: 'rejected', reason: v.reason };
+  if (!(await resolveTool('git', {}))) return { kind: 'rejected', reason: '没有找到 Git，请先在“你的电脑准备好了吗”里按提示安装 Git。' };
+  const root = await G.repoRoot(v.path);
+  if (root && root !== v.path) {
+    return { kind: 'rejected', reason: `这个文件夹在另一个版本记录（${path.basename(root)}）的内部。请选择项目的最外层文件夹。` };
+  }
+  if (!root) {
+    pendingInit = v.path;
+    return { kind: 'needs_init', name: path.basename(v.path), path: v.path };
+  }
+  return registerOpenedRepo(v.path);
+}
+
+async function health(): Promise<HealthReport> {
+  const activeEntry = openProjects.find(openProjects.activeId);
+  const activeDir = activeEntry?.path ?? null;
+  const tools = await resolveHostTools(TOOLS);
+  setSupplementalPath(tools.supplementalDirs);
+  const codexTool = tools.tools.codex;
+  const exec = codexTool ? new CodexExecutor({ command: codexTool.path }) : null;
+  const probe = exec ? { detect: () => exec.detect(), preflight: () => exec.preflight(activeDir ?? dataDir()) } : null;
+  const report = await runHealthCheck({
+    tools,
+    processPath: process.env.PATH ?? '',
+    projectDir: activeDir,
+    executor: 'codex',
+    codex: probe,
+    verifiedCodexVersion: VERIFIED_CODEX_VERSION,
+  });
+  return { ...report, project: activeDir ? { name: path.basename(activeDir) } : null };
+}
+
+async function disclosure() {
+  const codex = await resolveTool('codex', {});
+  const content = buildDisclosure({ codexInstalled: !!codex, devPersonalClaude: process.env[DEV_PERSONAL_ENV] === '1' && !app.isPackaged });
+  return { content, accepted: await disclosureStore().get() };
 }
 
 ipcMain.handle('env:detect', () => health());
-ipcMain.handle('tasks:list', async () => (await tasks()).list());
-ipcMain.handle('tasks:create', async (_e, request: unknown) => (await tasks()).create(request));
-ipcMain.handle('tasks:get', async (_e, id: unknown) => (await tasks()).get(id));
-ipcMain.handle('tasks:savePlan', async (_e, id: unknown, plan: unknown) => (await tasks()).savePlan(id, plan));
-ipcMain.handle('tasks:addExtraDir', async (_e, id: unknown) => (await tasks()).addExtraDir(id));
-ipcMain.handle('tasks:removeExtraDir', async (_e, id: unknown, key: unknown) => (await tasks()).removeExtraDir(id, key));
-ipcMain.handle('tasks:start', async (_e, id: unknown, ack: unknown) => (await tasks()).start(id, ack));
-ipcMain.handle('tasks:stop', async (_e, id: unknown) => (await tasks()).stop(id));
-// B4-2：验收、保存、放弃、撤销。参数只有任务编号、条目编号（c0 / d0）与验收版本；格式由控制器校验，伪造参数一律拒绝。
-ipcMain.handle('acceptance:get', async (_e, id: unknown) => (await tasks()).getAcceptanceView(id));
-ipcMain.handle('acceptance:openPreview', async (_e, id: unknown, version: unknown) => (await tasks()).openPreview(id, version));
-ipcMain.handle('acceptance:skipPreview', async (_e, id: unknown, version: unknown) => (await tasks()).skipPreview(id, version));
-ipcMain.handle('acceptance:confirmCriterion', async (_e, id: unknown, itemId: unknown, version: unknown) => (await tasks()).confirmCriterion(id, itemId, version));
-ipcMain.handle('acceptance:confirmOverall', async (_e, id: unknown, version: unknown) => (await tasks()).confirmOverall(id, version));
-ipcMain.handle('acceptance:ackDenied', async (_e, id: unknown, itemId: unknown, version: unknown) => (await tasks()).ackDenied(id, itemId, version));
-ipcMain.handle('acceptance:recheck', async (_e, id: unknown) => (await tasks()).recheck(id));
-ipcMain.handle('acceptance:save', async (_e, id: unknown, version: unknown) => (await tasks()).saveTask(id, version));
-ipcMain.handle('acceptance:saveUnchecked', async (_e, id: unknown, version: unknown) => (await tasks()).saveUncheckedTask(id, version));
-ipcMain.handle('acceptance:discard', async (_e, id: unknown) => (await tasks()).discardTask(id));
-ipcMain.handle('acceptance:undo', async (_e, id: unknown) => (await tasks()).undoSave(id));
-ipcMain.handle('acceptance:retryCleanup', async (_e, id: unknown) => (await tasks()).retryCleanup(id));
+ipcMain.handle('projects:listOpen', () => openProjects.listSummaries());
+ipcMain.handle('projects:close', (_e, projectId: unknown) => openProjects.close(projectId));
+ipcMain.handle('workbench:get', () => openProjects.getWorkbench());
+ipcMain.handle('tasks:list', (_e, projectId: unknown) => controllerFor(projectId).list());
+ipcMain.handle('tasks:create', (_e, projectId: unknown, request: unknown) => controllerFor(projectId).create(request));
+ipcMain.handle('tasks:get', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).get(id));
+ipcMain.handle('tasks:savePlan', (_e, projectId: unknown, id: unknown, plan: unknown) => controllerFor(projectId).savePlan(id, plan));
+ipcMain.handle('tasks:addExtraDir', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).addExtraDir(id));
+ipcMain.handle('tasks:removeExtraDir', (_e, projectId: unknown, id: unknown, key: unknown) => controllerFor(projectId).removeExtraDir(id, key));
+ipcMain.handle('tasks:start', (_e, projectId: unknown, id: unknown, ack: unknown) => controllerFor(projectId).start(id, ack));
+ipcMain.handle('tasks:stop', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).stop(id));
+// B4-2 + 阶段 2 多项目：验收、保存、放弃、撤销。先校验 projectId 属于已打开项目表，再交对应项目的控制器处理。
+ipcMain.handle('acceptance:get', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).getAcceptanceView(id));
+ipcMain.handle('acceptance:openPreview', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).openPreview(id, version));
+ipcMain.handle('acceptance:skipPreview', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).skipPreview(id, version));
+ipcMain.handle('acceptance:confirmCriterion', (_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown) => controllerFor(projectId).confirmCriterion(id, itemId, version));
+ipcMain.handle('acceptance:confirmOverall', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).confirmOverall(id, version));
+ipcMain.handle('acceptance:ackDenied', (_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown) => controllerFor(projectId).ackDenied(id, itemId, version));
+ipcMain.handle('acceptance:recheck', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).recheck(id));
+ipcMain.handle('acceptance:save', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).saveTask(id, version));
+ipcMain.handle('acceptance:saveUnchecked', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).saveUncheckedTask(id, version));
+ipcMain.handle('acceptance:discard', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).discardTask(id));
+ipcMain.handle('acceptance:undo', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).undoSave(id));
+ipcMain.handle('acceptance:retryCleanup', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).retryCleanup(id));
 // 项目状态异常时的只读出口：在访达中显示当前项目。没有参数——位置永远是用户选定的项目，渲染进程不能指定。
 ipcMain.handle('project:reveal', () => {
   shell.showItemInFolder(requireProject());
@@ -215,16 +234,14 @@ ipcMain.handle('project:openRecent', async (_e, id: unknown): Promise<OpenResult
   if (!r.ok) return { kind: 'rejected', reason: r.reason };
   return openValidated(r.path);
 });
-ipcMain.handle('project:status', () => projectStatus());
+ipcMain.handle('project:status', (_e, projectId: unknown) => projectStatus(projectId));
 ipcMain.handle('project:init', async (_e, consent: unknown): Promise<OpenResult> => {
   const target = pendingInit;
   pendingInit = null;
   if (!target) throw new Error('没有等待确认的文件夹。');
   if (consent !== true) return { kind: 'declined' };
   await G.initRepo(target);
-  project = target;
-  await recent().record(target);
-  return { kind: 'opened', status: await projectStatus() };
+  return registerOpenedRepo(target);
 });
 ipcMain.handle('disclosure:get', () => disclosure());
 ipcMain.handle('disclosure:accept', async () => {

@@ -804,7 +804,7 @@ describe('阶段 1 补丁 · 未检查时必须由用户确认', () => {
     await ctl.savePlan(t.id, { goal: '更新首页', criteria: ['首页已更新'], mode: 'standard', network: false });
     await ctl.start(t.id, false);
     let view = await ctl.getAcceptanceView(t.id);
-    while (view.busy) {
+    for (let i = 0; i < 500 && (view.busy || view.state !== 'reviewing'); i++) {
       await new Promise((r) => setTimeout(r, 20));
       view = await ctl.getAcceptanceView(t.id);
     }

@@ -5,6 +5,7 @@ import { describePermissions, type PermissionSummary } from './permission-text.j
 import { extractIncomplete, type IncompleteReport } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
 import { exitFailureText, notCheckedText } from '../acceptance/texts.js';
+import { classifyTaskState, type TaskClassification } from './task-state-view.js';
 
 /**
  * 给渲染层看的任务视图：只含大白话与必要事实。
@@ -68,6 +69,10 @@ export interface TaskView {
   executorText: string;
   /** 保存记录的检查结论（已保存或曾保存任务显示“检查通过”或“未检查”，不含命令） */
   saveCheckText: '检查通过' | '未检查' | null;
+  /** UI v2.1 第 3 节三层状态与看板归类 */
+  layer: TaskClassification;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export const STATE_TEXT: Record<TaskState, string> = {
@@ -201,6 +206,9 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     model,
     executorText,
     saveCheckText: task.saveRecord ? (task.saveRecord.checked === true ? '检查通过' : '未检查') : null,
+    layer: classifyTaskState(task, { isLiveRunning: opts.running }),
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
     // 诊断记录：时间线的文字（含应用自己的说明），经已知噪音过滤；工具事件只留概括，不含命令
     diagnostics: task.timeline
       .filter((e) => e.kind !== 'tool' && e.kind !== 'isolation' && e.kind !== 'state')

@@ -56,7 +56,7 @@ type Dialog = 'discard' | 'undo' | 'skipPreview' | null;
  * 验收与结果：只使用主进程给的用户验收视图（UserAcceptanceView）。
  * 所有文案（结论、各项说明、失败原因、按钮不可用的原因）都来自视图，这里不自拟任何失败文案。
  */
-export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () => void }) {
+export function Acceptance({ projectId, task, onChanged }: { projectId: string; task: TaskView; onChanged: () => void }) {
   const [view, setView] = useState<UserAcceptanceView | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string; files?: string[] } | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -68,8 +68,8 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
   const [pending, setPending] = useState(false);
 
   const load = useCallback(() => {
-    studio().getAcceptanceView(task.id).then((v) => { setView(v); setLoadError(null); }).catch((e: Error) => setLoadError(e.message));
-  }, [task.id]);
+    studio().getAcceptanceView(projectId, task.id).then((v) => { setView(v); setLoadError(null); }).catch((e: Error) => setLoadError(e.message));
+  }, [projectId, task.id]);
   useEffect(load, [load, task.state]);
   // 取到视图时任务可能还在收尾（主进程标记 busy）：稍后重新取一次，避免界面停在“全部置灰”
   const viewBusy = view?.busy ?? false;
@@ -186,7 +186,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                     <button
                       data-testid="preview-button"
                       disabled={pending}
-                      onClick={() => run((s) => s.openPreview(v.taskId, v.version))}
+                      onClick={() => run((s) => s.openPreview(projectId, v.taskId, v.version))}
                     >
                       {v.preview.buttonText}
                     </button>
@@ -248,7 +248,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                               className="secondary"
                               data-testid={`ack-${d.id}`}
                               disabled={disabled(step1Completed)}
-                              onClick={() => run((s) => s.ackDenied(v.taskId, d.id, v.version))}
+                              onClick={() => run((s) => s.ackDenied(projectId, v.taskId, d.id, v.version))}
                             >
                               {COPY.ackButton}
                             </button>
@@ -273,7 +273,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                               className="secondary"
                               data-testid={`confirm-${c.id}`}
                               disabled={disabled(step1Completed)}
-                              onClick={() => run((s) => s.confirmCriterion(v.taskId, c.id, v.version))}
+                              onClick={() => run((s) => s.confirmCriterion(projectId, v.taskId, c.id, v.version))}
                             >
                               {COPY.confirmButton}
                             </button>
@@ -290,7 +290,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                               className="secondary"
                               data-testid="confirm-overall"
                               disabled={disabled(step1Completed)}
-                              onClick={() => run((s) => s.confirmOverall(v.taskId, v.version))}
+                              onClick={() => run((s) => s.confirmOverall(projectId, v.taskId, v.version))}
                             >
                               {COPY.overallButton}
                             </button>
@@ -312,7 +312,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                   <button
                     data-testid="save-button"
                     disabled={disabled(step1Completed && step2Completed && a.save.enabled)}
-                    onClick={() => run((s) => s.saveTask(v.taskId, v.version))}
+                    onClick={() => run((s) => s.saveTask(projectId, v.taskId, v.version))}
                   >
                     {COPY.saveButton}
                   </button>
@@ -321,7 +321,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                     data-testid="recheck-button"
                     data-highlight={!!a.recheck.highlight}
                     disabled={disabled(a.recheck.enabled)}
-                    onClick={() => run((s) => s.recheck(v.taskId))}
+                    onClick={() => run((s) => s.recheck(projectId, v.taskId))}
                   >
                     {COPY.recheckButton}
                   </button>
@@ -360,7 +360,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                         className="secondary"
                         data-testid="unchecked-preview-button"
                         disabled={pending}
-                        onClick={() => run((s) => s.openPreview(v.taskId, v.version))}
+                        onClick={() => run((s) => s.openPreview(projectId, v.taskId, v.version))}
                       >
                         {v.uncheckedConfirm.previewButtonText}
                       </button>
@@ -368,7 +368,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                         type="button"
                         data-testid="unchecked-confirm-save-button"
                         disabled={pending || !a.save.enabled}
-                        onClick={() => run((s) => s.saveUncheckedTask(v.taskId, v.version))}
+                        onClick={() => run((s) => s.saveUncheckedTask(projectId, v.taskId, v.version))}
                       >
                         {v.uncheckedConfirm.confirmButtonText}
                       </button>
@@ -400,7 +400,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                 {conflict && <button className="secondary" data-testid="discard-button" disabled={disabled(a.discard.enabled)} onClick={() => setDialog('discard')}>{COPY.discardButton}</button>}
                 {conflict && <button className="secondary" data-testid="defer-button" onClick={() => setDeferred(true)}>{COPY.deferButton}</button>}
                 {['saved', 'saved_cleanup_pending', 'undo_failed'].includes(v.state) && <button className="secondary" data-testid="undo-button" disabled={disabled(a.undo.enabled)} onClick={() => setDialog('undo')}>{COPY.undoButton}</button>}
-                {(v.state === 'saved_cleanup_pending' || v.state === 'discard_cleanup_pending') && <button data-testid="retry-cleanup-button" disabled={disabled(a.retryCleanup.enabled)} onClick={() => run((s) => s.retryCleanup(v.taskId))}>{COPY.retryCleanupButton}</button>}
+                {(v.state === 'saved_cleanup_pending' || v.state === 'discard_cleanup_pending') && <button data-testid="retry-cleanup-button" disabled={disabled(a.retryCleanup.enabled)} onClick={() => run((s) => s.retryCleanup(projectId, v.taskId))}>{COPY.retryCleanupButton}</button>}
               </div>
               {['saved', 'saved_cleanup_pending', 'undo_failed'].includes(v.state) && !a.undo.enabled && a.undo.reason && <p className="muted" data-testid="undo-reason">{a.undo.reason}</p>}
             </>
@@ -435,9 +435,9 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                   data-testid="confirm-yes"
                   onClick={() =>
                     run((s) => {
-                      if (dialog === 'discard') return s.discardTask(v.taskId);
-                      if (dialog === 'undo') return s.undoSave(v.taskId);
-                      return s.skipPreview(v.taskId, v.version);
+                      if (dialog === 'discard') return s.discardTask(projectId, v.taskId);
+                      if (dialog === 'undo') return s.undoSave(projectId, v.taskId);
+                      return s.skipPreview(projectId, v.taskId, v.version);
                     })
                   }
                 >

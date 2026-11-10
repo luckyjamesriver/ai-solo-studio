@@ -171,7 +171,7 @@ export function App() {
                 </li>
               ))}
             </ol>
-            <Tasks key={project.path} />
+            <Tasks key={project.id} projectId={project.id} />
             <button className="secondary" onClick={() => { setProject(null); refreshEnv(); }}>换一个项目</button>
           </div>
         )}
