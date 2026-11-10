@@ -119,7 +119,11 @@ export function Workbench({
               <span className={`tag${item.isAbnormal ? ' warn' : ''}`}>{item.statusLabel}</span>
               <div className="grow">
                 <strong>{item.taskName}</strong>
-                <div className="muted">{item.projectName} · {item.impact}</div>
+                <div className="muted">
+                  {item.projectName}
+                  {item.round && item.round >= 2 ? ` · ${COPY.roundBadge(item.round)}` : ''}
+                  {' · '}{item.impact}
+                </div>
               </div>
               <button
                 type="button"
@@ -144,7 +148,11 @@ export function Workbench({
               <span className="tag">{item.statusLabel}</span>
               <div className="grow">
                 <strong>{item.taskName}</strong>
-                <div className="muted">{item.projectName} · {item.impact}</div>
+                <div className="muted">
+                  {item.projectName}
+                  {item.round && item.round >= 2 ? ` · ${COPY.roundBadge(item.round)}` : ''}
+                  {' · '}{item.impact}
+                </div>
               </div>
               <button
                 type="button"
@@ -168,7 +176,11 @@ export function Workbench({
             <div className="item" key={item.id} data-testid={`wb-entry-${item.id}`}>
               <div className="grow">
                 <strong>{item.taskName}</strong>{' '}
-                <span className="muted">· {item.projectName} · {item.statusLabel} · {item.impact}</span>
+                <span className="muted">
+                  · {item.projectName}
+                  {item.round && item.round >= 2 ? ` · ${COPY.roundBadge(item.round)}` : ''}
+                  {' · '}{item.statusLabel} · {item.impact}
+                </span>
               </div>
               <button
                 type="button"

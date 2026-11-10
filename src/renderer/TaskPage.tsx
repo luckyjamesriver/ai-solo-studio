@@ -4,6 +4,7 @@ import { PlanCard } from './PlanCard.js';
 import { RunView } from './RunView.js';
 import { StoppedPage } from './StoppedPage.js';
 import type { TaskView } from './api.js';
+import { COPY } from './copy.js';
 
 interface TaskPageProps {
   projectId: string;
@@ -66,6 +67,7 @@ export function TaskPage({
             </button>
             <span aria-hidden="true">›</span>
             <span>任务</span>
+            {task.round >= 2 && <span className="tag" data-testid="task-page-round">{COPY.roundBadge(task.round)}</span>}
           </div>
           <h1 data-testid="task-title">{task.goal}</h1>
         </div>

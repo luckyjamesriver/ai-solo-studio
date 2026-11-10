@@ -110,6 +110,8 @@ export interface TaskView {
   model?: string;
   /** 执行者与模型完整文案（如 "Codex · gpt-5" 或 "Codex"） */
   executorText: string;
+  /** 当前施工/验收轮次（从 1 开始） */
+  round: number;
   /** 保存记录的检查结论（已保存或曾保存任务显示“检查通过”或“未检查”，不含命令） */
   saveCheckText: '检查通过' | '未检查' | null;
   /** UI v2.1 第 3 节三层状态与看板归类 */
@@ -414,6 +416,7 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     executorName,
     model,
     executorText,
+    round: task.currentRound ?? (task.rounds?.length ? Math.max(...task.rounds.map((r) => r.round)) : 1),
     saveCheckText: task.saveRecord ? (task.saveRecord.checked === true ? '检查通过' : '未检查') : null,
     layer: classifyTaskState(task, { isLiveRunning: opts.running }),
     createdAt: task.createdAt,

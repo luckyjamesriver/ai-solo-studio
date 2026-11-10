@@ -45,6 +45,7 @@ export interface WorkbenchEntry {
   projectName: string;
   taskId?: string;
   taskName: string;
+  round?: number;
   state: TaskState | 'health_issue';
   statusLabel: string;
   isAbnormal: boolean;
@@ -211,6 +212,7 @@ export class OpenProjectManager<TStore extends ClosableStore = ClosableStore> {
           projectName: entry.name,
           taskId: t.id,
           taskName: taskTitle(t),
+          round: t.currentRound ?? (t.rounds?.length ? Math.max(...t.rounds.map((r) => r.round)) : 1),
           state: t.state,
           statusLabel: cls.statusTag,
           isAbnormal: cls.isAbnormal,

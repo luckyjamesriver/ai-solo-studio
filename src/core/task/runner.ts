@@ -7,7 +7,7 @@ import { saveBlockers } from './save-rules.js';
 import { TaskStore, type SaveOptions } from './store.js';
 import { RecordStore, StaleRunError, type OpenOptions } from '../persistence/index.js';
 import { resolveCapabilities, type Capabilities } from '../capabilities/model.js';
-import { acceptanceVersion, type OpLog, type Plan, type StoredCheckProof, type Task, type TimelineEntry } from './model.js';
+import { acceptanceVersion, type OpLog, type Plan, type StoredCheckProof, type Task, type TaskRound, type TimelineEntry } from './model.js';
 import type { Decision, DeniedOperation, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
 import {
@@ -286,9 +286,26 @@ export class TaskRunner extends EventEmitter {
     };
     delete t.gitBinding;
     t.runId = RecordStore.newRunId(); // 每次开工是新的一次运行：之后旧运行的任何回传都会被拒绝
-    t.currentRound ??= 1;
+    const roundNo = t.currentRound ?? 1;
+    t.currentRound = roundNo;
     t.roundStartedAt = new Date().toISOString();
     delete t.roundEndedAt;
+    const roundFeedback = t.pendingFeedback;
+    delete t.pendingFeedback;
+    const effectivePrompt = prompt ?? (roundFeedback ? `${buildPrompt(t)}\n\n上一次结果需要修改：${roundFeedback}` : buildPrompt(t));
+    this.upsertRound(t, {
+      round: roundNo,
+      startedAt: t.roundStartedAt,
+      ...(roundFeedback ? { feedback: roundFeedback } : {}),
+      ...(t.plan?.capabilities ? { capabilities: structuredClone(t.plan.capabilities) } : {}),
+      ...(t.executorId ? { executorId: t.executorId } : {}),
+      ...(t.executorName ? { executorName: t.executorName } : {}),
+      denied: [],
+      deniedAcks: [],
+      criteria: t.criteria.map((c) => ({ text: c.text })),
+      checks: [],
+      aiMessages: [],
+    });
     await this.fire(t, 'start', { startRun: true });
 
     // 准备阶段收到停止：不启动执行体，直接进入 stopped 并照常验收
@@ -307,7 +324,7 @@ export class TaskRunner extends EventEmitter {
     const liveDenied: DeniedOperation[] = [];
     const run = this.opts.executor.start({
       cwd: t.worktree.path,
-      prompt: prompt ?? buildPrompt(t),
+      prompt: effectivePrompt,
       timeoutMs: this.opts.timeoutMs ?? 20 * 60_000,
       capabilities: t.plan?.capabilities ?? resolveCapabilities(),
       taskId: t.id,
@@ -471,6 +488,7 @@ export class TaskRunner extends EventEmitter {
       notes: this.cardNotes(t),
       ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
     });
+    this.syncCurrentRound(t);
   }
 
   private async review(t: Task): Promise<Task> {
@@ -588,8 +606,72 @@ export class TaskRunner extends EventEmitter {
       const old = prev.items.find((i) => i.key === item.key);
       if (old && (item.key === 'build' || item.key === 'test')) item.evidence = old.evidence;
     }
+    this.syncCurrentRound(t);
     await this.persist(t);
     return t;
+  }
+
+  private latestRunAiMessages(timeline: TimelineEntry[]): string[] {
+    let startIdx = 0;
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      const e = timeline[i]!;
+      if (e.kind === 'state' && e.text.endsWith('→ running')) {
+        startIdx = i;
+        break;
+      }
+    }
+    return timeline
+      .slice(startIdx)
+      .filter((e) => {
+        const { source: origin } = e;
+        return e.kind === 'message' && origin !== 'host';
+      })
+      .map((e) => e.text);
+  }
+
+  private upsertRound(t: Task, nextRound: TaskRound): void {
+    const rounds = [...(t.rounds ?? [])];
+    const idx = rounds.findIndex((r) => r.round === nextRound.round);
+    if (idx >= 0) rounds[idx] = nextRound;
+    else rounds.push(nextRound);
+    rounds.sort((a, b) => a.round - b.round);
+    t.rounds = rounds;
+  }
+
+  /** 将当前轮次的完整成果与确认记录写入 Task.rounds 对应条目（不得覆盖历史轮次）。 */
+  private syncCurrentRound(t: Task): void {
+    const roundNo = t.currentRound ?? 1;
+    t.currentRound = roundNo;
+    const prev = t.rounds?.find((r) => r.round === roundNo);
+    const snap: TaskRound = {
+      round: roundNo,
+      startedAt: prev?.startedAt ?? t.roundStartedAt ?? t.createdAt,
+      ...(t.roundEndedAt ? { endedAt: t.roundEndedAt } : prev?.endedAt ? { endedAt: prev.endedAt } : {}),
+      ...(prev?.feedback ? { feedback: prev.feedback } : {}),
+      ...(t.plan?.capabilities ? { capabilities: structuredClone(t.plan.capabilities) } : prev?.capabilities ? { capabilities: prev.capabilities } : {}),
+      ...(t.executorId ? { executorId: t.executorId } : {}),
+      ...(t.executorName ? { executorName: t.executorName } : {}),
+      ...(t.model ? { model: t.model } : {}),
+      ...(t.effectivePermissions ? { effectivePermissions: structuredClone(t.effectivePermissions) } : {}),
+      ...(t.exit ? { exit: structuredClone(t.exit) } : {}),
+      ...(t.gitBinding ? { gitBinding: structuredClone(t.gitBinding) } : {}),
+      ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}),
+      ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
+      denied: structuredClone(t.denied ?? []),
+      deniedAcks: [...(t.deniedAcks ?? [])],
+      criteria: t.criteria.map((c) => ({
+        text: c.text,
+        ...(c.decision ? { decision: c.decision } : {}),
+        ...(c.note ? { note: c.note } : {}),
+      })),
+      ...(t.overallConfirmed !== undefined ? { overallConfirmed: t.overallConfirmed } : {}),
+      ...(t.overallDecision ? { overallDecision: t.overallDecision } : {}),
+      ...(t.overallNote ? { overallNote: t.overallNote } : {}),
+      checks: structuredClone(t.currentChecks ?? []),
+      ...(t.card ? { card: structuredClone(t.card) } : {}),
+      aiMessages: this.latestRunAiMessages(t.timeline),
+    };
+    this.upsertRound(t, snap);
   }
 
   /** 若任务停在 stopped / timed_out / exec_failed / exec_succeeded（尚未进入 reviewing），先补齐验收态以便继续或放弃。 */
@@ -600,12 +682,18 @@ export class TaskRunner extends EventEmitter {
   }
 
   /**
-   * 准备继续执行或退回修改：保留原 task.worktree 与已做修改，清空上次验收确认/退出结果并将状态由 reviewing → approved。
+   * 准备继续执行或退回修改：保留原 task.worktree 与历史 rounds，清空当前轮次工作区确认字段并将状态迁移至 approved（或可进一步退回 planned 调整权限）。
    */
-  async prepareContinue(id: string, instruction: string): Promise<{ task: Task; prompt: string }> {
+  async prepareContinue(id: string, instruction: string, opts: { transitionToPlanned?: boolean } = {}): Promise<{ task: Task; prompt: string }> {
     const t = await this.ensureReviewed(id);
     if (t.manualReview) throw new Error(MESSAGES.abnormal);
     if (t.card?.items.some((i) => i.key === 'drivers')) throw new Error(MESSAGES.externalDriver);
+    if (t.card) this.syncCurrentRound(t);
+
+    const nextRound = Math.max(t.currentRound ?? 1, ...(t.rounds ?? []).map((r) => r.round)) + 1;
+    t.currentRound = nextRound;
+    t.pendingFeedback = instruction;
+
     t.criteria.forEach((c) => {
       delete c.decision;
       delete c.note;
@@ -620,10 +708,19 @@ export class TaskRunner extends EventEmitter {
     delete t.uncheckedConfirm;
     delete t.card;
     delete t.exit;
+    delete t.currentChecks;
+    delete t.roundStartedAt;
+    delete t.roundEndedAt;
     t.denied = [];
     t.deniedAcks = [];
-    this.log(t, 'message', `你要求修改：${instruction}`, 'host');
+    this.log(t, 'message', `第 ${nextRound} 轮修改说明：${instruction}`, 'host');
     await this.fire(t, 'request_fix'); // fire 会持久化，必须在清空之后
+    if (opts.transitionToPlanned) {
+      delete t.checkAuth;
+      delete t.fullTrustConfirmedAt;
+      t.reapproveNotice = `修改权限后，需要重新点击「批准并开工」才能开始第 ${nextRound} 轮`;
+      await this.fire(t, 'edit_plan');
+    }
     return { task: t, prompt: `${buildPrompt(t)}\n\n上一次结果需要修改：${instruction}` };
   }
 

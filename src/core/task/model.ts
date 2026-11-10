@@ -138,6 +138,38 @@ export interface StoredCheckProof {
   unavailableReason?: string;
 }
 
+export interface RoundCriterionSnapshot {
+  text: string;
+  decision?: 'confirmed' | 'rejected';
+  note?: string;
+}
+
+export interface TaskRound {
+  round: number;
+  startedAt: string;
+  endedAt?: string;
+  /** 本轮补充说明：继续执行记为「接着上次停下的地方继续」，退回修改记为反馈+不符合的标准；第 1 轮省略 */
+  feedback?: string;
+  capabilities?: Capabilities;
+  executorId?: string;
+  executorName?: string;
+  model?: string;
+  effectivePermissions?: EffectivePermissions;
+  exit?: ExitOutcome;
+  gitBinding?: GitBinding;
+  acceptedTree?: string;
+  checksVoid?: string;
+  denied: DeniedOperation[];
+  deniedAcks: boolean[];
+  criteria: RoundCriterionSnapshot[];
+  overallConfirmed?: boolean;
+  overallDecision?: 'confirmed' | 'rejected';
+  overallNote?: string;
+  checks: StoredCheckProof[];
+  card?: AcceptanceCard;
+  aiMessages: string[];
+}
+
 export interface Task {
   id: string;
   /** 记录的修订号：由存储层在读取和提交后填入，不随记录内容保存；提交时用来做 CAS（ADR 0005） */
@@ -193,6 +225,10 @@ export interface Task {
   roundEndedAt?: string;
   /** 当前轮次最近一次自动检查明细（含未脱敏的本机原始输出） */
   currentChecks?: StoredCheckProof[];
+  /** 待写入下一轮的反馈/指令（继续执行 / 退回修改 / 修改权限后重启） */
+  pendingFeedback?: string;
+  /** 每一轮的独立归档记录（第 1..N 轮），新一轮不得覆盖旧轮次 */
+  rounds?: TaskRound[];
   /** 保存时项目是否有自定义提交检查（保存不会运行它们） */
   customCommitChecks?: boolean;
   /** 保存结果（撤销依据） */

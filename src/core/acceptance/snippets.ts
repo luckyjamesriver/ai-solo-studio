@@ -127,7 +127,7 @@ export function makeHunks(before: string, after: string): { hunks: Hunk[]; omitt
 const unavailable = (): ChangePreview => ({ kind: 'unavailable', note: PREVIEW_TEXT.unavailable });
 
 /** 为一个任务的改动清单生成片段（只读 Git；任何一步读不到都退回“无法直接显示”）。 */
-export async function buildPreviews(repo: string, task: Task): Promise<Map<string, ChangePreview>> {
+export async function buildPreviews(repo: string, task: Pick<Task, 'acceptedTree' | 'worktree' | 'card'>): Promise<Map<string, ChangePreview>> {
   const out = new Map<string, ChangePreview>();
   const tree = task.acceptedTree;
   const base = task.worktree?.baseSha;

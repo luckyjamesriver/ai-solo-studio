@@ -4,7 +4,7 @@ import { StaleRunError, StateConflictError, WriterLockedError, type OpenOptions 
 import * as G from '../git/git.js';
 import { GitError } from '../git/git.js';
 import { MESSAGES } from '../task/messages.js';
-import { buildPreviews } from '../acceptance/snippets.js';
+import { buildPreviews, type ChangePreview } from '../acceptance/snippets.js';
 import { acceptanceVersion, isVersionFormat, mapFailure, okMessage, toUserView, VIEW_TEXT, type UserAcceptanceView, type ViewContext } from '../acceptance/view.js';
 import { TaskRunner } from '../task/runner.js';
 import { detectScripts } from '../checks/scripts.js';
@@ -238,6 +238,66 @@ export class TaskController {
     return this.view(prepared);
   }
 
+  private buildReworkInstruction(t: Task, feedback: string, opts: { requireNonEmpty: boolean }): string {
+    const trimmed = feedback.trim();
+    const rejected = t.criteria
+      .filter((c) => c.decision === 'rejected')
+      .map((c) => (c.note ? `${c.text}（说明：${c.note}）` : c.text));
+    const parts: string[] = [];
+    if (trimmed) parts.push(trimmed);
+    if (rejected.length > 0) {
+      parts.push(`本次不符合的验收标准：\n${rejected.map((line) => `- ${line}`).join('\n')}`);
+    } else if (t.criteria.length === 0 && t.overallDecision === 'rejected') {
+      parts.push(t.overallNote ? `整体结果不符合要求（说明：${t.overallNote}）` : '整体结果不符合要求');
+    }
+    const combined = parts.join('\n\n');
+    if (opts.requireNonEmpty && !combined) {
+      throw new Error('请填写退回修改的反馈，或先标出不符合的验收标准。');
+    }
+    return combined || '调整权限后开始新一轮修改';
+  }
+
+  private async prepareReworkTarget(id: unknown): Promise<Task> {
+    const tid = this.checkArg(TASK_ID, id);
+    await this.ready();
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (this.active.has(t.id) || this.ops.has(t.id) || this.r().isBusy(t.id)) throw new Error(MESSAGES.busy);
+    if (t.state !== 'reviewing') throw new Error('当前状态不能退回修改。');
+    if (!t.worktree) throw new Error('任务副本不存在，不能退回修改。');
+    if (t.card?.items.some((i) => i.key === 'drivers')) throw new Error(MESSAGES.externalDriver);
+    return t;
+  }
+
+  /**
+   * 退回修改（#09-rework）：沿用现有任务副本与历史轮次记录，带上反馈与不符合标准发起新一轮执行。
+   */
+  async reworkTask(id: unknown, feedback: unknown): Promise<TaskView> {
+    if (typeof feedback !== 'string' || feedback.length > 2000) throw new Error(VIEW_TEXT.invalidArgument);
+    const t = await this.prepareReworkTarget(id);
+    const instruction = this.buildReworkInstruction(t, feedback, { requireNonEmpty: true });
+    this.startErrors.delete(t.id);
+    const { task: prepared, prompt } = await this.r().prepareContinue(t.id, instruction);
+    this.active.add(t.id);
+    void this.r()
+      .start(t.id, prompt)
+      .catch((e: Error) => this.startErrors.set(t.id, this.persistenceMessage(e) ?? e.message))
+      .finally(() => this.active.delete(t.id));
+    return this.view(prepared);
+  }
+
+  /**
+   * 退回修改时调整权限：保存待用反馈并将状态退回 planned（保留任务副本与历史轮次记录），需重新点击「批准并开工」。
+   */
+  async editReworkPermissions(id: unknown, feedback: unknown): Promise<TaskView> {
+    if (typeof feedback !== 'string' || feedback.length > 2000) throw new Error(VIEW_TEXT.invalidArgument);
+    const t = await this.prepareReworkTarget(id);
+    const instruction = this.buildReworkInstruction(t, feedback, { requireNonEmpty: false });
+    this.startErrors.delete(t.id);
+    const { task: planned } = await this.r().prepareContinue(t.id, instruction, { transitionToPlanned: true });
+    return this.view(planned);
+  }
+
   // ───────────────────────── 验收、保存、放弃、撤销（B4-2） ─────────────────────────
   // 渲染进程只传：任务编号、条目编号（c0 / d0）、验收版本、（无参数的操作）。返回给它的只有 UserAcceptanceView 与固定文案。
 
@@ -316,6 +376,16 @@ export class TaskController {
           ctx.previews = await buildPreviews(this.o.repo, t);
           const head = await G.headSha(this.o.repo);
           ctx.otherUndoableSave = (await runner.store.list()).some((x) => x.id !== t.id && x.state === 'saved' && x.saveRecord?.mergeCommit === head);
+        }
+        if ((t.rounds?.length ?? 0) > 1 && t.worktree?.baseSha) {
+          const roundPreviews = new Map<number, Map<string, ChangePreview>>();
+          const curRound = t.currentRound ?? Math.max(...(t.rounds ?? []).map((r) => r.round));
+          for (const r of t.rounds ?? []) {
+            if (r.round !== curRound && r.card && r.acceptedTree) {
+              roundPreviews.set(r.round, await buildPreviews(this.o.repo, { acceptedTree: r.acceptedTree, worktree: t.worktree, card: r.card }));
+            }
+          }
+          if (roundPreviews.size > 0) ctx.roundPreviews = roundPreviews;
         }
       } catch (e) {
         await this.diagnose(t.id, '计算验收视图', e);

@@ -1,5 +1,5 @@
 import os from 'node:os';
-import type { StoredCheckProof, Task } from '../task/model.js';
+import type { StoredCheckProof, Task, TaskRound } from '../task/model.js';
 import type { DeniedOperation } from '../executor/types.js';
 import type { FileChange } from '../git/git.js';
 import type { ChangePreview } from './snippets.js';
@@ -426,6 +426,28 @@ export function buildTaskProof(
     previews: opts.previews,
     constructionMode: t.plan?.capabilities.constructionMode,
     fallbackTime: t.roundEndedAt ?? t.updatedAt,
+    filterOpts: {
+      ...(opts.repoPath ? { repoPath: opts.repoPath } : {}),
+      ...(t.worktree?.path ? { worktreePath: t.worktree.path } : {}),
+    },
+  });
+}
+
+export function buildRoundProof(
+  t: Pick<Task, 'worktree' | 'plan'>,
+  r: TaskRound,
+  opts: { previews?: Map<string, ChangePreview>; repoPath?: string } = {},
+): TaskProofView {
+  return buildTaskProofFromParts({
+    round: r.round,
+    checks: r.checks,
+    cardItems: r.card?.items,
+    denied: r.denied ?? [],
+    deniedAcks: r.deniedAcks ?? [],
+    changes: r.card?.changes ?? [],
+    previews: opts.previews,
+    constructionMode: r.capabilities?.constructionMode ?? t.plan?.capabilities.constructionMode,
+    fallbackTime: r.endedAt ?? r.startedAt,
     filterOpts: {
       ...(opts.repoPath ? { repoPath: opts.repoPath } : {}),
       ...(t.worktree?.path ? { worktreePath: t.worktree.path } : {}),

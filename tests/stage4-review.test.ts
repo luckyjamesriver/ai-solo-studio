@@ -303,3 +303,137 @@ describe('阶段 4 · 第二节：检查依据页、轮次绑定、测试解析�
     expect(html).not.toMatch(/<details[^>]*\bopen\b/);
   });
 });
+
+describe('阶段 4 · 第三节：退回修改与多轮独立记录', () => {
+  it('退回修改在同一副本开始第 2 轮，自动附上不符合标准与说明，且第 1 轮记录与证据不被覆盖', async () => {
+    const repo = initRepo({
+      'package.json': JSON.stringify({ scripts: { test: 'node run-tests.cjs' } }),
+      'run-tests.cjs': [
+        'const fs = require("node:fs");',
+        'const html = fs.readFileSync("index.html", "utf8");',
+        'if (html.includes("round2")) { console.log("✓ round2 check (2ms)\\nTests 1 passed (1)"); process.exit(0); }',
+        'console.log("✗ round2 check (2ms)\\nTests 1 failed (1)"); process.exit(1);',
+      ].join('\n'),
+      'index.html': '<h1>v0</h1>\n',
+    });
+
+    const promptsSeen: string[] = [];
+    const ctl = new TaskController({
+      repo,
+      makeExecutor: () => {
+        const ex = new FakeExecutor((prompt) => {
+          promptsSeen.push(prompt);
+          return prompt.includes('上一次结果需要修改')
+            ? [{ do: 'write', path: 'index.html', content: '<h1>round2</h1>\n' }, { do: 'exit', code: 0 }]
+            : [{ do: 'write', path: 'index.html', content: '<h1>round1</h1>\n' }, { do: 'exit', code: 0 }];
+        });
+        (ex as unknown as { sandboxRunner: unknown }).sandboxRunner = testSandboxRunner();
+        return ex;
+      },
+      pickDirectory: async () => null,
+      prefs: new TaskPrefs(mk('prefs')),
+    });
+
+    const created = await ctl.create('优化首页标题与测试');
+    await ctl.savePlan(created.id, { goal: '优化首页标题与测试', criteria: ['文案准确', '测试全部通过'], mode: 'standard', network: false });
+    await ctl.start(created.id, false);
+    const waitReview = async () => {
+      let v = await ctl.getAcceptanceView(created.id);
+      while (v.state !== 'reviewing' || v.busy) {
+        await new Promise((r) => setTimeout(r, 20));
+        v = await ctl.getAcceptanceView(created.id);
+      }
+      return v;
+    };
+
+    let v1 = await waitReview();
+    expect(v1.currentRound).toBe(1);
+    expect(v1.proof.test.status).toBe('failed');
+    v1 = (await ctl.confirmCriterion(created.id, 'c0', v1.version)).view;
+    v1 = (await ctl.rejectCriterion(created.id, 'c1', v1.version, '请补齐 round2 标记')).view;
+
+    const rawBefore = (await ctl.listTasksRaw())[0]!;
+    const worktreeRound1 = rawBefore.worktree?.path;
+    expect(worktreeRound1).toBeTruthy();
+
+    const startedR2 = await ctl.reworkTask(created.id, '请确保页面包含 round2 且通过测试');
+    expect(startedR2.round).toBe(2);
+    const v2 = await waitReview();
+
+    expect(v2.currentRound).toBe(2);
+    expect(v2.rounds).toHaveLength(2);
+    expect(promptsSeen[1]).toContain('请确保页面包含 round2 且通过测试');
+    expect(promptsSeen[1]).toContain('测试全部通过（说明：请补齐 round2 标记）');
+
+    const rawAfter = (await ctl.listTasksRaw())[0]!;
+    expect(rawAfter.worktree?.path).toBe(worktreeRound1); // 同一副本继续
+    expect(rawAfter.rounds).toHaveLength(2);
+    expect(rawAfter.rounds?.[0]?.round).toBe(1);
+    expect(rawAfter.rounds?.[0]?.checks.find((c) => c.name === 'test')?.status).toBe('failed');
+    expect(rawAfter.rounds?.[0]?.criteria[1]).toMatchObject({ decision: 'rejected', note: '请补齐 round2 标记' });
+    expect(rawAfter.rounds?.[1]?.round).toBe(2);
+    expect(rawAfter.rounds?.[1]?.checks.find((c) => c.name === 'test')?.status).toBe('passed');
+
+    // 视图里第 1 轮历史与第 2 轮当前彼此独立
+    expect(v2.rounds[0]?.isCurrent).toBe(false);
+    expect(v2.rounds[0]?.proof.round).toBe(1);
+    expect(v2.rounds[0]?.proof.test.status).toBe('failed');
+    expect(v2.rounds[0]?.criteria[1]).toMatchObject({ rejected: true, note: '请补齐 round2 标记' });
+    expect(v2.rounds[1]?.isCurrent).toBe(true);
+    expect(v2.rounds[1]?.proof.round).toBe(2);
+    expect(v2.rounds[1]?.proof.test.status).toBe('passed');
+    expect(v2.rounds[1]?.criteria[0]).toMatchObject({ confirmed: false, rejected: false });
+  });
+
+  it('停止/继续执行后进入第 2 轮且记录「接着上次停下的地方继续」，修改权限会退回 planned 重新批准', async () => {
+    const repo = initRepo({ 'index.html': '<h1>v0</h1>\n' });
+    let turn = 0;
+    const ctl = new TaskController({
+      repo,
+      makeExecutor: () =>
+        new FakeExecutor(() =>
+          turn++ === 0
+            ? [{ do: 'write', path: 'index.html', content: '<h1>partial</h1>\n' }, { do: 'exit', code: 1 }]
+            : [{ do: 'write', path: 'index.html', content: '<h1>done</h1>\n' }, { do: 'exit', code: 0 }],
+        ),
+      pickDirectory: async () => null,
+      prefs: new TaskPrefs(mk('prefs2')),
+    });
+
+    const created = await ctl.create('连续轮次与改权限');
+    await ctl.savePlan(created.id, { goal: '连续轮次与改权限', criteria: ['可访问'], mode: 'standard', network: false });
+    await ctl.start(created.id, false);
+    const waitState = async (targets: string[]) => {
+      let tv = await ctl.get(created.id);
+      while (!targets.includes(tv.state) || tv.running) {
+        await new Promise((r) => setTimeout(r, 20));
+        tv = await ctl.get(created.id);
+      }
+      return tv;
+    };
+
+    const r1 = await waitState(['reviewing']);
+    expect(r1.round).toBe(1);
+    const cont = await ctl.continueTask(created.id);
+    expect(cont.round).toBe(2);
+    await waitState(['reviewing']);
+
+    const rawCont = (await ctl.listTasksRaw())[0]!;
+    expect(rawCont.rounds).toHaveLength(2);
+    expect(rawCont.rounds?.[1]?.feedback).toBe('接着上次停下的地方继续');
+
+    // 从第 2 轮点“修改权限” -> 回到 planned 且保留第 1/2 轮历史，需要重新保存/批准并开工才能进入第 3 轮
+    const planned = await ctl.editReworkPermissions(created.id, '开启联网后继续');
+    expect(planned.state).toBe('planned');
+    expect(planned.round).toBe(3);
+    expect(planned.reapproveNotice).toContain('重新点击「批准并开工」');
+    await ctl.savePlan(created.id, { goal: '连续轮次与改权限', criteria: ['可访问'], mode: 'standard', network: true });
+    await ctl.start(created.id, false);
+    await waitState(['reviewing']);
+
+    const v3 = await ctl.getAcceptanceView(created.id);
+    expect(v3.currentRound).toBe(3);
+    expect(v3.rounds.map((r) => r.round)).toEqual([1, 2, 3]);
+    expect(v3.rework.permissionSummary).toContain('可联网');
+  });
+});

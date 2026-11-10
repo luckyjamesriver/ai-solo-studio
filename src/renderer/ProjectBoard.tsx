@@ -188,6 +188,7 @@ export function ProjectBoard({
                         {/* 3. AI 与辅助信息 */}
                         <div className="muted">
                           {t.executorText}
+                          {t.round >= 2 && <span data-testid="task-round-badge"> · {COPY.roundBadge(t.round)}</span>}
                           {t.saveCheckText && <span data-testid="task-save-check"> · {t.saveCheckText}</span>}
                         </div>
                       </li>
@@ -213,6 +214,7 @@ export function ProjectBoard({
                     <strong>{t.goal}</strong>
                     <div className="muted">
                       {new Date(t.updatedAt).toLocaleString()} · {t.executorText}
+                      {t.round >= 2 && <span data-testid="history-round-badge"> · {COPY.roundBadge(t.round)}</span>}
                       {t.saveCheckText && ` · ${t.saveCheckText}`} · {t.layer.statusTag}
                     </div>
                   </div>

@@ -1,13 +1,17 @@
-import { acceptanceVersion, type Task } from '../task/model.js';
+import { acceptanceVersion, type Task, type TaskRound } from '../task/model.js';
 import type { TaskState } from '../task/state.js';
 import { canFire } from '../task/state.js';
 import { MESSAGES, uncheckedReasonText } from '../task/messages.js';
 import type { UnavailableReason, UncheckedKind } from '../checks/scripts.js';
 import { saveBlockerCodes, type BlockerCode } from '../task/save-rules.js';
 import type { OpFail } from '../task/runner.js';
+import { summarizeCapabilities } from '../app/permission-text.js';
 import { STATE_TEXT } from '../app/task-view.js';
+import type { DeniedOperation, ExitOutcome } from '../executor/types.js';
+import type { FileChange } from '../git/git.js';
+import type { AcceptanceCard } from './card.js';
 import { extractIncomplete, type IncompleteReport } from './incomplete.js';
-import { buildTaskProof, type ProofChangeEntry, type ProofDeniedEntry, type ProofTab, type SingleCheckProof, type TaskProofView, type TestCaseProof } from './proof.js';
+import { buildRoundProof, buildTaskProof, type ProofChangeEntry, type ProofDeniedEntry, type ProofTab, type SingleCheckProof, type TaskProofView, type TestCaseProof } from './proof.js';
 import type { ChangePreview } from './snippets.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from './texts.js';
 
@@ -76,6 +80,29 @@ export interface AcceptedRiskView {
   reason: string;
 }
 
+export interface RoundSnapshotView {
+  round: number;
+  isCurrent: boolean;
+  startedAtText: string;
+  endedAtText: string | null;
+  feedback?: string;
+  items: ViewItem[];
+  changes: ViewChange[];
+  criteria: { id: string; text: string; confirmed: boolean; rejected: boolean; note?: string }[];
+  overall: { needed: boolean; confirmed: boolean; rejected: boolean; note?: string; text: string };
+  denied: { id: string; text: string; impact: string; acked: boolean }[];
+  acceptanceStatus: AcceptanceStatusView;
+  aiReport: IncompleteReport;
+  proof: TaskProofView;
+}
+
+export interface ReworkContextView {
+  nextRound: number;
+  executorText: string;
+  permissionSummary: string;
+  hasMultipleExecutors: boolean;
+}
+
 export interface UserAcceptanceView {
   taskId: string;
   goal: string;
@@ -113,8 +140,12 @@ export interface UserAcceptanceView {
   saveRecord: SaveRecordView | null;
   /** 最近一次保存返回“未检查待确认”且验收版本一致时的界面确认信息与按钮文案 */
   uncheckedConfirm: UncheckedConfirmView | null;
-  /** 检查依据详情页数据（按轮次绑定，已做命令行/环境变量/密钥/~路径过滤） */
+  /** 检查依据详情页数据（按当前轮次绑定，已做命令行/环境变量/密钥/~路径过滤） */
   proof: TaskProofView;
+  /** 当前轮次编号与各轮独立记录（多轮可切换对照） */
+  currentRound: number;
+  rounds: RoundSnapshotView[];
+  rework: ReworkContextView;
   /** 成果预览信息（步骤 ①） */
   preview: {
     kind: 'web' | 'finder' | null;
@@ -269,6 +300,8 @@ export interface ViewContext {
   repoPath?: string;
   /** 改动片段（只有验收阶段才有） */
   previews?: Map<string, ChangePreview>;
+  /** 历史各轮的改动片段（按轮次索引） */
+  roundPreviews?: Map<number, Map<string, ChangePreview>>;
   /** 保存的只读预判：null = 目前可以保存；undefined = 没有判断 */
   saveCheck?: OpFail | null;
   /** 撤销的只读预判，含义同上 */
@@ -311,8 +344,8 @@ function verdictFor(t: Task, blockers: BlockerCode[], saveFail: { message: strin
 
 /** 核心层计算验收状态：验收通过 / 验收未完成 / 验收未通过（v1.0 不做部分通过） */
 export function computeAcceptanceStatus(
-  t: Task,
-  opts: { save: ActionState; deniedAllAcked: boolean; anyUnchecked: boolean; verdict: string },
+  t: Pick<Task, 'state' | 'manualReview' | 'criteria' | 'overallConfirmed' | 'overallDecision'>,
+  opts: { save: ActionState; deniedAllAcked: boolean; anyUnchecked: boolean; verdict: string; showSaveWhenOpen?: boolean },
 ): AcceptanceStatusView {
   if (t.manualReview) {
     return { kind: 'incomplete', label: '验收未完成', reason: MESSAGES.abnormal, showSaveButton: false };
@@ -333,7 +366,7 @@ export function computeAcceptanceStatus(
       kind: 'incomplete',
       label: '验收未完成',
       reason: hasCriteria ? `还有 ${remaining} 条验收标准没确认` : VIEW_TEXT.blockers.overall_unconfirmed,
-      showSaveButton: true,
+      showSaveButton: opts.showSaveWhenOpen ?? true,
     };
   }
   if (!opts.deniedAllAcked) {
@@ -341,7 +374,7 @@ export function computeAcceptanceStatus(
       kind: 'incomplete',
       label: '验收未完成',
       reason: VIEW_TEXT.blockers.denied_unacked,
-      showSaveButton: true,
+      showSaveButton: opts.showSaveWhenOpen ?? true,
     };
   }
   if (t.state === 'reviewing' && opts.save.enabled) {
@@ -349,23 +382,24 @@ export function computeAcceptanceStatus(
       kind: 'passed',
       label: '验收通过',
       reason: opts.anyUnchecked ? '每条验收标准已确认「符合」（注意：部分自动检查未运行）。' : '每条验收标准已确认「符合」，可以保存到项目。',
-      showSaveButton: true,
+      showSaveButton: opts.showSaveWhenOpen ?? true,
     };
   }
   return {
     kind: 'incomplete',
     label: '验收未完成',
     reason: opts.save.reason ?? opts.verdict,
-    showSaveButton: t.state === 'reviewing',
+    showSaveButton: opts.showSaveWhenOpen ?? t.state === 'reviewing',
   };
 }
 
-export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcceptanceView {
-  const card = t.card;
-  const denied = t.denied ?? [];
-  const acks = t.deniedAcks ?? [];
+function mapCardItems(
+  card: AcceptanceCard | undefined,
+  exit: ExitOutcome | undefined,
+  denied: DeniedOperation[],
+  acks: boolean[],
+): ViewItem[] {
   const items: ViewItem[] = [];
-
   for (const it of card?.items ?? []) {
     if (it.key.startsWith('criterion-') || it.key === 'overall') continue; // 单独呈现
     const label = ITEM_LABEL[it.key];
@@ -373,7 +407,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     const status = mapStatus(it.status);
     let text: string;
     switch (it.key) {
-      case 'exit': text = status === 'verified' ? VIEW_TEXT.exitOk : exitFailureText(t.exit); break;
+      case 'exit': text = status === 'verified' ? VIEW_TEXT.exitOk : exitFailureText(exit); break;
       case 'changes': text = status === 'verified' ? VIEW_TEXT.changesSome(card!.changes.length) : VIEW_TEXT.changesNone; break;
       case 'build':
       case 'test': {
@@ -396,14 +430,12 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     // 预览从未提供：不能标成“等你确认”，如实写“未检查”
     items.push({ key: it.key, label, status: it.key === 'preview' ? 'not_checked' : status, text });
   }
+  return items;
+}
 
-  const blockers = t.state === 'reviewing' || t.state === 'save_failed_unmerged' ? saveBlockerCodes(t) : [];
-  const anyFailed = items.some((i) => i.status === 'failed');
-  const anyUnchecked = items.some((i) => i.status === 'not_checked' && i.key !== 'preview');
-  const saveFail = ctx.saveCheck ? mapFailure(ctx.saveCheck) : null;
-
-  const changes: ViewChange[] = (card?.changes ?? []).map((c) => {
-    const preview = ctx.previews?.get(c.path);
+function mapChanges(changes: FileChange[] | undefined, previews: Map<string, ChangePreview> | undefined): ViewChange[] {
+  return (changes ?? []).map((c) => {
+    const preview = previews?.get(c.path);
     return {
       path: safeRelPath(c.path) ?? '（路径不可显示）',
       kind: c.status,
@@ -412,17 +444,106 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
       ...(preview ? { preview } : {}),
     };
   });
+}
+
+function mapAiReport(aiMessages: string[], exit: ExitOutcome | undefined, denied: DeniedOperation[]): IncompleteReport {
+  const incompleteSignals = !!exit && (exit.kind !== 'exited' || exit.code !== 0 || denied.length > 0);
+  const rawReport = extractIncomplete(aiMessages, { incompleteSignals });
+  if (rawReport.kind === 'items') return { kind: 'items', items: rawReport.items.map(scrubAiText) };
+  if (rawReport.kind === 'raw') return { kind: 'raw', text: scrubAiText(rawReport.text) };
+  return rawReport;
+}
+
+function formatExecutorLabel(t: Pick<Task, 'executorName' | 'executorId' | 'model' | 'timeline'>): string {
+  const name = t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex');
+  const modelFromTimeline = t.timeline.find((e) => e.kind === 'isolation' && e.text.includes('模型='))
+    ?.text.match(/模型=([^，；\s]+)/)?.[1];
+  const model = t.model ?? (modelFromTimeline && modelFromTimeline !== '未知' ? modelFromTimeline : undefined);
+  return model ? `${name} · ${model}` : name;
+}
+
+function buildRoundSnapshot(
+  t: Task,
+  r: TaskRound,
+  ctx: ViewContext,
+): RoundSnapshotView {
+  const roundDenied = r.denied ?? [];
+  const roundAcks = r.deniedAcks ?? [];
+  const items = mapCardItems(r.card, r.exit, roundDenied, roundAcks);
+  const anyUnchecked = items.some((i) => i.status === 'not_checked' && i.key !== 'preview');
+  const deniedAllAcked = roundDenied.every((_, i) => roundAcks[i] === true);
+  const acceptanceStatus = computeAcceptanceStatus(
+    {
+      state: t.state,
+      manualReview: t.manualReview,
+      criteria: r.criteria.map((c) => ({ text: c.text, ...(c.decision ? { decision: c.decision } : {}), ...(c.note ? { note: c.note } : {}) })),
+      overallConfirmed: r.overallConfirmed,
+      overallDecision: r.overallDecision,
+    },
+    {
+      save: r.card?.items.some((i) => i.status === 'failed') ? off(VIEW_TEXT.verdictChecksFailed) : on(),
+      deniedAllAcked,
+      anyUnchecked,
+      verdict: r.card?.headline ?? '',
+      showSaveWhenOpen: false,
+    },
+  );
+  return {
+    round: r.round,
+    isCurrent: false,
+    startedAtText: formatShortTime(r.startedAt),
+    endedAtText: r.endedAt ? formatShortTime(r.endedAt) : null,
+    ...(r.feedback ? { feedback: scrubAiText(r.feedback) } : {}),
+    items,
+    changes: mapChanges(r.card?.changes, ctx.roundPreviews?.get(r.round)),
+    criteria: r.criteria.map((c, i) => ({
+      id: `c${i}`,
+      text: c.text,
+      confirmed: c.decision === 'confirmed',
+      rejected: c.decision === 'rejected',
+      ...(c.note ? { note: scrubAiText(c.note) } : {}),
+    })),
+    overall: {
+      needed: r.criteria.length === 0 && !!r.card,
+      confirmed: r.overallConfirmed === true,
+      rejected: r.overallDecision === 'rejected',
+      ...(r.overallNote ? { note: scrubAiText(r.overallNote) } : {}),
+      text: '我已看过改动，结果符合我的要求',
+    },
+    denied: roundDenied.map((d, i) => ({ id: `d${i}`, text: deniedText(d), impact: deniedImpactText(d), acked: roundAcks[i] === true })),
+    acceptanceStatus: { ...acceptanceStatus, showSaveButton: false },
+    aiReport: mapAiReport(r.aiMessages ?? [], r.exit, roundDenied),
+    proof: buildRoundProof(t, r, {
+      ...(ctx.roundPreviews?.get(r.round) ? { previews: ctx.roundPreviews.get(r.round) } : {}),
+      ...(ctx.repoPath ? { repoPath: ctx.repoPath } : {}),
+    }),
+  };
+}
+
+export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcceptanceView {
+  const card = t.card;
+  const denied = t.denied ?? [];
+  const acks = t.deniedAcks ?? [];
+  const items = mapCardItems(card, t.exit, denied, acks);
+
+  const blockers = t.state === 'reviewing' || t.state === 'save_failed_unmerged' ? saveBlockerCodes(t) : [];
+  const anyFailed = items.some((i) => i.status === 'failed');
+  const anyUnchecked = items.some((i) => i.status === 'not_checked' && i.key !== 'preview');
+  const saveFail = ctx.saveCheck ? mapFailure(ctx.saveCheck) : null;
+
+  const changes = mapChanges(card?.changes, ctx.previews);
 
   const unexpected = denied.filter((d) => d.anomaly).length;
   const notes: string[] = [];
   if (t.customCommitChecks) notes.push(MESSAGES.skippedCommitChecks);
   if (unexpected > 0) notes.push(VIEW_TEXT.unexpected);
 
-  const aiMessages = t.timeline.filter((e) => e.kind === 'message' && e.source !== 'host').map((e) => e.text);
-  const incompleteSignals = !!t.exit && (t.exit.kind !== 'exited' || t.exit.code !== 0 || denied.length > 0);
-  const rawReport = extractIncomplete(aiMessages, { incompleteSignals });
-  const aiReport: IncompleteReport =
-    rawReport.kind === 'items' ? { kind: 'items', items: rawReport.items.map(scrubAiText) } : rawReport.kind === 'raw' ? { kind: 'raw', text: scrubAiText(rawReport.text) } : rawReport;
+  const currentRound = t.currentRound ?? (t.rounds?.length ? Math.max(...t.rounds.map((r) => r.round)) : 1);
+  const currentStoredRound = t.rounds?.find((r) => r.round === currentRound);
+  const aiMessages = currentStoredRound?.aiMessages?.length
+    ? currentStoredRound.aiMessages
+    : t.timeline.filter((e) => e.kind === 'message' && e.source !== 'host').map((e) => e.text);
+  const aiReport = mapAiReport(aiMessages, t.exit, denied);
 
   // ───── 操作按钮 ─────
   const readOnly = !!t.manualReview;
@@ -504,6 +625,42 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
   });
 
   const needsOverall = t.criteria.length === 0;
+  const criteriaViews = t.criteria.map((c, i) => ({
+    id: `c${i}`,
+    text: c.text,
+    confirmed: c.decision === 'confirmed',
+    rejected: c.decision === 'rejected',
+    ...(c.note ? { note: scrubAiText(c.note) } : {}),
+  }));
+  const overallView = {
+    needed: needsOverall && !!card,
+    confirmed: t.overallConfirmed === true,
+    rejected: t.overallDecision === 'rejected',
+    ...(t.overallNote ? { note: scrubAiText(t.overallNote) } : {}),
+    text: '我已看过改动，结果符合我的要求',
+  };
+  const deniedViews = denied.map((d, i) => ({ id: `d${i}`, text: deniedText(d), impact: deniedImpactText(d), acked: acks[i] === true }));
+  const currentSnapshot: RoundSnapshotView = {
+    round: currentRound,
+    isCurrent: true,
+    startedAtText: formatShortTime(currentStoredRound?.startedAt ?? t.roundStartedAt ?? t.createdAt),
+    endedAtText: (currentStoredRound?.endedAt ?? t.roundEndedAt) ? formatShortTime((currentStoredRound?.endedAt ?? t.roundEndedAt)!) : null,
+    ...(currentStoredRound?.feedback ? { feedback: scrubAiText(currentStoredRound.feedback) } : {}),
+    items,
+    changes,
+    criteria: criteriaViews,
+    overall: overallView,
+    denied: deniedViews,
+    acceptanceStatus,
+    aiReport,
+    proof,
+  };
+  const historicalSnapshots = (t.rounds ?? [])
+    .filter((r) => r.round !== currentRound)
+    .sort((a, b) => a.round - b.round)
+    .map((r) => buildRoundSnapshot(t, r, ctx));
+  const rounds = [...historicalSnapshots, currentSnapshot].sort((a, b) => a.round - b.round);
+
   return {
     taskId: t.id,
     goal: t.plan?.goal ?? t.request,
@@ -513,21 +670,9 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     acceptanceStatus,
     items,
     changes,
-    criteria: t.criteria.map((c, i) => ({
-      id: `c${i}`,
-      text: c.text,
-      confirmed: c.decision === 'confirmed',
-      rejected: c.decision === 'rejected',
-      ...(c.note ? { note: scrubAiText(c.note) } : {}),
-    })),
-    overall: {
-      needed: needsOverall && !!card,
-      confirmed: t.overallConfirmed === true,
-      rejected: t.overallDecision === 'rejected',
-      ...(t.overallNote ? { note: scrubAiText(t.overallNote) } : {}),
-      text: '我已看过改动，结果符合我的要求',
-    },
-    denied: denied.map((d, i) => ({ id: `d${i}`, text: deniedText(d), impact: deniedImpactText(d), acked: acks[i] === true })),
+    criteria: criteriaViews,
+    overall: overallView,
+    denied: deniedViews,
     notes,
     acceptedRisks,
     aiReport,
@@ -558,6 +703,14 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
       : null,
     uncheckedConfirm,
     proof,
+    currentRound,
+    rounds,
+    rework: {
+      nextRound: currentRound + 1,
+      executorText: formatExecutorLabel(t),
+      permissionSummary: summarizeCapabilities(t.plan?.capabilities),
+      hasMultipleExecutors: false,
+    },
     preview: {
       kind: ctx.previewKind !== undefined ? ctx.previewKind : (t.worktree?.path ? 'finder' : null),
       buttonText: ctx.previewButtonText ?? ((ctx.previewKind ?? (t.worktree?.path ? 'finder' : null)) === 'web' ? '在浏览器中打开预览' : '在访达中显示'),

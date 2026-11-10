@@ -24,6 +24,8 @@ const api = {
   startTask: (projectId: string, id: string, ack: boolean) => ipcRenderer.invoke('tasks:start', projectId, id, ack),
   stopTask: (projectId: string, id: string) => ipcRenderer.invoke('tasks:stop', projectId, id),
   continueTask: (projectId: string, id: string) => ipcRenderer.invoke('tasks:continue', projectId, id),
+  reworkTask: (projectId: string, id: string, feedback: string) => ipcRenderer.invoke('tasks:rework', projectId, id, feedback),
+  editReworkPermissions: (projectId: string, id: string, feedback: string) => ipcRenderer.invoke('tasks:editReworkPermissions', projectId, id, feedback),
   // B4-2 + 阶段 2 多项目：验收、保存、放弃、撤销。参数只有已打开项目编号、任务编号、条目编号（c0 / d0）与验收版本；没有路径、分支或 Git 参数。
   getAcceptanceView: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:get', projectId, id),
   openPreview: (projectId: string, id: string, version: string) => ipcRenderer.invoke('acceptance:openPreview', projectId, id, version),

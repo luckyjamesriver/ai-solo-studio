@@ -48,6 +48,8 @@ export type { TaskClassification, TaskStage, TaskOutcome, WorkbenchGroup } from 
 export type { OpenProjectSummary, CloseProjectResult, WorkbenchEntry, WorkbenchNextAction, WorkbenchView } from '../core/app/open-projects.js';
 export type {
   UserAcceptanceView,
+  RoundSnapshotView,
+  ReworkContextView,
   ViewItem,
   ViewChange,
   ActionState,
@@ -83,6 +85,8 @@ interface StudioApi {
   startTask(projectId: string, id: string, ack: boolean): Promise<TaskView>;
   stopTask(projectId: string, id: string): Promise<TaskView>;
   continueTask(projectId: string, id: string): Promise<TaskView>;
+  reworkTask(projectId: string, id: string, feedback: string): Promise<TaskView>;
+  editReworkPermissions(projectId: string, id: string, feedback: string): Promise<TaskView>;
   getAcceptanceView(projectId: string, id: string): Promise<UserAcceptanceView>;
   openPreview(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   skipPreview(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;

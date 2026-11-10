@@ -1,4 +1,13 @@
+import type { Capabilities } from '../capabilities/model.js';
 import type { EffectivePermissions } from '../executor/modes.js';
+
+export function summarizeCapabilities(caps: Capabilities | undefined): string {
+  const mode = caps?.constructionMode === 'full_trust' ? '完全信任' : '标准';
+  const dirCount = caps?.extraWritableDirs.length ?? 0;
+  const dirPart = caps?.constructionMode === 'full_trust' ? '' : dirCount > 0 ? `任务副本 + ${dirCount} 个文件夹` : '仅任务副本';
+  const netPart = caps?.externalNetwork === 'on' ? '可联网' : '不联网';
+  return [mode, ...(dirPart ? [dirPart] : []), netPart].join(' · ');
+}
 
 export interface PermissionSummary {
   /** 模式名（中文） */
