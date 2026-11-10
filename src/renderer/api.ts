@@ -17,6 +17,7 @@ export interface HealthReport {
   limitations: string[];
   pathInfo: { processPath: string; supplementalDirs: string[] };
   project: { name: string } | null;
+  firstRun?: boolean;
 }
 export interface SavePoint { sha: string; message: string; date: string; checked?: boolean; checksText?: '检查通过' | '未检查' }
 export interface ProjectStatus { id: string; path: string; name: string; isRepo: boolean; uncommitted: number; savePoints: SavePoint[]; tasks: { id: string; request: string; state: string }[] }

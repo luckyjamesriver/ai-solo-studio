@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { z } from 'zod';
-import { CorruptRecordError, migrateLegacyFiles, RecordStore, type CollectionDef, type OpenOptions } from '../persistence/index.js';
+import { CorruptRecordError, migrateLegacyFiles, RecordStore, updateRecord, type CollectionDef, type OpenOptions } from '../persistence/index.js';
 
 /**
  * 应用级小记录（最近项目、外发告知确认、任务偏好）的存储：userData 下的记录库，集合 `app`，一条记录一个 id。
@@ -40,5 +40,19 @@ export class AppStore {
       await store.appendEvent('diagnostic', { what: `应用记录 ${id} 无法读取，已按“没有”处理`, raw: e.message }).catch(() => undefined);
       return null;
     }
+  }
+
+  /** 是否已展示过首次环境体检引导（B8）。 */
+  async isEnvOnboardingDone(): Promise<boolean> {
+    const rec = await this.read('env-onboarding');
+    return typeof rec?.completedAt === 'string' && rec.completedAt.length > 0;
+  }
+
+  /** 记录已完成首次环境体检引导（幂等）。 */
+  async markEnvOnboardingDone(): Promise<void> {
+    await updateRecord(await this.store(), APP_COLLECTION, 'env-onboarding', {}, (cur) => ({
+      ...cur,
+      completedAt: typeof cur.completedAt === 'string' ? cur.completedAt : new Date().toISOString(),
+    }));
   }
 }

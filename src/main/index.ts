@@ -10,10 +10,11 @@ import { CodexExecutor, VERIFIED_CODEX_VERSION } from '../core/executor/adapters
 import { DEV_PERSONAL_ENV } from '../core/thinking/claude-cli.js';
 import { RecentProjects } from '../core/app/recent.js';
 import { DisclosureStore, buildDisclosure } from '../core/app/disclosure.js';
+import { AppStore } from '../core/app/app-store.js';
 import { TaskStore } from '../core/task/store.js';
 import { TaskController } from '../core/app/task-controller.js';
 import { TaskPrefs } from '../core/app/prefs.js';
-import { OpenProjectManager } from '../core/app/open-projects.js';
+import { OpenProjectManager, type WorkbenchEntry } from '../core/app/open-projects.js';
 import { localApfsProbe, RecordStore, VolumeNotSupportedError, WriterLockedError, type OpenOptions } from '../core/persistence/index.js';
 
 /**
@@ -26,6 +27,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 let win: BrowserWindow | null = null;
 /** 已打开项目表：键为项目 id（沿用 recent.ts 的 id），值为该项目的 TaskController 与 RecordStore。 */
 const openProjects = new OpenProjectManager<RecordStore>();
+let latestHealth: (HealthReport & { firstRun?: boolean }) | null = null;
+let healthUpdatedAt = new Date().toISOString();
+let onboardingInSession: boolean | null = null;
 /** 等待用户确认“创建版本记录”的非 Git 文件夹。确认前不会打开，也不会改动任何东西。 */
 let pendingInit: string | null = null;
 
@@ -33,6 +37,27 @@ const dataDir = () => app.getPath('userData');
 const recent = () => new RecentProjects(dataDir(), {}, STORE_OPTS);
 const disclosureStore = () => new DisclosureStore(dataDir(), STORE_OPTS);
 const TOOLS = ['git', 'node', 'npm', 'codex'] as const;
+
+openProjects.setHealthProbe(async (): Promise<WorkbenchEntry[]> => {
+  if (!latestHealth) return [];
+  const failed = latestHealth.items.filter((i) => i.overall === 'fail');
+  if (failed.length === 0) return [];
+  return [
+    {
+      id: 'env:health',
+      kind: 'health',
+      projectId: null,
+      projectName: latestHealth.project?.name ?? '本机环境',
+      taskName: `环境检查发现问题（${failed.map((f) => f.label).join('、')}）`,
+      state: 'health_issue',
+      statusLabel: '需要处理',
+      isAbnormal: true,
+      impact: '检测到本机运行环境未就绪，可能影响工具运行或项目兼容性，建议前往环境体检查看原因',
+      nextAction: { kind: 'open_settings_health', label: '查看环境体检' },
+      updatedAt: healthUpdatedAt,
+    },
+  ];
+});
 
 function createWindow() {
   win = new BrowserWindow({
@@ -169,7 +194,12 @@ async function openValidated(input: string): Promise<OpenResult> {
   return registerOpenedRepo(v.path);
 }
 
-async function health(): Promise<HealthReport> {
+async function health(): Promise<HealthReport & { firstRun?: boolean }> {
+  const appStore = new AppStore(dataDir(), STORE_OPTS);
+  if (onboardingInSession === null) {
+    onboardingInSession = !(await appStore.isEnvOnboardingDone());
+    if (onboardingInSession) await appStore.markEnvOnboardingDone();
+  }
   const activeEntry = openProjects.find(openProjects.activeId);
   const activeDir = activeEntry?.path ?? null;
   const tools = await resolveHostTools(TOOLS);
@@ -185,7 +215,10 @@ async function health(): Promise<HealthReport> {
     codex: probe,
     verifiedCodexVersion: VERIFIED_CODEX_VERSION,
   });
-  return { ...report, project: activeDir ? { name: path.basename(activeDir) } : null };
+  const res = { ...report, project: activeDir ? { name: path.basename(activeDir) } : null, firstRun: onboardingInSession };
+  latestHealth = res;
+  healthUpdatedAt = new Date().toISOString();
+  return res;
 }
 
 async function disclosure() {
