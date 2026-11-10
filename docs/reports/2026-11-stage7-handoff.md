@@ -105,4 +105,6 @@
 - `npm run test:e2e`：**51 / 51 全部通过**（`309.84s`，0 失败、0 跳过；含阶段 7 新增 2 项外部交接与多轮代码保留全流程 E2E）
 
 ### GitHub Actions 双平台 CI（`rebuild` 分支）
-- （推送后补填双平台绿灯运行链接）
+- 全量代码 + 截图 + 报告双平台绿灯运行（[`ca085e5`](https://github.com/luckyjamesriver/ai-solo-studio/commit/ca085e5)）：[https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42898640638](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42898640638)
+  - `test (ubuntu-latest)`：`success`（1m7s，[job 130118372602](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42898640638/job/130118372602)）
+  - `test (macos-latest)`：`success`（5m21s，[job 130118372160](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42898640638/job/130118372160)，含 51 项 Electron E2E 全量通过）
