@@ -457,3 +457,74 @@ describe('阶段 1 · 保存记录检查信息与界面文案', () => {
     expect(tv.saveCheckText).toBe('未检查');
   });
 });
+
+describe('阶段 1 · 项目级锁（manualReview 锁定同项目其他任务的保存与撤销）', () => {
+  async function createAnotherConfirmed(repo: string, runner: TaskRunner, goal: string, pathRel: string, content: string) {
+    const r2 = new TaskRunner({
+      repo,
+      executor: new FakeExecutor([{ do: 'write', path: pathRel, content }, { do: 'exit', code: 0 }]),
+      runChecks: false,
+    });
+    const t = await r2.create(goal);
+    await r2.setPlan(t.id, { ...basePlan, goal });
+    await r2.approve(t.id);
+    await r2.start(t.id);
+    await r2.confirm(t.id, { criterion: 0, decision: 'confirmed' });
+    return { runner: r2, id: t.id, task: (await runner.store.get(t.id))! };
+  }
+
+  it('A 任务处于 manualReview 时，同项目 B 任务保存、C 任务撤销均返回 project_locked；人工处理解除后恢复正常', async () => {
+    const repo = await makeRepo({ 'index.html': '<h1>old</h1>\n', 'a.txt': 'a\n', 'b.txt': 'b\n', 'c.txt': 'c\n' });
+    const runner = new TaskRunner({ repo, executor: new FakeExecutor([]), runChecks: false });
+
+    // C 任务先正常保存（后续测试它不能被撤销）
+    const c = await createAnotherConfirmed(repo, runner, '任务 C', 'c.txt', 'c-new\n');
+    expect((await c.runner.save(c.id)).ok).toBe(true);
+
+    // A 任务进入验收后发生 manualReview
+    const a = await createAnotherConfirmed(repo, runner, '异常任务 A', 'a.txt', 'a-new\n');
+    const aRec = (await runner.store.get(a.id))!;
+    aRec.manualReview = { reason: '恢复未确认', at: new Date().toISOString() };
+    await runner.store.save(aRec);
+
+    // B 任务在同项目准备保存
+    const b = await createAnotherConfirmed(repo, runner, '任务 B', 'b.txt', 'b-new\n');
+
+    // B 的保存与预判均被项目锁拒绝
+    const bPreview = await runner.previewSave((await runner.store.get(b.id))!);
+    expect(bPreview).toMatchObject({ ok: false, reason: 'project_locked', blockingTask: '异常任务 A' });
+    const bSave = await b.runner.save(b.id);
+    expect(bSave).toMatchObject({ ok: false, reason: 'project_locked', blockingTask: '异常任务 A' });
+    expect(!bSave.ok && bSave.detail).toContain('异常任务 A');
+    expect(!bSave.ok && bSave.detail).toContain('先处理那个任务');
+    expect(await fs.readFile(path.join(repo, 'b.txt'), 'utf8')).toBe('b\n');
+
+    // B 的用户视图也把保存按钮置灰并提示先处理异常任务 A
+    const bView = toUserView((await runner.store.get(b.id))!, { busy: false, saveCheck: bPreview });
+    expect(bView.actions.save.enabled).toBe(false);
+    expect(bView.actions.save.reason).toContain('异常任务 A');
+
+    // C 的撤销与预判同样被项目锁拒绝
+    const cPreview = await runner.previewUndo((await runner.store.get(c.id))!);
+    expect(cPreview).toMatchObject({ ok: false, reason: 'project_locked', blockingTask: '异常任务 A' });
+    const cUndo = await c.runner.undo(c.id);
+    expect(cUndo).toMatchObject({ ok: false, reason: 'project_locked', blockingTask: '异常任务 A' });
+    expect(await fs.readFile(path.join(repo, 'c.txt'), 'utf8')).toBe('c-new\n');
+
+    // mapFailure 不泄露底层 detail
+    const mapped = mapFailure({ ok: false, reason: 'project_locked', detail: 'secret /Users/x', blockingTask: '异常任务 A' });
+    expect(mapped.message).toContain('异常任务 A');
+    expect(mapped.message).not.toContain('/Users/x');
+
+    // 模拟人工处理完成并清除 A 的 manualReview 后，解锁恢复
+    const aLatest = (await runner.store.get(a.id))!;
+    delete aLatest.manualReview;
+    await runner.store.save(aLatest);
+
+    expect((await b.runner.save(b.id)).ok).toBe(true);
+    expect(await fs.readFile(path.join(repo, 'b.txt'), 'utf8')).toBe('b-new\n');
+    // 现在撤销 B（HEAD=B 的 mergeCommit）也能正常执行
+    expect((await b.runner.undo(b.id)).ok).toBe(true);
+    expect(await fs.readFile(path.join(repo, 'b.txt'), 'utf8')).toBe('b\n');
+  });
+});

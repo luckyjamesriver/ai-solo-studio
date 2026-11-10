@@ -180,6 +180,14 @@ export function mapFailure(f: OpFail): { message: string; files?: string[] } {
     }
     case 'project_changed': return withFiles(MESSAGES.projectChanged);
     case 'failed_restored': return withFiles(MESSAGES.failedRestored);
+    case 'project_locked': {
+      const name = f.blockingTask ? scrubAiText(f.blockingTask) : '';
+      return withFiles(
+        name
+          ? `项目中有任务「${name}」处于异常状态（恢复未确认），请先处理那个任务后再保存或撤销。`
+          : MESSAGES.projectLocked,
+      );
+    }
     case 'abnormal': return withFiles(MESSAGES.abnormal);
     case 'undo_refused': return withFiles(MESSAGES.undoRefused);
     case 'cleanup_pending': return withFiles(f.detail === MESSAGES.saveCleanupPending || f.detail === MESSAGES.discardCleanupPending || f.detail === MESSAGES.cleanupBusy ? f.detail : VIEW_TEXT.cleanupNeeded);

@@ -28,6 +28,7 @@ export type OpFailReason =
   | 'checks_failed'
   | 'project_changed'
   | 'failed_restored'
+  | 'project_locked'
   | 'abnormal'
   | 'undo_refused'
   | 'cleanup_pending'
@@ -41,6 +42,8 @@ export interface OpFail {
   files?: string[];
   /** checks_failed 时未通过的检查项 */
   failedChecks?: CheckName[];
+  /** project_locked 时正处于 manualReview 的阻塞任务名称 */
+  blockingTask?: string;
 }
 export type SaveResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult; checked: boolean } | OpFail;
 export type DiscardResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult } | OpFail;
@@ -545,6 +548,23 @@ export class TaskRunner extends EventEmitter {
     for (const s of c.steps) this.opStep(t, `清理：${s.step}`, s.ok, s.error);
   }
 
+  private async findProjectLock(excludeTaskId: string): Promise<Task | null> {
+    for (const listed of await this.store.list()) {
+      if (listed.id !== excludeTaskId && listed.manualReview) return listed;
+    }
+    return null;
+  }
+
+  private projectLockFail(blocker: Task): OpFail {
+    const goal = blocker.plan?.goal ?? blocker.request;
+    return {
+      ok: false,
+      reason: 'project_locked',
+      detail: `项目中有任务「${goal}」处于异常状态（恢复未确认），请先处理那个任务后再保存或撤销。`,
+      blockingTask: goal,
+    };
+  }
+
   private async runTrialChecks(t: Task, trialPath: string): Promise<ProjectChecksOutcome> {
     if (this.opts.runChecks === false) {
       return { results: [], checked: false, summary: { passed: 0, failed: 0 }, failed: [] };
@@ -573,6 +593,8 @@ export class TaskRunner extends EventEmitter {
     if (t.manualReview) return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
     if (this.runs.has(id) || this.starting.has(id)) return { ok: false, reason: 'not_ready', detail: '任务还在执行，请先停止。' };
     if (!['reviewing', 'save_failed_unmerged'].includes(t.state)) return { ok: false, reason: 'not_ready', detail: MESSAGES.notReady };
+    const lock = await this.findProjectLock(id);
+    if (lock) return this.projectLockFail(lock);
     const blockers = saveBlockers(t);
     const wt = t.worktree;
     const binding = t.binding;
@@ -814,8 +836,11 @@ export class TaskRunner extends EventEmitter {
     try {
       const t = await this.load(id);
       const repo = this.opts.repo;
+      if (t.manualReview) return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
       const rec = t.saveRecord;
       if (!['saved', 'undo_failed'].includes(t.state) || !rec) return { ok: false, reason: 'not_allowed', detail: '这个任务没有可以撤销的保存。' };
+      const lock = await this.findProjectLock(id);
+      if (lock) return this.projectLockFail(lock);
       const d = await G.detectExternalDrivers(repo);
       if (!d.supported) return { ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver, files: d.drivers };
       const branch = await G.currentBranch(repo);
@@ -1083,6 +1108,9 @@ export class TaskRunner extends EventEmitter {
    */
   async previewSave(t: Task): Promise<OpFail | null> {
     const repo = this.opts.repo;
+    if (t.manualReview) return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
+    const lock = await this.findProjectLock(t.id);
+    if (lock) return this.projectLockFail(lock);
     const wt = t.worktree;
     const binding = t.binding;
     if (!wt || !binding || !t.acceptedTree) return { ok: false, reason: 'not_ready', detail: MESSAGES.notReady };
@@ -1101,8 +1129,11 @@ export class TaskRunner extends EventEmitter {
   /** 撤销的只读预判：与 undo 的前置检查一致。null 表示目前可以撤销。 */
   async previewUndo(t: Task): Promise<OpFail | null> {
     const repo = this.opts.repo;
+    if (t.manualReview) return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
     const rec = t.saveRecord;
     if (!['saved', 'undo_failed'].includes(t.state) || !rec) return { ok: false, reason: 'not_allowed', detail: '这个任务没有可以撤销的保存。' };
+    const lock = await this.findProjectLock(t.id);
+    if (lock) return this.projectLockFail(lock);
     const d = await G.detectExternalDrivers(repo);
     if (!d.supported) return { ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver };
     if ((await G.currentBranch(repo)) !== rec.branch) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused };

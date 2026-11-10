@@ -16,6 +16,7 @@ export const MESSAGES = {
   checksFailed: '合并后自动检查未通过，本次没有保存，你的项目保持原样。',
   projectChanged: '保存检查期间项目发生了新的变化，本次没有保存，你的项目保持原样，请重新保存。',
   failedRestored: '写入项目时出错，已安全恢复并核对与保存前一致。本次没有保存，任务成果仍保留。',
+  projectLocked: '项目中有其他任务处于异常状态（恢复未确认），请先处理那个任务后再保存或撤销。',
   abnormal: '项目状态异常，请不要继续操作',
   acceptanceInvalid: '你确认之后，任务副本里的内容又发生了变化，原来的验收已失效，请重新检查后再保存。',
   checksModified: '检查改动了文件，检查结果已作废。',
