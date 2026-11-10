@@ -10,6 +10,7 @@ import { sensitiveFallbackList } from '../src/core/executor/modes.js';
 import { resolveCapabilities } from '../src/core/capabilities/model.js';
 import { describePermissions } from '../src/core/app/permission-text.js';
 import { buildTaskView } from '../src/core/app/task-view.js';
+import { classifyTaskState } from '../src/core/app/task-state-view.js';
 import { TaskController } from '../src/core/app/task-controller.js';
 import { TaskPrefs } from '../src/core/app/prefs.js';
 import { TaskRunner } from '../src/core/task/runner.js';
@@ -459,6 +460,109 @@ describe('阶段 3 · 第三节：停止 / 中断后页（#06-stopped）与继�
 
     const rawFailed = buildTaskView(mkTask({ state: 'exec_failed', exit: { kind: 'exited', code: 1 } }), { scripts: [], running: false });
     expect(rawFailed.stoppedInfo?.reasonLabel).toBe('AI 执行出错');
+  });
+});
+
+describe('阶段 3 · 第四节：task-state-view 与状态机一致性审计', () => {
+  const mkStateTask = (over: Partial<Task> = {}): Task => ({
+    id: 'audit-1',
+    request: '审计测试',
+    state: 'reviewing',
+    criteria: [],
+    denied: [],
+    deniedAcks: [],
+    previewed: false,
+    timeline: [],
+    createdAt: '2026-11-10T00:00:00.000Z',
+    updatedAt: '2026-11-10T00:00:00.000Z',
+    ...over,
+  });
+
+  it('exec_failed / stopped / timed_out / reviewing 停止与异常文案准确，按钮与跳转页面一致', () => {
+    const failed = classifyTaskState(mkStateTask({ state: 'exec_failed', exit: { kind: 'exited', code: 2 } }));
+    expect(failed.runStatus).toBe('失败');
+    expect(failed.impact).toBe('AI 执行出错停止了，已做的修改保留在任务副本里，你的项目没有变化');
+    expect(failed.actionLabel).toBe('去查看');
+
+    const failedQuota = classifyTaskState(
+      mkStateTask({
+        state: 'exec_failed',
+        exit: { kind: 'exited', code: 1 },
+        timeline: [{ at: '2026-11-10T00:00:00.000Z', kind: 'message', source: 'host', text: 'You hit your usage limit' }],
+      }),
+    );
+    expect(failedQuota.runStatus).toBe('已中断');
+    expect(failedQuota.impact).toContain('额度用完已停下');
+    expect(failedQuota.actionLabel).toBe('选择怎么继续');
+
+    const revStopped = classifyTaskState(mkStateTask({ state: 'reviewing', exit: { kind: 'stopped' } }));
+    expect(revStopped.runStatus).toBe('已停止');
+    expect(revStopped.actionLabel).toBe('查看怎么继续');
+    expect(revStopped.impact).toContain('继续执行');
+
+    const revFailed = classifyTaskState(mkStateTask({ state: 'reviewing', exit: { kind: 'exited', code: 2 } }));
+    expect(revFailed.runStatus).toBe('失败');
+    expect(revFailed.actionLabel).toBe('去查看');
+    expect(revFailed.impact).toBe('AI 执行出错停止了，已做的修改保留在任务副本里，你的项目没有变化');
+
+    const stopped = classifyTaskState(mkStateTask({ state: 'stopped' }));
+    expect(stopped.actionLabel).toBe('查看怎么继续');
+    expect(stopped.impact).toBe('你停止了本次执行，已做的修改保留在任务副本里，你的项目没有变化');
+
+    const timedOut = classifyTaskState(mkStateTask({ state: 'timed_out' }));
+    expect(timedOut.actionLabel).toBe('选择怎么继续');
+    expect(timedOut.impact).toBe('执行超时中断，已做的修改保留在任务副本里，你的项目没有变化');
+  });
+
+  it('无自动检查的项目在 reviewing 不误报「构建与测试已通过」；单检查项不夸大为两项；planned 重确认给出明确提示', () => {
+    const noScripts = classifyTaskState(
+      mkStateTask({
+        state: 'reviewing',
+        exit: { kind: 'exited', code: 0 },
+        card: { headline: 'done', readyToSave: true, changes: [], items: [{ key: 'exit', label: '退出', status: 'verified', evidence: 'ok' }] },
+      }),
+    );
+    expect(noScripts.impact).not.toContain('已通过');
+    expect(noScripts.impact).toContain('未配置自动检查');
+
+    const buildOnly = classifyTaskState(
+      mkStateTask({
+        state: 'reviewing',
+        exit: { kind: 'exited', code: 0 },
+        card: {
+          headline: 'done',
+          readyToSave: true,
+          changes: [],
+          items: [
+            { key: 'exit', label: '退出', status: 'verified', evidence: 'ok' },
+            { key: 'build', label: '构建', status: 'verified', evidence: 'ok' },
+          ],
+        },
+      }),
+    );
+    expect(buildOnly.impact).toBe('构建检查已通过，等你在验收页确认后保存到项目');
+
+    const failedCheck = classifyTaskState(
+      mkStateTask({
+        state: 'reviewing',
+        exit: { kind: 'exited', code: 0 },
+        card: {
+          headline: 'fail',
+          readyToSave: false,
+          changes: [],
+          items: [
+            { key: 'exit', label: '退出', status: 'verified', evidence: 'ok' },
+            { key: 'test', label: '测试', status: 'failed', evidence: 'bad' },
+          ],
+        },
+      }),
+    );
+    expect(failedCheck.impact).toBe('项目自动检查未通过，当前不能保存，请在验收页查看结果或放弃');
+
+    const plannedReconfirm = classifyTaskState(
+      mkStateTask({ state: 'planned', reapproveNotice: '改了验收标准，需要重新确认后才能开工' }),
+    );
+    expect(plannedReconfirm.impact).toContain('重新点击「批准并开工」');
   });
 });
 

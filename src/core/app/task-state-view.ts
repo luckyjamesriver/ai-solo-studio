@@ -1,6 +1,7 @@
 import { scrubAiText } from '../acceptance/texts.js';
-import type { Task } from '../task/model.js';
+import type { Task, TimelineEntry } from '../task/model.js';
 import type { TaskState } from '../task/state.js';
+import { classifyServiceError } from '../thinking/errors.js';
 
 /**
  * UI v2.1 第 3 节三层状态模型：
@@ -44,41 +45,85 @@ const OUTCOME_LABEL: Record<TaskOutcome, '已保存' | '已放弃' | '已撤销'
   terminated: '未完成而终止',
 };
 
-function reviewingDetails(t: Task): Pick<TaskClassification, 'runStatus' | 'impact' | 'isAbnormal'> {
+/** 截取最近一次进入 running 之后的执行时间线片段。 */
+export function sliceLatestRun(timeline: TimelineEntry[]): TimelineEntry[] {
+  let startIdx = 0;
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const e = timeline[i]!;
+    if (e.kind === 'state' && e.text.endsWith('→ running')) {
+      startIdx = i;
+      break;
+    }
+  }
+  return timeline.slice(startIdx);
+}
+
+/** 仅当最近一次执行日志里出现执行者或宿主明确的额度用尽报错时才返回 true（不靠猜）。 */
+export function hasQuotaExhaustedError(task: Pick<Task, 'timeline'>): boolean {
+  const entries = sliceLatestRun(task.timeline);
+  return entries.some((e) => {
+    const { source: origin } = e;
+    return ((e.kind === 'message' && origin === 'host') || e.kind === 'error') && classifyServiceError(e.text) === 'quota_exhausted';
+  });
+}
+
+function reviewingDetails(t: Task): Pick<TaskClassification, 'runStatus' | 'impact' | 'isAbnormal' | 'actionLabel'> {
   if (t.manualReview) {
     return {
       runStatus: '已锁定',
       isAbnormal: true,
       impact: '写入或恢复结果未确认，该项目已锁定保存与撤销，请先人工核对',
+      actionLabel: '去处理异常',
+    };
+  }
+  if (hasQuotaExhaustedError(t) && t.exit && (t.exit.kind !== 'exited' || t.exit.code !== 0)) {
+    return {
+      runStatus: '已中断',
+      isAbnormal: true,
+      impact: '额度用完已停下，已做的修改保留在任务副本里，你的项目没有变化',
+      actionLabel: '选择怎么继续',
     };
   }
   if (t.exit?.kind === 'stopped') {
     return {
       runStatus: '已停止',
       isAbnormal: false,
-      impact: '你已停止执行，已有改动保留在副本中，等你决定去验收或放弃',
+      impact: '你停止了本次执行，已做的修改保留在任务副本里，可以选择去验收、继续执行或放弃',
+      actionLabel: '查看怎么继续',
     };
   }
-  if (t.exit?.kind === 'timed_out' || t.exit?.kind === 'signaled') {
+  if (t.exit?.kind === 'timed_out') {
     return {
       runStatus: '已中断',
       isAbnormal: true,
-      impact: '上次执行意外中断，已有改动保留在副本里，你的项目没有变化',
+      impact: '执行超时中断，已做的修改保留在任务副本里，你的项目没有变化',
+      actionLabel: '选择怎么继续',
+    };
+  }
+  if (t.exit?.kind === 'signaled') {
+    return {
+      runStatus: '已中断',
+      isAbnormal: true,
+      impact: '上次执行意外中断，已做的修改保留在任务副本里，你的项目没有变化',
+      actionLabel: '查看怎么继续',
     };
   }
   if (t.exit && (t.exit.kind !== 'exited' || t.exit.code !== 0)) {
     return {
       runStatus: '失败',
       isAbnormal: true,
-      impact: '执行没有正常结束，不会写入项目，请在验收页查看或放弃',
+      impact: 'AI 执行出错停止了，已做的修改保留在任务副本里，你的项目没有变化',
+      actionLabel: '去查看',
     };
   }
   const items = t.card?.items ?? [];
-  if (items.some((i) => (i.key === 'build' || i.key === 'test') && i.status === 'failed')) {
+  const checkItems = items.filter((i) => i.key === 'build' || i.key === 'test');
+  if (checkItems.some((i) => i.status === 'failed')) {
     return {
       runStatus: '等你验收',
       isAbnormal: false,
-      impact: '项目自动检查未通过，当前不能保存，请查看结果后处理或放弃',
+      impact: '项目自动检查未通过，当前不能保存，请在验收页查看结果或放弃',
+      actionLabel: '去验收',
     };
   }
   if (t.uncheckedConfirm) {
@@ -86,19 +131,33 @@ function reviewingDetails(t: Task): Pick<TaskClassification, 'runStatus' | 'impa
       runStatus: '等你验收',
       isAbnormal: false,
       impact: '未运行自动检查，等你打开预览查看或确认仍然保存',
+      actionLabel: '去验收',
     };
   }
-  if (items.some((i) => (i.key === 'build' || i.key === 'test') && i.status === 'not_checked')) {
+  if (checkItems.length === 0) {
+    return {
+      runStatus: '等你验收',
+      isAbnormal: false,
+      impact: 'AI 已结束修改（项目未配置自动检查），等你在验收页预览确认后保存',
+      actionLabel: '去验收',
+    };
+  }
+  if (checkItems.some((i) => i.status === 'not_checked')) {
     return {
       runStatus: '等你验收',
       isAbnormal: false,
       impact: 'AI 已完成修改（部分检查未运行），等你在验收页确认',
+      actionLabel: '去验收',
     };
   }
+  const hasBuild = checkItems.some((i) => i.key === 'build');
+  const hasTest = checkItems.some((i) => i.key === 'test');
+  const passedLabel = hasBuild && hasTest ? '构建与测试已通过' : hasBuild ? '构建检查已通过' : '自动测试已通过';
   return {
     runStatus: '等你验收',
     isAbnormal: false,
-    impact: '构建与测试已通过，等你在验收页确认后保存到项目',
+    impact: `${passedLabel}，等你在验收页确认后保存到项目`,
+    actionLabel: '去验收',
   };
 }
 
@@ -170,7 +229,9 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
         outcome: null,
         workbenchGroup: 'needs_decision',
         needsAttention: true,
-        impact: '施工计划已准备好，等你确认权限并开工，主项目未改动',
+        impact: t.reapproveNotice
+          ? '你修改了验收标准，需要重新点击「批准并开工」后才能执行，主项目未改动'
+          : '施工计划已准备好，等你确认权限并开工，主项目未改动',
         actionLabel: '去开工',
       });
     case 'approved':
@@ -206,23 +267,27 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
           : '施工已结束，正在准备验收；如果一直停在这里，可以重新检查',
         actionLabel: opts.isLiveRunning ? '查看' : '去验收',
       });
-    case 'exec_failed':
+    case 'exec_failed': {
+      const quota = hasQuotaExhaustedError(t);
       return mk('building', {
-        runStatus: '失败',
+        runStatus: quota ? '已中断' : '失败',
         outcome: null,
         workbenchGroup: 'needs_decision',
         needsAttention: true,
         isAbnormal: true,
-        impact: '执行未能顺利结束，已保留现场在副本中，主项目未改动',
-        actionLabel: '去查看',
+        impact: quota
+          ? '额度用完已停下，已做的修改保留在任务副本里，你的项目没有变化'
+          : 'AI 执行出错停止了，已做的修改保留在任务副本里，你的项目没有变化',
+        actionLabel: quota ? '选择怎么继续' : '去查看',
       });
+    }
     case 'stopped':
       return mk('building', {
         runStatus: '已停止',
         outcome: null,
         workbenchGroup: 'needs_decision',
         needsAttention: true,
-        impact: '你停止了本次执行，已做部分留在副本里，主项目未改动',
+        impact: '你停止了本次执行，已做的修改保留在任务副本里，你的项目没有变化',
         actionLabel: '查看怎么继续',
       });
     case 'timed_out':
@@ -232,7 +297,7 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
         workbenchGroup: 'needs_decision',
         needsAttention: true,
         isAbnormal: true,
-        impact: '执行超时停下，已做部分保留在副本里，你的项目未变化',
+        impact: '执行超时中断，已做的修改保留在任务副本里，你的项目没有变化',
         actionLabel: '选择怎么继续',
       });
     case 'reviewing': {
@@ -244,7 +309,7 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
         needsAttention: true,
         isAbnormal: det.isAbnormal,
         impact: det.impact,
-        actionLabel: det.isAbnormal ? '查看怎么继续' : '去验收',
+        actionLabel: det.actionLabel,
       });
     }
     case 'save_failed_unmerged':

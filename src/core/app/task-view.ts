@@ -9,8 +9,7 @@ import { extractIncomplete } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
 import { deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
 import { MESSAGES } from '../task/messages.js';
-import { classifyServiceError } from '../thinking/errors.js';
-import { classifyTaskState, type TaskClassification } from './task-state-view.js';
+import { classifyTaskState, hasQuotaExhaustedError, sliceLatestRun, type TaskClassification } from './task-state-view.js';
 
 /**
  * 给渲染层看的任务视图：只含大白话与必要事实。
@@ -216,18 +215,6 @@ function deniedImpact(d: DeniedOperation): string {
   }
 }
 
-function sliceLatestRun(timeline: TimelineEntry[]): TimelineEntry[] {
-  let startIdx = 0;
-  for (let i = timeline.length - 1; i >= 0; i--) {
-    const e = timeline[i]!;
-    if (e.kind === 'state' && e.text.endsWith('→ running')) {
-      startIdx = i;
-      break;
-    }
-  }
-  return timeline.slice(startIdx);
-}
-
 function buildBuildingView(task: Task, opts: { running: boolean; worktreeChanges?: FileChange[] }): BuildingView {
   const caps = task.plan?.capabilities;
   const fullTrust = caps?.constructionMode === 'full_trust';
@@ -294,14 +281,6 @@ function buildBuildingView(task: Task, opts: { running: boolean; worktreeChanges
     projectSafetyLine,
     execLog,
   };
-}
-
-/** 仅当最近一次执行日志里出现适配器明确的额度用尽报错时才返回 true（不靠猜）。 */
-export function hasQuotaExhaustedError(task: Pick<Task, 'timeline'>): boolean {
-  const entries = sliceLatestRun(task.timeline);
-  return entries.some(
-    (e) => ((e.kind === 'message' && isHost(e)) || e.kind === 'error') && classifyServiceError(e.text) === 'quota_exhausted',
-  );
 }
 
 function buildStoppedInfo(task: Task, opts: { running: boolean; worktreeChanges?: FileChange[] }): StoppedInfo | null {
