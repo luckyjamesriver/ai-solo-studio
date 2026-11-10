@@ -163,4 +163,6 @@
    - [`SettingsPage.tsx`](../../src/renderer/SettingsPage.tsx) 原 `useEffect` 在慢速 `getAiSettings()` 返回时会把用户刚切换的角色草案重置；引入 `rolesDirtyRef` 后稳定消除竞态。
 
 ### GitHub Actions 双平台 CI（`rebuild` 分支）
-- （待本报告提交推送后立即等待 `ubuntu-latest` 与 `macos-latest` 全部通过并回填最终绿灯运行链接。）
+- 全量代码 + 截图 + 报告首次双平台绿灯运行（[`68d7c4c`](https://github.com/luckyjamesriver/ai-solo-studio/commit/68d7c4c)）：[https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42883182130](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42883182130)
+  - `test (ubuntu-latest)`：`success`（1m8s，[job 130064548010](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42883182130/job/130064548010)）
+  - `test (macos-latest)`：`success`（8m57s，[job 130064548734](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42883182130/job/130064548734)，含 49 项 Electron E2E 全量通过）
