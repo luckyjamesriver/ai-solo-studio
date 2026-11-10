@@ -196,6 +196,7 @@ ipcMain.handle('acceptance:confirmOverall', async (_e, id: unknown, version: unk
 ipcMain.handle('acceptance:ackDenied', async (_e, id: unknown, itemId: unknown, version: unknown) => (await tasks()).ackDenied(id, itemId, version));
 ipcMain.handle('acceptance:recheck', async (_e, id: unknown) => (await tasks()).recheck(id));
 ipcMain.handle('acceptance:save', async (_e, id: unknown, version: unknown) => (await tasks()).saveTask(id, version));
+ipcMain.handle('acceptance:saveUnchecked', async (_e, id: unknown, version: unknown) => (await tasks()).saveUncheckedTask(id, version));
 ipcMain.handle('acceptance:discard', async (_e, id: unknown) => (await tasks()).discardTask(id));
 ipcMain.handle('acceptance:undo', async (_e, id: unknown) => (await tasks()).undoSave(id));
 ipcMain.handle('acceptance:retryCleanup', async (_e, id: unknown) => (await tasks()).retryCleanup(id));

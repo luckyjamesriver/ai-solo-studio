@@ -169,7 +169,7 @@ describe('ADR 0005 验收场景', () => {
     // 编排器层：同一项目的保存与放弃互斥，先到者胜；最终状态与项目内容一致
     for (const order of ['save-first', 'discard-first'] as const) {
       const s = await confirmedTask();
-      const calls = order === 'save-first' ? [() => s.runner.save(s.id), () => s.runner.discard(s.id)] : [() => s.runner.discard(s.id), () => s.runner.save(s.id)];
+      const calls = order === 'save-first' ? [() => s.runner.save(s.id, { confirmUnchecked: true }), () => s.runner.discard(s.id)] : [() => s.runner.discard(s.id), () => s.runner.save(s.id, { confirmUnchecked: true })];
       const [r1, r2] = await Promise.all(calls.map((f) => f()));
       const final = (await s.runner.store.get(s.id))!.state;
       expect(final).toBe(order === 'save-first' ? 'saved' : 'discarded');
@@ -430,8 +430,8 @@ describe('ADR 0005 验收场景', () => {
     await runner.confirm(a, { overall: true });
     await runner.confirm(b, { overall: true });
     // 先保存 A；再保存 B：与 A 冲突 → 提示用户，不覆盖
-    expect(await runner.save(a)).toMatchObject({ ok: true });
-    const rb = await runner.save(b);
+    expect(await runner.save(a, { confirmUnchecked: true })).toMatchObject({ ok: true });
+    const rb = await runner.save(b, { confirmUnchecked: true });
     expect(rb).toMatchObject({ ok: false, reason: 'conflict', detail: MESSAGES.conflict });
     expect(await fs.readFile(path.join(repo, 'index.html'), 'utf8')).toBe('<h1>from A</h1>\n'); // A 的内容还在，没有被 B 的最后写入覆盖
     expect(await G.dirtyFiles(repo)).toEqual([]); // 主项目干净、没有半个合并

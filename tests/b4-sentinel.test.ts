@@ -234,7 +234,7 @@ describe('B4-1 哨兵测试：项目配置里的程序不得被宿主运行', ()
           await G.diffText(t1.worktree!); // 读证据
           expect(sentinels()).toEqual([]);
 
-          const saved = await runner.save(t1.id);
+          const saved = await runner.save(t1.id, { confirmUnchecked: true });
           expect(saved.ok, JSON.stringify(saved)).toBe(true);
           expect(sentinels()).toEqual([]);
           expect(fs.readFileSync(path.join(repo, 'index.html'), 'utf8')).toBe('content of index.html\n');
@@ -268,7 +268,7 @@ describe('B4-1 哨兵测试：项目配置里的程序不得被宿主运行', ()
           const { runner, task } = harness(repo);
           // 属性文件已提交但驱动没有定义 → git 不会运行任何东西；先正常保存一个任务
           const t1 = await task(`one.${sc.ext}`);
-          expect((await runner.save(t1.id)).ok).toBe(true);
+          expect((await runner.save(t1.id, { confirmUnchecked: true })).ok).toBe(true);
           const t2 = await task(`two.${sc.ext}`);
           expect(t2.state).toBe('reviewing');
           expect(sentinels()).toEqual([]);
@@ -276,7 +276,7 @@ describe('B4-1 哨兵测试：项目配置里的程序不得被宿主运行', ()
           sc.configure(repo); // 现在驱动被定义了
           const head = await G.headSha(repo);
 
-          const s = await runner.save(t2.id);
+          const s = await runner.save(t2.id, { confirmUnchecked: true });
           expect(s).toMatchObject({ ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver });
           expect(await G.headSha(repo)).toBe(head);
           expect(fs.existsSync(t2.worktree!.path)).toBe(true); // 副本保留

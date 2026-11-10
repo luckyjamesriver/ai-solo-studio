@@ -5,6 +5,7 @@ import type { AcceptanceCard, CriterionState, GitBinding } from '../acceptance/c
 
 import type { Capabilities } from '../capabilities/model.js';
 import type { EffectivePermissions } from '../executor/modes.js';
+import type { UnavailableReason, UncheckedKind } from '../checks/scripts.js';
 
 export interface Plan {
   goal: string;
@@ -57,6 +58,12 @@ export interface OpLog {
   trialCommit?: string;
   /** 试检查是否运行并全部通过 */
   checked?: boolean;
+  /** 未检查保存时的分类：none（无检查脚本）/ unavailable（有脚本但未能运行） */
+  uncheckedKind?: UncheckedKind;
+  /** unavailable 时的原因分类 */
+  unavailableReason?: UnavailableReason;
+  /** 用户确认在「未检查」状态下仍然保存的时间 */
+  uncheckedConfirmedAt?: string;
   /** 试检查通过/失败数量 */
   checksSummary?: { passed: number; failed: number };
   /** 试检查时间 */
@@ -73,6 +80,22 @@ export interface ChecksSummary {
   failed: number;
 }
 
+export interface UncheckedConfirmPending {
+  /** 返回 unchecked_needs_confirm 时的验收版本（acceptedTree + acceptanceRev），版本变化即失效 */
+  version: string;
+  /** 返回 unchecked_needs_confirm 时主项目 HEAD，用于识别两次调用之间项目变化 */
+  preHead: string;
+  kind: UncheckedKind;
+  unavailableReason?: UnavailableReason;
+  reasonText: string;
+  at: string;
+}
+
+/** 验收版本：冻结内容的短哈希 + 证据序号（重新检查后序号加一，即使内容没变旧版本也作废） */
+export function acceptanceVersion(t: Pick<Task, 'acceptedTree' | 'acceptanceRev'>): string {
+  return t.acceptedTree ? `${t.acceptedTree.slice(0, 12)}-${t.acceptanceRev ?? 0}` : '';
+}
+
 /** 保存的结果，撤销只能依据它 */
 export interface SaveRecord {
   preMergeHead: string;
@@ -82,6 +105,12 @@ export interface SaveRecord {
   savedAt: string;
   /** 合并后是否运行了全部声明的自动检查并通过 */
   checked?: boolean;
+  /** 未检查保存时记录：项目无检查脚本（none）还是有脚本但没能运行（unavailable） */
+  uncheckedKind?: UncheckedKind;
+  /** unavailable 时的原因分类 */
+  unavailableReason?: UnavailableReason;
+  /** 用户在界面或调用方明确确认在「未检查」状态下保存的时间 */
+  uncheckedConfirmedAt?: string;
   /** 合并后自动检查通过/失败数量 */
   checksSummary?: ChecksSummary;
   /** 运行合并后自动检查的时间（未检查时省略） */
@@ -135,6 +164,8 @@ export interface Task {
   customCommitChecks?: boolean;
   /** 保存结果（撤销依据） */
   saveRecord?: SaveRecord;
+  /** 最近一次保存因“未检查”停下等待确认的状态（版本变化或保存结束即清除） */
+  uncheckedConfirm?: UncheckedConfirmPending;
   /** 最近一次保存/放弃/撤销/清理的阶段日志 */
   op?: OpLog;
   /** 启动核对或操作后无法判定的状态：需要人工查看（不自动动手） */

@@ -61,6 +61,13 @@ const read = (repo: string, f = 'index.html') => fs.readFile(path.join(repo, f),
 const exists = (p: string) => fs.access(p).then(() => true, () => false);
 const taskOf = async (repo: string, id: string) => (await new TaskRunner({ repo, executor: new FakeExecutor([]) }).store.get(id))!;
 
+async function saveUncheckedFlow(ctl: TaskController, id: string, version: string): Promise<AcceptanceActionResult> {
+  const first = await ctl.saveTask(id, version);
+  expect(first.ok).toBe(false);
+  expect(first.view.uncheckedConfirm).not.toBeNull();
+  return ctl.saveUncheckedTask(id, first.view.version);
+}
+
 describe('保存与撤销', () => {
   it('保存成功 → 主项目可见；视图变为已保存，撤销入口可用', async () => {
     const { repo, ctl, id, view } = await setup();
@@ -68,10 +75,14 @@ describe('保存与撤销', () => {
     const ready = await confirmAll(ctl, id);
     expect(ready.actions.save.enabled).toBe(true);
     expect(ready.verdict).toMatch(/可以保存/);
-    const r = await ctl.saveTask(id, ready.version);
+    const first = await ctl.saveTask(id, ready.version);
+    expect(first.ok).toBe(false);
+    expect(first.view.uncheckedConfirm).toMatchObject({ previewButtonText: '打开预览', confirmButtonText: '仍然保存' });
+    const r = await ctl.saveUncheckedTask(id, first.view.version);
     expect(r.ok).toBe(true);
     expect(r.message).toBe(MESSAGES.saved);
     expect(r.view.state).toBe('saved');
+    expect(r.view.uncheckedConfirm).toBeNull();
     expect(r.view.actions.undo.enabled).toBe(true);
     expect(await read(repo)).toBe('<h1>new</h1>\n');
   });
@@ -79,7 +90,7 @@ describe('保存与撤销', () => {
   it('撤销 → 项目恢复；成功提示是 messages.undone（没有外部影响时不追加说明）', async () => {
     const { repo, ctl, id } = await setup();
     const ready = await confirmAll(ctl, id);
-    await ctl.saveTask(id, ready.version);
+    await saveUncheckedFlow(ctl, id, ready.version);
     const r = await ctl.undoSave(id);
     expect(r).toMatchObject({ ok: true, message: MESSAGES.undone });
     expect(r.view.state).toBe('undone');
@@ -88,7 +99,7 @@ describe('保存与撤销', () => {
 
   it('撤销条件不满足：入口仍可见但置灰并说明（保存之后项目又有改动）；条件恢复后可用', async () => {
     const { repo, ctl, id } = await setup();
-    await ctl.saveTask(id, (await confirmAll(ctl, id)).version);
+    await saveUncheckedFlow(ctl, id, (await confirmAll(ctl, id)).version);
     await fs.writeFile(path.join(repo, 'later.txt'), 'x\n'); // 保存之后项目里有了新的未保存修改
     const v = await ctl.getAcceptanceView(id);
     expect(v.state).toBe('saved');
@@ -104,7 +115,7 @@ describe('保存与撤销', () => {
     const { ctl, id, view } = await setup({ mode: 'full_trust' });
     expect(view.confirmTexts.discard).toContain(MESSAGES.discardExtra);
     expect(view.confirmTexts.undo).toContain(MESSAGES.undoExtra);
-    await ctl.saveTask(id, (await confirmAll(ctl, id)).version);
+    await saveUncheckedFlow(ctl, id, (await confirmAll(ctl, id)).version);
     const r = await ctl.undoSave(id);
     expect(r.message).toBe(`${MESSAGES.undone}${MESSAGES.undoExtra}`);
     expect(r.message).toContain('项目代码已恢复；AI 在任务副本以外做过的修改工作台无法撤销。');
@@ -112,7 +123,7 @@ describe('保存与撤销', () => {
 
   it('同项目还有其他已保存且可撤销的任务：保存前提示“保存后，上一次保存就不能单独撤销了”', async () => {
     const a = await setup();
-    await a.ctl.saveTask(a.id, (await confirmAll(a.ctl, a.id)).version);
+    await saveUncheckedFlow(a.ctl, a.id, (await confirmAll(a.ctl, a.id)).version);
     // 同一项目里的第二个任务
     const t2 = await a.ctl.create('第二个任务');
     await a.ctl.savePlan(t2.id, form());
@@ -213,7 +224,7 @@ describe('检查失败、验收失效、重新检查', () => {
     }
     // 用新版本重新确认后，保存的正是副本里现在的内容
     const v = await confirmAll(ctl, id);
-    expect((await ctl.saveTask(id, v.version)).ok).toBe(true);
+    expect((await saveUncheckedFlow(ctl, id, v.version)).ok).toBe(true);
     expect(await read(repo)).toBe('<h1>sneaky</h1>\n');
   });
 
@@ -263,7 +274,10 @@ describe('主项目有未保存修改、冲突', () => {
 
 describe('重复点击、伪造参数、异常态', () => {
   it('重复点击保存只生效一次（另一次返回 busy），主项目只有一个合并提交', async () => {
-    const { repo, ctl, id } = await setup();
+    const { repo, ctl, id } = await setup({
+      files: { 'package.json': JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }), 'index.html': '<h1>old</h1>\n' },
+      sandbox: true,
+    });
     const v = await confirmAll(ctl, id);
     const before = (await G.git(repo, ['rev-list', '--count', 'HEAD'])).trim();
     const rs: AcceptanceActionResult[] = await Promise.all([ctl.saveTask(id, v.version), ctl.saveTask(id, v.version), ctl.saveTask(id, v.version)]);
@@ -347,7 +361,7 @@ describe('重启后状态一致、成果片段、启动核对', () => {
     expect(again.version).toBe(before.version);
     expect(again.actions).toEqual(before.actions);
     expect(again.criteria).toEqual(before.criteria);
-    await ctl.saveTask(id, before.version);
+    await saveUncheckedFlow(ctl, id, before.version);
     const after = await make().getAcceptanceView(id);
     expect(after.state).toBe('saved');
     expect(after.actions.undo.enabled).toBe(true);

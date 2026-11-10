@@ -47,6 +47,7 @@
 | `acceptance_invalid` | 确认后任务副本内容发生变化（与 `acceptedTree` 不一致） | `你确认之后，任务副本里的内容又发生了变化，原来的验收已失效，请重新检查后再保存。` | `你确认之后，任务副本里的内容又发生了变化，原来的验收已失效，请重新检查后再保存。` |
 | `conflict` | 在临时 worktree 试合并发生冲突（主项目未触碰） | `AI 的修改与项目当前版本有冲突，工作台无法安全自动合并。本次没有保存，AI 的成果仍保留。` | `AI 的修改与项目当前版本有冲突，工作台无法安全自动合并。本次没有保存，AI 的成果仍保留。` |
 | `checks_failed` | 试合并后的代码在临时 worktree 运行构建或测试未通过 | `合并后自动检查未通过（{构建/测试}），本次没有保存，你的项目保持原样。`（附 `failedChecks`） | `合并后自动检查未通过（{构建/测试}），本次没有保存，你的项目保持原样。` |
+| `unchecked_needs_confirm` | 试检查为 `none`（无检查脚本）或 `unavailable`（沙箱不可用 / 合并改动检查脚本需重新授权 / 其他），且未传 `confirmUnchecked: true` | `none` / `unavailable` 对应原因（脚本变化时明确提示：`这次合并改动了项目的检查方式，所以没法自动检查。`） | 主项目不变，验收区步骤 ③ 下方展示原因与两个按钮：`打开预览`、`仍然保存`（同版本且最近一次为此结果时显示） |
 | `project_changed` | 试检查期间主项目发生了新提交、工作区变脏或切分支 | `保存检查期间项目发生了新的变化，本次没有保存，你的项目保持原样，请重新保存。` | `保存检查期间项目发生了新的变化，本次没有保存，你的项目保持原样，请重新保存。` |
 | `failed_restored` | `git merge --ff-only` 写入主项目失败，但核验与保存前完全一致 | `写入项目时出错，已安全恢复并核对与保存前一致。本次没有保存，任务成果仍保留。` | `写入项目时出错，已安全恢复并核对与保存前一致。本次没有保存，任务成果仍保留。` |
 | `abnormal` | 写入失败后核验主项目与保存前不一致（或当前任务本身处于 `manualReview`） | `项目状态异常，请不要继续操作` | `项目状态异常，请不要继续操作`（当前任务进入只读锁定，同项目其他任务返回 `project_locked`） |
@@ -128,3 +129,41 @@
 | 另一个文件夹的只读选项 | **仍未做** | 现仍为 `extraWritableDirs` |
 | 多项目同时打开 | **仍未做** | 现仍为单项目模型 |
 | 额度查询 | **仍未做** | 仍待后续调研 |
+
+---
+
+## 6. 补丁：未检查时必须由用户确认
+
+### 6.1 做了什么（通俗说明）
+1. **把“没能检查”拆成三类、不再直接保存**：`runProjectChecks` 现在明确区分 **没有配置检查脚本（`none`）**、**有脚本但至少一项没能运行（`unavailable`）**（写明沙箱不可用、合并后检查方式变化需重新授权或其他）以及 **全部实际运行（`ran`）**。只要结果不是全部通过而是“未检查”，第一次保存一律停在写主项目之前，清理临时副本并返回 `unchecked_needs_confirm`；如果合并前后改动了构建/测试脚本授权摘要，会明确提示“**这次合并改动了项目的检查方式，所以没法自动检查。**”。
+2. **必须由用户点确认，且确认只对当前现场有效**：界面只在“最近一次保存停在 `unchecked_needs_confirm`、且验收版本与当时一致”的条件下，由主进程视图统一下发原因文案及「打开预览」「仍然保存」两个按钮。点「仍然保存」会走与普通保存完全相同的安全门禁（只是允许这次未检查继续），并重新走一遍试合并；如果两次点击之间主项目又被人改过，第二次保存会返回 `project_changed`，绝不复用上一次的试合并结果写入，且 `saveRecord` 会如实记下 `checked: false`、`uncheckedKind` 和用户确认时间 `uncheckedConfirmedAt`。
+3. **测试专用开关锁定在测试环境**：`runChecks: false` 在所有生产源码入口与控制层中禁止出现并由 `tests/security.test.ts` 静态看守，同时 `TaskRunner` 构造时在非测试环境下直接拒绝，确保正式打包应用不会绕过检查。
+
+### 6.2 「仍然保存」确认界面截图
+
+![未检查时要求确认「打开预览 / 仍然保存」界面](../screenshots/save-safety/unchecked-confirm.png)
+
+### 6.3 补丁后本地测试与构建数字
+
+- **类型检查（`npm run typecheck`）**：通过（0 错误）
+- **生产构建（`npm run build`）**：通过（`build:core` + `build:renderer` 均成功）
+- **单元与集成测试（`npm test`）**：
+  - 测试文件：**25 passed** | 11 skipped（共 36 个文件；跳过的 11 个为需 `STUDIO_REAL_CODEX=1` 才运行的真实 Codex 集成测试）
+  - 测试用例：**535 passed** | 37 skipped | **0 failed**（共 572 个用例）
+  - 安全基线（`tests/security.test.ts`）：共 **43 passed | 0 failed**（原有 40 项未放宽，preload 白名单按安全规范显式扩充为 29 个方法并新增 3 项关于 `runChecks: false`、`confirmUnchecked` 隔离以及 `saveUncheckedTask` 等价安全拦截的断言）
+- **端到端测试（`npm run test:e2e`）**：
+  - 测试文件：**1 passed**（共 1 个文件 `e2e/shell.e2e.ts`）
+  - 测试用例：**34 passed | 0 failed**（含新增的“未检查项目显示「打开预览 / 仍然保存」并截图后点击「仍然保存」完成保存”）
+- **应用冒烟测试（`npm run smoke`）**：通过（29 项 `window.studio` 白名单与沙箱隔离校验通过）
+
+### 6.4 补丁过程中的测试失败与处理
+
+1. **既有单测受新门禁影响（`40 failed`，`6` 个测试文件）**
+   - **原因**：引入“未检查必须先确认再写入”后，原有 `tests/b4-save.test.ts`、`tests/b4-2-controller.test.ts`、`tests/b4-sentinel.test.ts`、`tests/save-safety.test.ts`、`tests/runner.test.ts`、`tests/adr-0005-scenarios.test.ts` 中使用无脚本夹具（或 `runChecks: false`）直接保存的用例按新规则返回了 `unchecked_needs_confirm`（符合预期）。
+   - **处理**：将专项断言改为验证“首次返回 `unchecked_needs_confirm` → 传 `confirmUnchecked: true` 后保存成功”，并将纯测撤销/锁/哨兵/并发的夹具按规范改为确认后保存或补充通过的自动脚本，未删减任何检查或跳过任何用例。
+2. **新增测试代码类型错误（`npm run typecheck`，3 处）**
+   - **原因**：`tests/b4-2-view.test.ts` 中新增 `it` 块插在了前一用例末尾 `c.actions` 断言之前导致作用域错位；`tests/save-safety.test.ts` 中直接访问联合类型 `SaveResult` 的 `.reason` 属性。
+   - **处理**：修正作用域位置并改为 `toMatchObject({ ok: false, reason: 'unchecked_needs_confirm' })`，同时将 `createTrialWorktree` 调用次数改为通过 `vi.mocked(G.createTrialWorktree)` 核对，随后类型检查、单测与 E2E 一次全过。
+
+### 6.5 补丁提交与 GitHub CI 记录
+- 待推送后补全提交与 CI 运行链接。

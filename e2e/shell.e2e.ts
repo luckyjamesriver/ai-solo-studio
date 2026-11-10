@@ -430,7 +430,7 @@ describe('施工模式界面', () => {
     expect(r.badMode).toContain('无效的模式');
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'skipPreview', 'startTask', 'stopTask', 'undoSave']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'initProject', 'listTasks', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'saveUncheckedTask', 'skipPreview', 'startTask', 'stopTask', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
@@ -529,6 +529,8 @@ async function confirmThenSave(page: Page) {
   await page.getByTestId('confirm-overall').click();
   await page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
   await page.getByTestId('save-button').click();
+  await page.getByTestId('unchecked-confirm-panel').waitFor();
+  await page.getByTestId('unchecked-confirm-save-button').click();
   await inState(page, 'saved');
 }
 const WRITE = [{ do: 'write', path: 'index.html', content: '<h1>new</h1>\n' }];
@@ -681,21 +683,24 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
     const r = await a.page.evaluate(async () => {
       type Fn = (...x: unknown[]) => Promise<{ ok: boolean; message: string; view: { version: string } }>;
-      const s = (window as unknown as { studio: { listTasks: () => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (id: string) => Promise<{ version: string }>; saveTask: Fn; confirmCriterion: Fn } }).studio;
+      const s = (window as unknown as { studio: { listTasks: () => Promise<{ tasks: { id: string }[] }>; getAcceptanceView: (id: string) => Promise<{ version: string }>; saveTask: Fn; saveUncheckedTask: Fn; confirmCriterion: Fn } }).studio;
       const id = (await s.listTasks()).tasks[0]!.id;
       const version = (await s.getAcceptanceView(id)).version;
-      const both = await Promise.all([s.saveTask(id, version), s.saveTask(id, version)]);
+      await s.saveTask(id, version);
+      const both = await Promise.all([s.saveUncheckedTask(id, version), s.saveUncheckedTask(id, version)]);
       const bad = (f: () => Promise<unknown>) => f().then(() => 'ok', (e: Error) => e.message);
       return {
         oks: both.filter((x) => x.ok).length,
         others: both.filter((x) => !x.ok).map((x) => x.message),
         forgedVersion: await bad(() => s.saveTask(id, 'latest')),
+        forgedUncheckedVersion: await bad(() => s.saveUncheckedTask(id, 'latest')),
         forgedId: await bad(() => s.saveTask('../x', version)),
         forgedItem: await bad(() => s.confirmCriterion(id, 'exit', version)),
       };
     });
     expect(r.oks).toBe(1);
     expect(r.forgedVersion).toContain('无效的参数');
+    expect(r.forgedUncheckedVersion).toContain('无效的参数');
     expect(r.forgedId).toContain('无效的参数');
     expect(r.forgedItem).toContain('无效的参数');
     expect(git(proj, 'rev-list', '--count', 'HEAD').toString().trim()).toBe('3'); // 初始 + 任务提交 + 合并提交，只保存了一次
@@ -818,9 +823,51 @@ describe('验收流程可用性改进（执行者显示、分步验收与成果�
     await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
     expect(await enabled(a.page, 'save-button')).toBe(true);
 
-    // 点击保存：成功保存
+    // 点击保存 → 未检查项目先显示确认面板 → 点「仍然保存」完成保存
     await a.page.getByTestId('save-button').click();
+    await a.page.getByTestId('unchecked-confirm-panel').waitFor();
+    await a.page.getByTestId('unchecked-confirm-save-button').click();
     await inState(a.page, 'saved');
+  });
+
+  it('未检查项目保存：第一次保存显示「打开预览 / 仍然保存」（主项目不变）→ 截图 → 点「仍然保存」完成保存', async () => {
+    const proj = gitProject('unchecked-confirm-site', { 'index.html': '<h1>old</h1>\n' });
+    const a = await toReview(proj, WRITE);
+    await a.app.evaluate(({ shell }) => {
+      shell.openExternal = async () => {};
+    });
+
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+
+    // 第一次点击保存：主项目不变，出现「打开预览」「仍然保存」确认框
+    await a.page.getByTestId('save-button').click();
+    await a.page.getByTestId('unchecked-confirm-panel').waitFor();
+    expect(await a.page.getByTestId('result').getAttribute('data-state')).toBe('reviewing');
+    expect(readProj(proj)).toBe('<h1>old</h1>\n');
+    expect(await a.page.getByTestId('unchecked-confirm-reason').innerText()).toContain('没有配置可用的自动检查脚本');
+    expect(await a.page.getByTestId('unchecked-preview-button').innerText()).toBe('打开预览');
+    expect(await a.page.getByTestId('unchecked-confirm-save-button').innerText()).toBe('仍然保存');
+
+    // 滚动到确认区并截图
+    await a.page.getByTestId('unchecked-confirm-panel').scrollIntoViewIfNeeded();
+    await shot(a.page, 'save-safety/unchecked-confirm');
+
+    // 点击「打开预览」：同版本保留确认区
+    await a.page.getByTestId('unchecked-preview-button').click();
+    await a.page.getByTestId('unchecked-confirm-panel').waitFor();
+    expect(readProj(proj)).toBe('<h1>old</h1>\n');
+
+    // 点击「仍然保存」：完成保存并记录未检查字段
+    await a.page.getByTestId('unchecked-confirm-save-button').click();
+    await inState(a.page, 'saved');
+    expect(readProj(proj)).toBe('<h1>new</h1>\n');
+    expect(await a.page.getByTestId('save-record-check').innerText()).toBe('未检查');
+    expect(await a.page.getByTestId('verdict').innerText()).toContain('未检查');
+    expect(await a.page.getByTestId('unchecked-confirm-panel').count()).toBe(0);
+    expect(taskFiles(proj)[0]?.saveRecord).toMatchObject({ checked: false, uncheckedKind: 'none' });
+    expect(taskFiles(proj)[0]?.saveRecord?.uncheckedConfirmedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it('成果预览：网页提供“在浏览器中打开预览”且保存前可用；非网页产物提供“在访达中显示”', async () => {
@@ -884,6 +931,8 @@ describe('验收流程可用性改进（执行者显示、分步验收与成果�
     await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
     expect(await enabled(a.page, 'save-button')).toBe(true);
     await a.page.getByTestId('save-button').click();
+    await a.page.getByTestId('unchecked-confirm-panel').waitFor();
+    await a.page.getByTestId('unchecked-confirm-save-button').click();
     await inState(a.page, 'saved');
   });
 

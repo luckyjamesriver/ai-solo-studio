@@ -118,9 +118,10 @@ describe('用户验收视图：不泄露命令、Git 原文、绝对路径、证
     expect(f('cleanup_pending', MESSAGES.saveCleanupPending).message).toBe(MESSAGES.saveCleanupPending);
     expect(f('cleanup_pending').message).toBe(VIEW_TEXT.cleanupNeeded);
     expect(mapFailure({ ok: false, reason: 'whatever' as never, detail: 'x' }).message).toBe(MESSAGES.unknownError);
-    for (const r of ['busy', 'not_ready', 'not_allowed', 'repo_changed', 'branch_changed', 'dirty_main', 'external_driver', 'acceptance_invalid', 'conflict', 'abnormal', 'undo_refused', 'cleanup_pending', 'failed'] as const) {
+    for (const r of ['busy', 'not_ready', 'not_allowed', 'repo_changed', 'branch_changed', 'dirty_main', 'external_driver', 'acceptance_invalid', 'conflict', 'unchecked_needs_confirm', 'abnormal', 'undo_refused', 'cleanup_pending', 'failed'] as const) {
       expect(JSON.stringify(f(r)), r).not.toMatch(/fatal|\/Users|git 原文/);
     }
+    expect(mapFailure({ ok: false, reason: 'unchecked_needs_confirm', detail: 'fatal: /Users/secret npm run test', uncheckedKind: 'unavailable', unavailableReason: 'scripts_changed_reauth' }).message).toBe('这次合并改动了项目的检查方式，所以没法自动检查。');
   });
 });
 
@@ -158,6 +159,7 @@ describe('验收版本与按钮状态', () => {
     const c = toUserView({ ...ok, state: 'save_failed_unmerged' }, { busy: false });
     expect(c.verdict).toBe(MESSAGES.conflict);
     expect(c.actions.save.enabled).toBe(false);
+    expect(c.uncheckedConfirm).toBeNull();
     expect(c.actions.recheck.enabled).toBe(false);
     expect(c.actions.discard.enabled).toBe(true);
     // 已保存：撤销可用；条件不满足时置灰并说明
@@ -165,6 +167,52 @@ describe('验收版本与按钮状态', () => {
     expect(toUserView(saved, { busy: false, undoCheck: null }).actions.undo.enabled).toBe(true);
     expect(toUserView(saved, { busy: false, undoCheck: { ok: false, reason: 'undo_refused', detail: 'x' } }).actions.undo).toMatchObject({ enabled: false, reason: MESSAGES.undoRefused });
     expect(toUserView({ ...saved, state: 'saved_cleanup_pending' }, { busy: false }).actions.undo.enabled).toBe(false);
+  });
+
+  it('未检查确认区：仅最近一次保存为 unchecked_needs_confirm 且验收版本一致时下发「打开预览」「仍然保存」；版本变化、重新验收、已保存或失败时不下发', () => {
+    const version = acceptanceVersion(reviewing({ criteria: [{ text: '标题已更新', decision: 'confirmed' }] }));
+    const ready = reviewing({
+      criteria: [{ text: '标题已更新', decision: 'confirmed' }],
+      uncheckedConfirm: {
+        version,
+        preHead: '1'.repeat(40),
+        kind: 'unavailable',
+        unavailableReason: 'scripts_changed_reauth',
+        reasonText: '这次合并改动了项目的检查方式，所以没法自动检查。',
+        at: '2026-11-10T00:00:00.000Z',
+      },
+    });
+
+    // 1) 未触发过 unchecked_needs_confirm 时，视图中没有「仍然保存」
+    const plain = toUserView(reviewing({ criteria: [{ text: '标题已更新', decision: 'confirmed' }] }), { busy: false, saveCheck: null });
+    expect(plain.uncheckedConfirm).toBeNull();
+    expect(JSON.stringify(plain)).not.toContain('仍然保存');
+
+    // 2) 最近一次保存是 unchecked_needs_confirm 且同版本可保存 → 下发原因 + 两个按钮文案
+    const shown = toUserView(ready, { busy: false, saveCheck: null });
+    expect(shown.uncheckedConfirm).toEqual({
+      kind: 'unavailable',
+      unavailableReason: 'scripts_changed_reauth',
+      reason: '这次合并改动了项目的检查方式，所以没法自动检查。',
+      previewButtonText: '打开预览',
+      confirmButtonText: '仍然保存',
+    });
+
+    // 3) 版本变了（如重新验收 acceptanceRev 加一，或 acceptedTree 变化）→ 不下发「仍然保存」
+    const revChanged = toUserView({ ...ready, acceptanceRev: 2 }, { busy: false, saveCheck: null });
+    expect(revChanged.uncheckedConfirm).toBeNull();
+    expect(JSON.stringify(revChanged)).not.toContain('仍然保存');
+
+    const treeChanged = toUserView({ ...ready, acceptedTree: 'c'.repeat(40) }, { busy: false, saveCheck: null });
+    expect(treeChanged.uncheckedConfirm).toBeNull();
+
+    // 4) 已保存 / 冲突 / 已放弃 / 异常只读态 / saveCheck 阻塞 → 不下发「仍然保存」
+    for (const st of ['saved', 'saved_cleanup_pending', 'save_failed_unmerged', 'discarded', 'undone'] as const) {
+      expect(toUserView({ ...ready, state: st }, { busy: false }).uncheckedConfirm, st).toBeNull();
+    }
+    expect(toUserView({ ...ready, manualReview: { reason: '异常', at: 't' } }, { busy: false }).uncheckedConfirm).toBeNull();
+    expect(toUserView(ready, { busy: false, saveCheck: { ok: false, reason: 'dirty_main', detail: '' } }).uncheckedConfirm).toBeNull();
+    expect(toUserView({ ...ready, criteria: [{ text: '标题已更新' }] }, { busy: false, saveCheck: null }).uncheckedConfirm).toBeNull();
   });
 
   it('外部影响：额外文件夹或完全信任时，放弃确认、撤销确认、撤销成功提示都追加说明；否则不追加', () => {

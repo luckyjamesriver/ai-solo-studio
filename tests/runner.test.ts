@@ -40,7 +40,8 @@ describe('任务闭环（模拟执行体 + 真实 Git）', () => {
 
     expect((await runner.save(id)).ok).toBe(false); // 未确认不能保存
     await runner.confirm(id, { criterion: 0, decision: 'confirmed' });
-    const r = await runner.save(id);
+    expect(await runner.save(id)).toMatchObject({ ok: false, reason: 'unchecked_needs_confirm' });
+    const r = await runner.save(id, { confirmUnchecked: true });
     expect(r.ok).toBe(true);
     expect(await fs.readFile(path.join(repo, 'index.html'), 'utf8')).toContain('dark');
     expect((await runner.store.get(id))?.state).toBe('saved');
@@ -219,7 +220,7 @@ describe('任务闭环（模拟执行体 + 真实 Git）', () => {
     expect((await runner.save(id)).ok).toBe(false); // 还没确认知晓被拒绝的操作
     const t2 = await runner.confirm(id, { deniedAck: 0 });
     expect(t2.card?.items.find((i) => i.key === 'denied')?.status).toBe('user_confirmed');
-    expect((await runner.save(id)).ok).toBe(true);
+    expect((await runner.save(id, { confirmUnchecked: true })).ok).toBe(true);
   });
 
   it('越界路径永远需要用户决定，即使开启了自动批准', async () => {

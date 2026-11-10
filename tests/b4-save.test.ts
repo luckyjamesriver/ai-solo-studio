@@ -46,7 +46,7 @@ describe('B4-1 保存', () => {
     expect(task.acceptedTree).toMatch(/^[0-9a-f]{40}$/);
     expect(task.binding).toMatchObject({ branch: 'main', baseHead: task.worktree!.baseSha });
     const before = await G.headSha(repo);
-    const r = await runner.save(id);
+    const r = await runner.save(id, { confirmUnchecked: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.message).toBe(MESSAGES.saved);
@@ -71,16 +71,21 @@ describe('B4-1 保存', () => {
     const { repo, runner, id } = await confirmed({ files: { 'index.html': '<h1>old</h1>\n', 'other.txt': 'a\n' } });
     await fs.writeFile(path.join(repo, 'other.txt'), 'b\n');
     await G.git(repo, ['commit', '-am', 'main moves on']);
-    const r = await runner.save(id);
+    const r = await runner.save(id, { confirmUnchecked: true });
     expect(r.ok).toBe(true);
     expect(await read(repo)).toBe('<h1>new</h1>\n');
     expect(await read(repo, 'other.txt')).toBe('b\n');
   });
 
-  it('未检查可以保存（没有 build/test 脚本）', async () => {
-    const { runner, id, task } = await confirmed({ runChecks: true });
+  it('未检查必须先确认再保存（没有 build/test 脚本）', async () => {
+    const { repo, runner, id, task } = await confirmed({ runChecks: true });
     expect(task.card!.items.find((i) => i.key === 'test')?.status).toBe('not_checked');
-    expect((await runner.save(id)).ok).toBe(true);
+    const head = await G.headSha(repo);
+    expect(await runner.save(id)).toMatchObject({ ok: false, reason: 'unchecked_needs_confirm', uncheckedKind: 'none' });
+    expect(await G.headSha(repo)).toBe(head);
+    const saved = await runner.save(id, { confirmUnchecked: true });
+    expect(saved.ok).toBe(true);
+    if (saved.ok) expect(saved.task.saveRecord).toMatchObject({ checked: false, uncheckedKind: 'none' });
   });
 
   it('检查失败不可保存；放弃后主项目不变', async () => {
@@ -119,7 +124,7 @@ describe('B4-1 保存', () => {
     expect(t.card!.items.find((i) => i.key === 'overall')?.status).toBe('pending_user');
     expect(await s.runner.save(s.id)).toMatchObject({ ok: false, reason: 'not_ready' });
     await s.runner.confirm(s.id, { overall: true });
-    expect((await s.runner.save(s.id)).ok).toBe(true);
+    expect((await s.runner.save(s.id, { confirmUnchecked: true })).ok).toBe(true);
   });
 
   it('有验收标准时不接受整体确认', async () => {
@@ -143,7 +148,7 @@ describe('B4-1 保存', () => {
     expect(t2.card!.changes.map((c) => c.path).sort()).toEqual(['index.html', 'sneaky.txt']);
     expect(await runner.save(id)).toMatchObject({ ok: false, reason: 'not_ready' }); // 需要重新确认
     await runner.confirm(id, { criterion: 0, decision: 'confirmed' });
-    expect((await runner.save(id)).ok).toBe(true);
+    expect((await runner.save(id, { confirmUnchecked: true })).ok).toBe(true);
     expect(await read(repo, 'sneaky.txt')).toBe('later\n');
   });
 
@@ -215,12 +220,12 @@ describe('B4-1 保存', () => {
 
   it('重复点击：保存、保存+放弃同时发起，后者被拒绝', async () => {
     const { runner, id } = await confirmed();
-    const [a, b] = await Promise.all([runner.save(id), runner.save(id)]);
+    const [a, b] = await Promise.all([runner.save(id, { confirmUnchecked: true }), runner.save(id, { confirmUnchecked: true })]);
     expect([a.ok, b.ok].sort()).toEqual([false, true]);
     expect([a, b].find((x) => !x.ok)).toMatchObject({ reason: 'busy', detail: MESSAGES.busy });
 
     const s2 = await confirmed();
-    const [c, d] = await Promise.all([s2.runner.save(s2.id), s2.runner.discard(s2.id)]);
+    const [c, d] = await Promise.all([s2.runner.save(s2.id, { confirmUnchecked: true }), s2.runner.discard(s2.id)]);
     expect(c.ok).toBe(true);
     expect(d).toMatchObject({ ok: false, reason: 'busy' });
     expect((await s2.runner.store.get(s2.id))!.state).toBe('saved');
@@ -264,7 +269,7 @@ describe('B4-1 放弃', () => {
 describe('B4-1 撤销', () => {
   it('撤销最近一次保存：以新提交恢复到合并前，历史不改写', async () => {
     const { repo, runner, id } = await confirmed();
-    const saved = await runner.save(id);
+    const saved = await runner.save(id, { confirmUnchecked: true });
     expect(saved.ok).toBe(true);
     if (!saved.ok) return;
     const mergeCommit = saved.task.saveRecord!.mergeCommit;
@@ -284,7 +289,7 @@ describe('B4-1 撤销', () => {
 
   it('撤销被拒：保存之后项目又有了新提交', async () => {
     const { repo, runner, id } = await confirmed();
-    await runner.save(id);
+    await runner.save(id, { confirmUnchecked: true });
     await fs.writeFile(path.join(repo, 'later.txt'), 'x');
     await G.git(repo, ['add', '-A']);
     await G.git(repo, ['commit', '-m', 'later commit']);
@@ -297,13 +302,13 @@ describe('B4-1 撤销', () => {
 
   it('撤销被拒：工作区有未提交改动；分支不一致', async () => {
     const a = await confirmed();
-    await a.runner.save(a.id);
+    await a.runner.save(a.id, { confirmUnchecked: true });
     await fs.writeFile(path.join(a.repo, 'index.html'), 'dirty\n');
     expect(await a.runner.undo(a.id)).toMatchObject({ ok: false, reason: 'undo_refused', files: ['index.html'] });
     expect(await read(a.repo)).toBe('dirty\n'); // 用户的改动原样保留
 
     const b = await confirmed();
-    await b.runner.save(b.id);
+    await b.runner.save(b.id, { confirmUnchecked: true });
     await G.git(b.repo, ['checkout', '-b', 'elsewhere']);
     expect(await b.runner.undo(b.id)).toMatchObject({ ok: false, reason: 'undo_refused' });
   });
@@ -313,7 +318,7 @@ describe('B4-1 清理失败与重试', () => {
   it('保存后清理失败：进入 saved_cleanup_pending，不吞错，可重试', async () => {
     const { repo, runner, id, task } = await confirmed();
     await G.git(repo, ['worktree', 'lock', task.worktree!.path]); // 被锁定的副本无法 remove --force
-    const r = await runner.save(id);
+    const r = await runner.save(id, { confirmUnchecked: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.message).toContain(MESSAGES.saveCleanupPending);
@@ -387,7 +392,7 @@ describe('B4-1 启动核对（reconcileTasks）', () => {
     const out = await fresh.reconcileTasks();
     expect(out[0]?.action).toContain('项目保持原样');
     expect((await fresh.store.get(s.id))!.state).toBe('reviewing');
-    expect((await fresh.save(s.id)).ok).toBe(true);
+    expect((await fresh.save(s.id, { confirmUnchecked: true })).ok).toBe(true);
   });
 
   it('无法判定：标“需要人工查看”，不自动动手', async () => {
@@ -419,7 +424,7 @@ describe('B4-1 启动核对（reconcileTasks）', () => {
 
   it('撤销提交已在分支上、记录没来得及更新：修正为 undone', async () => {
     const s = await confirmed();
-    const saved = await s.runner.save(s.id);
+    const saved = await s.runner.save(s.id, { confirmUnchecked: true });
     expect(saved.ok).toBe(true);
     const t = (await s.runner.store.get(s.id))!;
     await G.restoreTo(s.repo, t.saveRecord!.preMergeHead, 'studio: 撤销');

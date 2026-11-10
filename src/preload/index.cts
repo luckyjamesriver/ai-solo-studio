@@ -29,6 +29,7 @@ const api = {
   ackDenied: (id: string, itemId: string, version: string) => ipcRenderer.invoke('acceptance:ackDenied', id, itemId, version),
   recheck: (id: string) => ipcRenderer.invoke('acceptance:recheck', id),
   saveTask: (id: string, version: string) => ipcRenderer.invoke('acceptance:save', id, version),
+  saveUncheckedTask: (id: string, version: string) => ipcRenderer.invoke('acceptance:saveUnchecked', id, version),
   discardTask: (id: string) => ipcRenderer.invoke('acceptance:discard', id),
   undoSave: (id: string) => ipcRenderer.invoke('acceptance:undo', id),
   retryCleanup: (id: string) => ipcRenderer.invoke('acceptance:retryCleanup', id),

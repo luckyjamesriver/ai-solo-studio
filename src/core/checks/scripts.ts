@@ -6,6 +6,7 @@ import type { Capabilities } from '../capabilities/model.js';
 import { hostEnv } from '../env/host-env.js';
 import { makeDir } from '../persistence/files.js';
 import type { FullTrustRecords } from '../executor/modes.js';
+import { uncheckedReasonText } from '../task/messages.js';
 
 /**
  * 项目脚本检查（build / test）。B3：脚本不再由宿主直接运行，而是通过执行体提供的“沙箱命令运行器”
@@ -137,7 +138,17 @@ export interface ChecksSummary {
   failed: number;
 }
 
+export type UncheckedKind = 'none' | 'unavailable';
+export type UnavailableReason = 'sandbox_unavailable' | 'scripts_changed_reauth' | 'other';
+export type ProjectChecksKind = UncheckedKind | 'ran';
+
 export interface ProjectChecksOutcome {
+  /** none：无构建/测试脚本；unavailable：有脚本但至少一项未能运行；ran：声明的脚本全部运行 */
+  kind: ProjectChecksKind;
+  /** kind === 'unavailable' 时的原因分类 */
+  unavailableReason?: UnavailableReason;
+  /** none / unavailable 时给用户看的说明文案 */
+  reasonText?: string;
   results: CheckResult[];
   /** 至少声明了一项脚本且全部实际运行并通过（没有任何脚本被跳过为 not_available），才为 true */
   checked: boolean;
@@ -146,8 +157,22 @@ export interface ProjectChecksOutcome {
   checkedAt?: string;
 }
 
+function classifyUnavailable(
+  notAvailable: Extract<CheckResult, { status: 'not_available' }>[],
+  digestChangedOrMissing: boolean,
+): UnavailableReason {
+  if (digestChangedOrMissing || notAvailable.some((c) => c.reason.startsWith('脚本内容与你批准时不同') || c.reason.startsWith('这些脚本没有经过你的批准'))) {
+    return 'scripts_changed_reauth';
+  }
+  if (notAvailable.some((c) => c.reason.includes('受限运行环境'))) {
+    return 'sandbox_unavailable';
+  }
+  return 'other';
+}
+
 /**
  * 复用 detectScripts 的识别结果，在指定目录（如保存试合并的临时 worktree）运行项目声明的自动检查。
+ * 区分 none（无脚本）/ unavailable（有脚本但至少一项没能运行）/ ran（全部运行）。
  * 没有可用脚本或任一项无法在受限环境运行时，checked 为 false，绝不把未检查标成通过。
  */
 export async function runProjectChecks(
@@ -157,20 +182,46 @@ export async function runProjectChecks(
 ): Promise<ProjectChecksOutcome> {
   const detected = await detectScripts(dir);
   const names = (['build', 'test'] as const).filter((n) => typeof detected[n] === 'string');
+  if (names.length === 0) {
+    return {
+      kind: 'none',
+      reasonText: uncheckedReasonText('none'),
+      results: [],
+      checked: false,
+      summary: { passed: 0, failed: 0 },
+      failed: [],
+    };
+  }
   const results: CheckResult[] = [];
   for (const name of names) {
     results.push(await runCheck(dir, name, runner, opts));
   }
   const passed = results.filter((c) => c.status === 'passed').length;
   const failed = results.filter((c) => c.status === 'failed');
-  const notAvailable = results.filter((c) => c.status === 'not_available').length;
+  const notAvail = results.filter((c): c is Extract<CheckResult, { status: 'not_available' }> => c.status === 'not_available');
   const anyRan = results.some((c) => c.status !== 'not_available');
-  const checked = results.length > 0 && failed.length === 0 && notAvailable === 0;
+  const checkedAt = anyRan ? { checkedAt: new Date().toISOString() } : {};
+  if (notAvail.length > 0) {
+    const digest = await scriptsDigest(dir);
+    const unavailableReason = classifyUnavailable(notAvail, !opts.authorizedDigest || digest !== opts.authorizedDigest);
+    return {
+      kind: 'unavailable',
+      unavailableReason,
+      reasonText: uncheckedReasonText('unavailable', unavailableReason),
+      results,
+      checked: false,
+      summary: { passed, failed: failed.length },
+      failed,
+      ...checkedAt,
+    };
+  }
+  const checked = failed.length === 0;
   return {
+    kind: 'ran',
     results,
     checked,
     summary: { passed, failed: failed.length },
     failed,
-    ...(anyRan ? { checkedAt: new Date().toISOString() } : {}),
+    ...checkedAt,
   };
 }

@@ -1,13 +1,16 @@
-import type { Task } from '../task/model.js';
+import { acceptanceVersion, type Task } from '../task/model.js';
 import type { TaskState } from '../task/state.js';
 import { canFire } from '../task/state.js';
-import { MESSAGES } from '../task/messages.js';
+import { MESSAGES, uncheckedReasonText } from '../task/messages.js';
+import type { UnavailableReason, UncheckedKind } from '../checks/scripts.js';
 import { saveBlockerCodes, type BlockerCode } from '../task/save-rules.js';
 import type { OpFail } from '../task/runner.js';
 import { STATE_TEXT } from '../app/task-view.js';
 import { extractIncomplete, type IncompleteReport } from './incomplete.js';
 import type { ChangePreview } from './snippets.js';
 import { deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from './texts.js';
+
+export { acceptanceVersion };
 
 /**
  * 用户验收视图模型（B4-2 第 1 节，评审 R02）。
@@ -41,10 +44,20 @@ export interface SaveRecordView {
   checked: boolean;
   /** 保存记录界面的检查结论：只显示“检查通过”或“未检查”，不显示命令 */
   checksText: '检查通过' | '未检查';
+  uncheckedKind?: UncheckedKind;
+  uncheckedConfirmedAt?: string;
   passedCount: number;
   failedCount: number;
   checkedAt?: string;
   savedAt: string;
+}
+
+export interface UncheckedConfirmView {
+  kind: UncheckedKind;
+  unavailableReason?: UnavailableReason;
+  reason: string;
+  previewButtonText: string;
+  confirmButtonText: string;
 }
 
 export interface UserAcceptanceView {
@@ -78,6 +91,8 @@ export interface UserAcceptanceView {
   version: string;
   /** 保存记录里的检查信息（不含任何命令或底层哈希） */
   saveRecord: SaveRecordView | null;
+  /** 最近一次保存返回“未检查待确认”且验收版本一致时的界面确认信息与按钮文案 */
+  uncheckedConfirm: UncheckedConfirmView | null;
   /** 成果预览信息（步骤 ①） */
   preview: {
     kind: 'web' | 'finder' | null;
@@ -117,6 +132,8 @@ export const VIEW_TEXT = {
   undoConfirm: '确定要撤销这次保存吗？项目会回到保存之前的样子。',
   cleanupNeeded: '临时文件需要处理，请点“重试清理”。',
   isolation: '施工环境的隔离出现异常，工作台不允许保存。',
+  uncheckedOpenPreview: '打开预览',
+  uncheckedSaveAnyway: '仍然保存',
   blockers: {
     no_card: '验收内容还没有准备好，请点“重新检查”。',
     external_driver: MESSAGES.externalDriver,
@@ -146,10 +163,6 @@ const ITEM_LABEL: Record<string, string> = {
 const CHECK_NAME = { build: '构建', test: '测试' } as const;
 const VERSION_RE = /^[0-9a-f]{12}-\d{1,6}$/;
 
-/** 验收版本：冻结内容的短哈希 + 证据序号（重新检查后序号加一，即使内容没变旧版本也作废） */
-export function acceptanceVersion(t: Task): string {
-  return t.acceptedTree ? `${t.acceptedTree.slice(0, 12)}-${t.acceptanceRev ?? 0}` : '';
-}
 export const isVersionFormat = (v: unknown): v is string => typeof v === 'string' && VERSION_RE.test(v);
 
 /** 任务用过额外文件夹或完全信任：AI 可能在任务副本以外做过修改，工作台无法撤销 */
@@ -185,6 +198,10 @@ export function mapFailure(f: OpFail): { message: string; files?: string[] } {
       const names = (f.failedChecks ?? []).map((k) => CHECK_NAME[k]).filter(Boolean);
       return withFiles(names.length ? `合并后自动检查未通过（${names.join('、')}），本次没有保存，你的项目保持原样。` : MESSAGES.checksFailed);
     }
+    case 'unchecked_needs_confirm':
+      return withFiles(
+        f.uncheckedKind ? uncheckedReasonText(f.uncheckedKind, f.unavailableReason) : MESSAGES.uncheckedNeedsConfirm,
+      );
     case 'project_changed': return withFiles(MESSAGES.projectChanged);
     case 'failed_restored': return withFiles(MESSAGES.failedRestored);
     case 'project_locked': {
@@ -374,6 +391,23 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     ...(readOnly ? [`提示：${MESSAGES.abnormal}`] : []),
   ].join('\n');
 
+  const currentVersion = acceptanceVersion(t);
+  const uncheckedConfirm: UncheckedConfirmView | null =
+    !readOnly &&
+    reviewing &&
+    blockers.length === 0 &&
+    !saveFail &&
+    t.uncheckedConfirm &&
+    t.uncheckedConfirm.version === currentVersion
+      ? {
+          kind: t.uncheckedConfirm.kind,
+          ...(t.uncheckedConfirm.unavailableReason ? { unavailableReason: t.uncheckedConfirm.unavailableReason } : {}),
+          reason: uncheckedReasonText(t.uncheckedConfirm.kind, t.uncheckedConfirm.unavailableReason),
+          previewButtonText: VIEW_TEXT.uncheckedOpenPreview,
+          confirmButtonText: VIEW_TEXT.uncheckedSaveAnyway,
+        }
+      : null;
+
   const needsOverall = t.criteria.length === 0;
   return {
     taskId: t.id,
@@ -399,17 +433,20 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     busy: ctx.busy,
     reconciled: t.reconciled ? `已核对：${t.reconciled.note}` : null,
     diagnosticSummary: summary,
-    version: acceptanceVersion(t),
+    version: currentVersion,
     saveRecord: t.saveRecord
       ? {
           checked: t.saveRecord.checked === true,
           checksText: t.saveRecord.checked === true ? '检查通过' : '未检查',
+          ...(t.saveRecord.checked !== true && t.saveRecord.uncheckedKind ? { uncheckedKind: t.saveRecord.uncheckedKind } : {}),
+          ...(t.saveRecord.checked !== true && t.saveRecord.uncheckedConfirmedAt ? { uncheckedConfirmedAt: t.saveRecord.uncheckedConfirmedAt } : {}),
           passedCount: t.saveRecord.checksSummary?.passed ?? 0,
           failedCount: t.saveRecord.checksSummary?.failed ?? 0,
           ...(t.saveRecord.checkedAt ? { checkedAt: t.saveRecord.checkedAt } : {}),
           savedAt: t.saveRecord.savedAt,
         }
       : null,
+    uncheckedConfirm,
     preview: {
       kind: ctx.previewKind !== undefined ? ctx.previewKind : (t.worktree?.path ? 'finder' : null),
       buttonText: ctx.previewButtonText ?? ((ctx.previewKind ?? (t.worktree?.path ? 'finder' : null)) === 'web' ? '在浏览器中打开预览' : '在访达中显示'),

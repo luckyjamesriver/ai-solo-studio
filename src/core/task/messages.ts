@@ -1,4 +1,5 @@
 import { EXTERNAL_DRIVER_MESSAGE } from '../git/git.js';
+import type { UnavailableReason, UncheckedKind } from '../checks/scripts.js';
 
 /**
  * 保存 / 放弃 / 撤销给用户看的文案（B4-plan 第 1、3、4、5、6 节原文）。
@@ -15,6 +16,7 @@ export const MESSAGES = {
   conflict: 'AI 的修改与项目当前版本有冲突，工作台无法安全自动合并。本次没有保存，AI 的成果仍保留。',
   checksFailed: '合并后自动检查未通过，本次没有保存，你的项目保持原样。',
   projectChanged: '保存检查期间项目发生了新的变化，本次没有保存，你的项目保持原样，请重新保存。',
+  uncheckedNeedsConfirm: '合并结果尚未经过自动检查，请先查看预览或确认仍然保存。',
   failedRestored: '写入项目时出错，已安全恢复并核对与保存前一致。本次没有保存，任务成果仍保留。',
   projectLocked: '项目中有其他任务处于异常状态（恢复未确认），请先处理那个任务后再保存或撤销。',
   abnormal: '项目状态异常，请不要继续操作',
@@ -45,3 +47,21 @@ export const MESSAGES = {
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES;
+
+/**
+ * 「未检查」时的统一固定文案：核心层保存拒绝、Task 持久记录与验收视图共用同一套文案，
+ * 不透传内部路径/命令/原始错误，且「检查脚本变化」明确告知检查方式被改动。
+ */
+export function uncheckedReasonText(kind: UncheckedKind, unavailableReason?: UnavailableReason): string {
+  if (kind === 'none') {
+    return '项目没有配置可用的自动检查脚本，合并后无法自动验证，请先预览确认后再决定是否仍然保存。';
+  }
+  switch (unavailableReason) {
+    case 'scripts_changed_reauth':
+      return '这次合并改动了项目的检查方式，所以没法自动检查。';
+    case 'sandbox_unavailable':
+      return '当前没有可用的受限运行环境，检查未能运行，所以没法自动检查。';
+    default:
+      return '合并后的自动检查未能运行，所以没法自动检查。';
+  }
+}

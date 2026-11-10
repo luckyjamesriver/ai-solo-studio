@@ -274,7 +274,8 @@ describe('安全基线（防回归）', () => {
     // B3-2 修订（任务界面必需的新 API；原清单是前 8 项）：清单仍然固定，参数形态逐一列出——
     // 只允许 编号 / 布尔 / 需求文字 / 计划表单（文字、模式、布尔）/ 选项键；任何参数都不得叫 path/dir/folder/file，
     // 额外文件夹由主进程弹系统选择框取得，渲染进程不传路径。
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
+    expect(entries).toHaveLength(29);
     // B4-2 修订（只增不减）：新增 10 个方法（9 个验收操作 + 1 个无参数的 revealProject）；新增的参数形态只有
     // “编号 / 条目编号 / 验收版本（字符串）”，原有形态一个不变。
     const SHAPES = ['', 'id: string', 'consent: boolean', 'request: string', 'id: string, plan: PlanInput', 'id: string, key: string', 'id: string, ack: boolean', 'id: string, version: string', 'id: string, itemId: string, version: string'];
@@ -469,6 +470,7 @@ describe('安全基线（防回归）', () => {
         ackDenied: 'id: string, itemId: string, version: string',
         recheck: 'id: string',
         saveTask: 'id: string, version: string',
+        saveUncheckedTask: 'id: string, version: string',
         discardTask: 'id: string',
         undoSave: 'id: string',
         retryCleanup: 'id: string',
@@ -617,6 +619,168 @@ describe('安全基线（防回归）', () => {
       const body = store.slice(store.indexOf('private async commitLocked'));
       expect(body.indexOf('await this.logEvent(ev)')).toBeGreaterThan(0);
       expect(body.indexOf('await this.logEvent(ev)')).toBeLessThan(body.indexOf('await atomicWrite(file'));
+    });
+  });
+
+  describe('阶段 1 补丁：未检查保存确认与 runChecks 安全门禁（只增不减）', () => {
+    it('runChecks: false 只允许测试使用：生产构建路径里不得设置或透传，且非测试环境构造时拒绝', async () => {
+      const disablePat = /\brunChecks\s*:\s*false\b/;
+      for (const [f, s] of sources) {
+        expect(stripComments(s), `${f} 不得设置 runChecks: false`).not.toMatch(disablePat);
+      }
+      // 生产入口（main、preload、app 控制层、renderer）甚至不得引用 runChecks，防止从配置透传
+      const prodDirs = /^(?:src\/(?:main|preload|renderer)|src\/core\/app)\//;
+      for (const [f, s] of sources) {
+        if (prodDirs.test(f.split(path.sep).join('/'))) {
+          expect(stripComments(s), `${f} 不得引用 runChecks`).not.toMatch(/\brunChecks\b/);
+        }
+      }
+      // 运行时兜底：在非测试环境下传入 runChecks: false 直接抛错
+      const { TaskRunner } = await import('../src/core/task/runner.js');
+      const { FakeExecutor } = await import('../src/core/executor/adapters/fake.js');
+      const prevVitest = process.env.VITEST;
+      const prevNodeEnv = process.env.NODE_ENV;
+      delete process.env.VITEST;
+      delete process.env.NODE_ENV;
+      try {
+        expect(() => new TaskRunner({ repo: '/tmp/nonexistent', executor: new FakeExecutor([]), runChecks: false })).toThrow(/仅限测试使用/);
+      } finally {
+        if (prevVitest !== undefined) process.env.VITEST = prevVitest;
+        if (prevNodeEnv !== undefined) process.env.NODE_ENV = prevNodeEnv;
+      }
+      // 断言自身有效
+      expect('new TaskRunner({ repo, executor, runChecks: false })').toMatch(disablePat);
+      expect('const o = { runChecks: true };').not.toMatch(disablePat);
+    });
+
+    it('confirmUnchecked 在主进程中只由 saveUncheckedTask 的处理函数设置，渲染层/IPC 传不进来', () => {
+      for (const [f, s] of sources) {
+        const p = f.split(path.sep).join('/');
+        if (/^src\/(?:renderer|preload|main)\//.test(p)) {
+          expect(s, `${p} 不得出现或传递 confirmUnchecked`).not.toMatch(/\bconfirmUnchecked\b/);
+        }
+      }
+      const preload = read('src/preload/index.cts');
+      expect(preload).toMatch(/^\s{2}saveUncheckedTask: \(id: string, version: string\) => ipcRenderer\.invoke\('acceptance:saveUnchecked', id, version\),/m);
+      expect(main).toMatch(/ipcMain\.handle\('acceptance:saveUnchecked', async \(_e, id: unknown, version: unknown\) => \(await tasks\(\)\)\.saveUncheckedTask\(id, version\)\);/);
+
+      const ctl = stripComments(read('src/core/app/task-controller.ts'));
+      expect(ctl).toMatch(/private async runSave\(id: unknown, version: unknown, confirmUnchecked: boolean\)/);
+      expect(ctl).toMatch(/async saveTask\(id: unknown, version: unknown\)[\s\S]*?return this\.runSave\(id, version, false\)/);
+      expect(ctl).toMatch(/async saveUncheckedTask\(id: unknown, version: unknown\)[\s\S]*?return this\.runSave\(id, version, true\)/);
+      // 整个 TaskController 只有 runSave 这一处调用 runner.save(...)
+      expect([...ctl.matchAll(/\.save\(/g)]).toHaveLength(1);
+    });
+
+    it('saveUncheckedTask 遇到 checks_failed / conflict / project_locked / acceptance_invalid 时结果与 saveTask 相同，只放行未检查', async () => {
+      const { TaskController } = await import('../src/core/app/task-controller.js');
+      const { TaskPrefs } = await import('../src/core/app/prefs.js');
+      const { TaskRunner } = await import('../src/core/task/runner.js');
+      const { FakeExecutor } = await import('../src/core/executor/adapters/fake.js');
+      const { MESSAGES } = await import('../src/core/task/messages.js');
+      const G = await import('../src/core/git/git.js');
+      const { makeRepo, tmpDir, testSandboxRunner } = await import('./helpers.js');
+
+      const untilReady = async (ctl: InstanceType<typeof TaskController>, id: string) => {
+        for (let i = 0; i < 400; i++) {
+          const v = await ctl.getAcceptanceView(id);
+          if (v.state === 'reviewing' && !v.busy) return v;
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        throw new Error('等待验收状态超时');
+      };
+      const confirmAll = async (ctl: InstanceType<typeof TaskController>, id: string) => {
+        let v = await untilReady(ctl, id);
+        for (const c of v.criteria) v = (await ctl.confirmCriterion(id, c.id, v.version)).view;
+        if (v.overall.needed) v = (await ctl.confirmOverall(id, v.version)).view;
+        return v;
+      };
+      const makeCtlTask = async (opts: {
+        files: Record<string, string>;
+        script: { do: 'write'; path: string; content: string }[];
+        withSandbox?: boolean;
+        goal?: string;
+      }) => {
+        const repo = await makeRepo(opts.files);
+        const data = await tmpDir('sec-data-');
+        const ctl = new TaskController({
+          repo,
+          makeExecutor: () => {
+            const ex = new FakeExecutor([...opts.script, { do: 'exit', code: 0 }]);
+            if (opts.withSandbox) (ex as unknown as { sandboxRunner: unknown }).sandboxRunner = testSandboxRunner();
+            return ex;
+          },
+          pickDirectory: async () => null,
+          prefs: new TaskPrefs(data),
+        });
+        const t = await ctl.create(opts.goal ?? '测试任务');
+        await ctl.savePlan(t.id, { goal: opts.goal ?? '测试任务', criteria: ['功能完成'], mode: 'standard', network: false });
+        await ctl.start(t.id, false);
+        const v = await confirmAll(ctl, t.id);
+        return { repo, ctl, id: t.id, v };
+      };
+
+      // 1) 试检查失败（checks_failed）：saveTask 与 saveUncheckedTask 必须同样拦截
+      const f1 = await makeCtlTask({
+        files: {
+          'package.json': JSON.stringify({ scripts: { test: 'node check.cjs' } }),
+          'check.cjs': "const fs = require('node:fs'); if (fs.readFileSync('a.txt','utf8').trim()==='task' && fs.readFileSync('b.txt','utf8').trim()==='main2') process.exit(1);",
+          'a.txt': 'a0\n',
+          'b.txt': 'b0\n',
+        },
+        script: [{ do: 'write', path: 'a.txt', content: 'task\n' }],
+        withSandbox: true,
+      });
+      await fs.promises.writeFile(path.join(f1.repo, 'b.txt'), 'main2\n');
+      await G.git(f1.repo, ['commit', '-am', 'update b']);
+      const head1 = await G.headSha(f1.repo);
+      const s1 = await f1.ctl.saveTask(f1.id, f1.v.version);
+      const u1 = await f1.ctl.saveUncheckedTask(f1.id, f1.v.version);
+      expect(s1.ok).toBe(false);
+      expect(u1.ok).toBe(false);
+      expect(u1.message).toBe(s1.message);
+      expect(u1.message).toContain('未通过');
+      expect(await G.headSha(f1.repo)).toBe(head1);
+
+      // 2) 冲突（conflict）：saveUncheckedTask 同样触发 save_failed_unmerged，不写入主项目
+      const f2a = await makeCtlTask({ files: { 'index.html': 'old\n' }, script: [{ do: 'write', path: 'index.html', content: 'from-task\n' }] });
+      await fs.promises.writeFile(path.join(f2a.repo, 'index.html'), 'from-main\n');
+      await G.git(f2a.repo, ['commit', '-am', 'main conflict']);
+      const s2 = await f2a.ctl.saveTask(f2a.id, f2a.v.version);
+      expect(s2).toMatchObject({ ok: false, message: MESSAGES.conflict });
+      expect(s2.view.state).toBe('save_failed_unmerged');
+
+      const f2b = await makeCtlTask({ files: { 'index.html': 'old\n' }, script: [{ do: 'write', path: 'index.html', content: 'from-task\n' }] });
+      await fs.promises.writeFile(path.join(f2b.repo, 'index.html'), 'from-main\n');
+      await G.git(f2b.repo, ['commit', '-am', 'main conflict']);
+      const u2 = await f2b.ctl.saveUncheckedTask(f2b.id, f2b.v.version);
+      expect(u2).toMatchObject({ ok: false, message: MESSAGES.conflict });
+      expect(u2.view.state).toBe('save_failed_unmerged');
+      expect(fs.readFileSync(path.join(f2b.repo, 'index.html'), 'utf8')).toBe('from-main\n');
+
+      // 3) 项目锁（project_locked）：存在 manualReview 时 saveUncheckedTask 同样被锁定
+      const f3 = await makeCtlTask({ files: { 'a.txt': 'a0\n', 'b.txt': 'b0\n' }, script: [{ do: 'write', path: 'a.txt', content: 'a1\n' }] });
+      const blockerRunner = new TaskRunner({ repo: f3.repo, executor: new FakeExecutor([]) });
+      const blocker = await blockerRunner.create('异常阻塞任务');
+      blocker.manualReview = { reason: '恢复未确认', at: new Date().toISOString() };
+      await blockerRunner.store.save(blocker);
+      const s3 = await f3.ctl.saveTask(f3.id, f3.v.version);
+      const u3 = await f3.ctl.saveUncheckedTask(f3.id, f3.v.version);
+      expect(s3.ok).toBe(false);
+      expect(u3.ok).toBe(false);
+      expect(u3.message).toBe(s3.message);
+      expect(u3.message).toContain('异常阻塞任务');
+      expect(fs.readFileSync(path.join(f3.repo, 'a.txt'), 'utf8')).toBe('a0\n');
+
+      // 4) 验收失效（acceptance_invalid）：副本内容变化后 saveUncheckedTask 同样拒绝
+      const f4 = await makeCtlTask({ files: { 'index.html': 'old\n' }, script: [{ do: 'write', path: 'index.html', content: 'new\n' }] });
+      const f4Task = (await new TaskRunner({ repo: f4.repo, executor: new FakeExecutor([]) }).store.get(f4.id))!;
+      await fs.promises.writeFile(path.join(f4Task.worktree!.path, 'index.html'), 'tampered\n');
+      const s4 = await f4.ctl.saveTask(f4.id, f4.v.version);
+      const u4 = await f4.ctl.saveUncheckedTask(f4.id, f4.v.version);
+      expect(s4).toMatchObject({ ok: false, message: MESSAGES.acceptanceInvalid });
+      expect(u4).toMatchObject({ ok: false, message: MESSAGES.acceptanceInvalid });
+      expect(fs.readFileSync(path.join(f4.repo, 'index.html'), 'utf8')).toBe('old\n');
     });
   });
 });

@@ -33,7 +33,7 @@ export interface DisclosureState {
 }
 
 export type { TaskView, ResultView, FactView, ExtraDirView } from '../core/app/task-view.js';
-export type { UserAcceptanceView, ViewItem, ViewChange, ActionState, SaveRecordView } from '../core/acceptance/view.js';
+export type { UserAcceptanceView, ViewItem, ViewChange, ActionState, SaveRecordView, UncheckedConfirmView } from '../core/acceptance/view.js';
 export type { ChangePreview, Hunk } from '../core/acceptance/snippets.js';
 export type { AcceptanceActionResult } from '../core/app/task-controller.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
@@ -60,6 +60,7 @@ interface StudioApi {
   ackDenied(id: string, itemId: string, version: string): Promise<AcceptanceActionResult>;
   recheck(id: string): Promise<AcceptanceActionResult>;
   saveTask(id: string, version: string): Promise<AcceptanceActionResult>;
+  saveUncheckedTask(id: string, version: string): Promise<AcceptanceActionResult>;
   discardTask(id: string): Promise<AcceptanceActionResult>;
   undoSave(id: string): Promise<AcceptanceActionResult>;
   retryCleanup(id: string): Promise<AcceptanceActionResult>;

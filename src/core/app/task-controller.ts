@@ -395,16 +395,24 @@ export class TaskController {
     });
   }
 
-  async saveTask(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
+  private async runSave(id: unknown, version: unknown, confirmUnchecked: boolean): Promise<AcceptanceActionResult> {
     const tid = this.checkArg(TASK_ID, id);
     const v = this.checkVersion(version);
     await this.load(tid);
     return this.act(tid, async (t) => {
       // 用户看到并确认的就是这一版：版本不一致（例如另一处已重新检查）一律不保存
       if (v !== acceptanceVersion(t)) return { ok: false, message: MESSAGES.acceptanceInvalid };
-      const r = await this.r().save(t.id);
+      const r = await this.r().save(t.id, confirmUnchecked ? { confirmUnchecked: true } : undefined);
       return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
     });
+  }
+
+  async saveTask(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
+    return this.runSave(id, version, false);
+  }
+
+  async saveUncheckedTask(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
+    return this.runSave(id, version, true);
   }
 
   async discardTask(id: unknown): Promise<AcceptanceActionResult> {

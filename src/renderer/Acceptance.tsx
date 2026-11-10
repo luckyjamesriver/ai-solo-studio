@@ -88,7 +88,11 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
     try {
       const r = await call(studio());
       setView(r.view);
-      setMessage(r.message || r.files?.length ? { ok: r.ok, text: r.message, ...(r.files?.length ? { files: r.files } : {}) } : null);
+      setMessage(
+        (r.message && r.message !== r.view.uncheckedConfirm?.reason) || r.files?.length
+          ? { ok: r.ok, text: r.message, ...(r.files?.length ? { files: r.files } : {}) }
+          : null,
+      );
       onChanged();
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
@@ -346,6 +350,30 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
                 )}
                 {!a.save.enabled && a.save.files && (
                   <ul className="muted" data-testid="save-files">{a.save.files.map((f) => <li key={f}>{f}</li>)}</ul>
+                )}
+                {v.uncheckedConfirm && (
+                  <div className="confirm-panel" role="alertdialog" aria-modal="false" data-testid="unchecked-confirm-panel">
+                    <p data-testid="unchecked-confirm-reason">{v.uncheckedConfirm.reason}</p>
+                    <div className="row">
+                      <button
+                        type="button"
+                        className="secondary"
+                        data-testid="unchecked-preview-button"
+                        disabled={pending}
+                        onClick={() => run((s) => s.openPreview(v.taskId, v.version))}
+                      >
+                        {v.uncheckedConfirm.previewButtonText}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="unchecked-confirm-save-button"
+                        disabled={pending || !a.save.enabled}
+                        onClick={() => run((s) => s.saveUncheckedTask(v.taskId, v.version))}
+                      >
+                        {v.uncheckedConfirm.confirmButtonText}
+                      </button>
+                    </div>
+                  </div>
                 )}
               </section>
             </>

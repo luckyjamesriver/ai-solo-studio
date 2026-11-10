@@ -2,15 +2,26 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import * as G from '../git/git.js';
 import { next, canFire, type TaskEvent } from './state.js';
-import { MESSAGES } from './messages.js';
+import { MESSAGES, uncheckedReasonText } from './messages.js';
 import { saveBlockers } from './save-rules.js';
 import { TaskStore, type SaveOptions } from './store.js';
 import { RecordStore, StaleRunError, type OpenOptions } from '../persistence/index.js';
 import { resolveCapabilities, type Capabilities } from '../capabilities/model.js';
-import type { OpLog, Plan, Task, TimelineEntry } from './model.js';
+import { acceptanceVersion, type OpLog, type Plan, type Task, type TimelineEntry } from './model.js';
 import type { Decision, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
-import { runCheck, runProjectChecks, scriptsDigest, type CheckName, type CheckResult, type ProjectChecksOutcome, type SandboxCommandRunner } from '../checks/scripts.js';
+import {
+  detectScripts,
+  runCheck,
+  runProjectChecks,
+  scriptsDigest,
+  type CheckName,
+  type CheckResult,
+  type ProjectChecksOutcome,
+  type SandboxCommandRunner,
+  type UnavailableReason,
+  type UncheckedKind,
+} from '../checks/scripts.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
 import { recordProcess, verifyNoLiveExecutor, type ProcessProbe } from './process-check.js';
@@ -26,6 +37,7 @@ export type OpFailReason =
   | 'acceptance_invalid'
   | 'conflict'
   | 'checks_failed'
+  | 'unchecked_needs_confirm'
   | 'project_changed'
   | 'failed_restored'
   | 'project_locked'
@@ -49,10 +61,17 @@ export interface OpFail {
   files?: string[];
   /** checks_failed 时未通过的检查项 */
   failedChecks?: CheckName[];
+  /** unchecked_needs_confirm 时未检查的类型与具体原因 */
+  uncheckedKind?: UncheckedKind;
+  unavailableReason?: UnavailableReason;
   /** project_locked 时正处于 manualReview 的阻塞任务名称 */
   blockingTask?: string;
   /** undo_refused 时挡住当前撤销的后续保存列表 */
   blockingSaves?: BlockingSave[];
+}
+export interface SaveTaskOptions {
+  /** 用户明确确认在“未检查”状态下仍然保存（仅放行未检查，不跳过其他任何安全门禁） */
+  confirmUnchecked?: boolean;
 }
 export type SaveResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult; checked: boolean } | OpFail;
 export type DiscardResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult } | OpFail;
@@ -115,6 +134,9 @@ export class TaskRunner extends EventEmitter {
 
   constructor(private readonly opts: RunnerOptions) {
     super();
+    if (opts.runChecks === false && process.env.VITEST !== 'true' && process.env.NODE_ENV !== 'test') {
+      throw new Error('关闭自动检查的选项仅限测试使用');
+    }
     this.store = new TaskStore(opts.repo, opts.storeOptions);
   }
 
@@ -355,6 +377,7 @@ export class TaskRunner extends EventEmitter {
     this.log(t, 'state', `Git：主线 ${t.gitBinding.mainHeadAtStart.slice(0, 8)}→${t.gitBinding.mainHeadAtEnd.slice(0, 8)}，工作树 ${t.gitBinding.worktreeHeadAtStart.slice(0, 8)}→${t.gitBinding.worktreeHeadAtEnd.slice(0, 8)}`);
     delete t.acceptedTree;
     delete t.checksVoid;
+    delete t.uncheckedConfirm;
     t.acceptanceRev = (t.acceptanceRev ?? 0) + 1; // 每次生成验收证据（含重新检查）版本加一：旧版本的确认请求一律作废
 
     let drivers = await G.detectExternalDrivers(wt.path);
@@ -510,6 +533,7 @@ export class TaskRunner extends EventEmitter {
     t.overallConfirmed = false;
     delete t.acceptedTree;
     delete t.checksVoid;
+    delete t.uncheckedConfirm;
     delete t.card;
     delete t.exit;
     t.denied = [];
@@ -574,9 +598,34 @@ export class TaskRunner extends EventEmitter {
     };
   }
 
+  private async clearUncheckedConfirm(t: Task): Promise<void> {
+    if (!t.uncheckedConfirm) return;
+    delete t.uncheckedConfirm;
+    await this.persist(t);
+  }
+
   private async runTrialChecks(t: Task, trialPath: string): Promise<ProjectChecksOutcome> {
     if (this.opts.runChecks === false) {
-      return { results: [], checked: false, summary: { passed: 0, failed: 0 }, failed: [] };
+      const detected = await detectScripts(trialPath);
+      const hasScripts = Object.keys(detected).length > 0;
+      return hasScripts
+        ? {
+            kind: 'unavailable',
+            unavailableReason: 'other',
+            reasonText: uncheckedReasonText('unavailable', 'other'),
+            results: [],
+            checked: false,
+            summary: { passed: 0, failed: 0 },
+            failed: [],
+          }
+        : {
+            kind: 'none',
+            reasonText: uncheckedReasonText('none'),
+            results: [],
+            checked: false,
+            summary: { passed: 0, failed: 0 },
+            failed: [],
+          };
     }
     return runProjectChecks(trialPath, this.opts.sandboxRunner ?? this.opts.executor.sandboxRunner, {
       authorizedDigest: t.checkAuth?.digest,
@@ -586,45 +635,51 @@ export class TaskRunner extends EventEmitter {
     });
   }
 
-  /** 保存（B4-plan 第 3 节 + 阶段 1 安全保存）：先在临时 worktree 试合并与试检查，再写入主项目。 */
-  async save(id: string): Promise<SaveResult> {
+  /** 保存（B4-plan 第 3 节 + 阶段 1 安全保存）：先在临时 worktree 试合并与试检查，再写入主项目；未检查时须确认后才能写入。 */
+  async save(id: string, opts: SaveTaskOptions = {}): Promise<SaveResult> {
     if (!this.enter(id)) return this.busyFail();
     try {
-      return await this.doSave(id);
+      return await this.doSave(id, opts);
     } finally {
       this.leave(id);
     }
   }
 
-  private async doSave(id: string): Promise<SaveResult> {
+  private async doSave(id: string, opts: SaveTaskOptions = {}): Promise<SaveResult> {
     const t = await this.load(id);
     const repo = this.opts.repo;
-    if (t.manualReview) return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
-    if (this.runs.has(id) || this.starting.has(id)) return { ok: false, reason: 'not_ready', detail: '任务还在执行，请先停止。' };
-    if (!['reviewing', 'save_failed_unmerged'].includes(t.state)) return { ok: false, reason: 'not_ready', detail: MESSAGES.notReady };
+    const prevPendingPreHead = t.uncheckedConfirm && t.uncheckedConfirm.version === acceptanceVersion(t) ? t.uncheckedConfirm.preHead : undefined;
+    const failEarly = async (fail: OpFail): Promise<OpFail> => {
+      await this.clearUncheckedConfirm(t);
+      return fail;
+    };
+    if (t.manualReview) return failEarly({ ok: false, reason: 'abnormal', detail: MESSAGES.abnormal });
+    if (this.runs.has(id) || this.starting.has(id)) return failEarly({ ok: false, reason: 'not_ready', detail: '任务还在执行，请先停止。' });
+    if (!['reviewing', 'save_failed_unmerged'].includes(t.state)) return failEarly({ ok: false, reason: 'not_ready', detail: MESSAGES.notReady });
     const lock = await this.findProjectLock(id);
-    if (lock) return this.projectLockFail(lock);
+    if (lock) return failEarly(this.projectLockFail(lock));
     const blockers = saveBlockers(t);
     const wt = t.worktree;
     const binding = t.binding;
     if (blockers.length || !wt || !binding || !t.acceptedTree) {
-      return { ok: false, reason: 'not_ready', detail: blockers.length ? blockers.join('') : MESSAGES.notReady };
+      return failEarly({ ok: false, reason: 'not_ready', detail: blockers.length ? blockers.join('') : MESSAGES.notReady });
     }
 
     // 外部驱动检测：任务副本与主项目都要过；命中即停，副本保留，不关闭驱动后继续
     for (const dir of [wt.path, repo]) {
       const d = await G.detectExternalDrivers(dir);
-      if (!d.supported) return { ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver, files: d.drivers };
+      if (!d.supported) return failEarly({ ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver, files: d.drivers });
     }
-    if ((await fs.realpath(repo)) !== binding.repoPath) return { ok: false, reason: 'repo_changed', detail: MESSAGES.repoChanged };
-    if ((await G.currentBranch(repo)) !== binding.branch) return { ok: false, reason: 'branch_changed', detail: MESSAGES.branchChanged };
+    if ((await fs.realpath(repo)) !== binding.repoPath) return failEarly({ ok: false, reason: 'repo_changed', detail: MESSAGES.repoChanged });
+    if ((await G.currentBranch(repo)) !== binding.branch) return failEarly({ ok: false, reason: 'branch_changed', detail: MESSAGES.branchChanged });
     const dirty = await G.dirtyFiles(repo);
-    if (dirty.length) return { ok: false, reason: 'dirty_main', detail: MESSAGES.dirtyMain, files: dirty };
+    if (dirty.length) return failEarly({ ok: false, reason: 'dirty_main', detail: MESSAGES.dirtyMain, files: dirty });
 
     // 验收内容冻结：重新计算副本内容，必须与验收时的 acceptedTree 完全一致
     const tree = await G.computeTree(repo, wt.path);
     if (tree !== t.acceptedTree) {
       this.log(t, 'error', MESSAGES.acceptanceInvalid, 'host');
+      delete t.uncheckedConfirm;
       await this.persist(t);
       return { ok: false, reason: 'acceptance_invalid', detail: MESSAGES.acceptanceInvalid };
     }
@@ -652,6 +707,9 @@ export class TaskRunner extends EventEmitter {
 
     await this.opPhase(t, 'trial_merging', { trialWorktreePath: trialPath });
     let checked = false;
+    let uncheckedKind: UncheckedKind | undefined;
+    let unavailableReason: UnavailableReason | undefined;
+    let uncheckedConfirmedAt: string | undefined;
     try {
       await G.createTrialWorktree(repo, trialPath, preHead);
       this.opStep(t, '创建临时副本', true, trialPath);
@@ -672,6 +730,7 @@ export class TaskRunner extends EventEmitter {
           && (await G.dirtyFiles(repo).catch(() => ['?'])).length === 0
           && !(await G.mergeInProgress(repo).catch(() => true));
         this.opStep(t, '合并失败后核验主项目', intact);
+        delete t.uncheckedConfirm;
         await cleanupTrial();
         if (!intact) {
           t.manualReview = { reason: '试合并失败核验时发现主项目与保存前不一致。', at: new Date().toISOString() };
@@ -698,6 +757,7 @@ export class TaskRunner extends EventEmitter {
         checkedAt = checkOutcome.checkedAt;
         if (checkOutcome.failed.length > 0) {
           const failedNames = checkOutcome.failed.map((c) => c.name);
+          delete t.uncheckedConfirm;
           this.opStep(t, '试检查', false, failedNames.join(','));
           await cleanupTrial();
           this.endOp(t, 'interrupted');
@@ -710,14 +770,51 @@ export class TaskRunner extends EventEmitter {
             failedChecks: failedNames,
           };
         }
-        this.opStep(t, '试检查', true, checked ? `passed=${checksSummary.passed}` : '未检查');
+        // 未检查（none 或 unavailable）：未传 confirmUnchecked 时不写入主项目，清理临时副本并返回待确认
+        if (!checkOutcome.checked) {
+          const kind: UncheckedKind = checkOutcome.kind === 'none' ? 'none' : 'unavailable';
+          const reasonText = checkOutcome.reasonText ?? uncheckedReasonText(kind, checkOutcome.unavailableReason);
+          if (!opts.confirmUnchecked) {
+            this.opStep(t, '试检查', false, `needs_confirm:${kind}${checkOutcome.unavailableReason ? `:${checkOutcome.unavailableReason}` : ''}`);
+            await cleanupTrial();
+            this.endOp(t, 'interrupted');
+            t.uncheckedConfirm = {
+              version: acceptanceVersion(t),
+              preHead,
+              kind,
+              ...(checkOutcome.unavailableReason ? { unavailableReason: checkOutcome.unavailableReason } : {}),
+              reasonText,
+              at: new Date().toISOString(),
+            };
+            await this.persist(t);
+            return {
+              ok: false,
+              reason: 'unchecked_needs_confirm',
+              detail: reasonText,
+              uncheckedKind: kind,
+              ...(checkOutcome.unavailableReason ? { unavailableReason: checkOutcome.unavailableReason } : {}),
+            };
+          }
+          uncheckedKind = kind;
+          unavailableReason = checkOutcome.unavailableReason;
+          uncheckedConfirmedAt = new Date().toISOString();
+        }
+        this.opStep(t, '试检查', true, checked ? `passed=${checksSummary.passed}` : `unchecked_confirmed:${uncheckedKind}`);
         await this.opPhase(t, 'trial_checked', {
           checked,
           checksSummary,
           ...(checkedAt ? { checkedAt } : {}),
+          ...(!checked && uncheckedKind
+            ? {
+                uncheckedKind,
+                ...(unavailableReason ? { unavailableReason } : {}),
+                ...(uncheckedConfirmedAt ? { uncheckedConfirmedAt } : {}),
+              }
+            : {}),
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        delete t.uncheckedConfirm;
         this.opStep(t, '试检查', false, msg.slice(0, 500));
         await cleanupTrial();
         this.endOp(t, 'interrupted');
@@ -725,17 +822,19 @@ export class TaskRunner extends EventEmitter {
         return { ok: false, reason: 'failed', detail: msg || '合并后检查出错，本次没有保存。' };
       }
 
-      // c. 写入前再核对：主项目 HEAD 仍等于 preHead、工作区干净、分支未变
+      // c. 写入前再核对：主项目 HEAD 仍等于 preHead（且未在待确认两次保存之间推进）、工作区干净、分支未变
       const currentHead = await G.headSha(repo).catch(() => '');
       const currentDirty = await G.dirtyFiles(repo).catch(() => ['?']);
       const currentBr = await G.currentBranch(repo).catch(() => '');
       const currentInMerge = await G.mergeInProgress(repo).catch(() => true);
-      if (currentHead !== preHead || currentDirty.length > 0 || currentBr !== binding.branch || currentInMerge) {
+      const headChangedBetweenCalls = !!opts.confirmUnchecked && prevPendingPreHead !== undefined && currentHead !== prevPendingPreHead;
+      if (currentHead !== preHead || headChangedBetweenCalls || currentDirty.length > 0 || currentBr !== binding.branch || currentInMerge) {
         const diffs: string[] = [];
-        if (currentHead !== preHead) diffs.push('head_changed');
+        if (currentHead !== preHead || headChangedBetweenCalls) diffs.push('head_changed');
         if (currentDirty.length > 0) diffs.push('dirty');
         if (currentBr !== binding.branch) diffs.push('branch_changed');
         if (currentInMerge) diffs.push('merge_in_progress');
+        delete t.uncheckedConfirm;
         this.opStep(t, '写入前核对项目未变', false, diffs.join(','));
         await cleanupTrial();
         this.endOp(t, 'interrupted');
@@ -756,6 +855,7 @@ export class TaskRunner extends EventEmitter {
           && postDirty.length === 0
           && (await G.currentBranch(repo).catch(() => '')) === binding.branch
           && !(await G.mergeInProgress(repo).catch(() => true));
+        delete t.uncheckedConfirm;
         this.opStep(t, '合并失败后核验主项目', intact, stderr.trim().slice(0, 500));
         await cleanupTrial();
         if (!intact) {
@@ -775,6 +875,7 @@ export class TaskRunner extends EventEmitter {
       }
 
       const mergeCommit = await G.headSha(repo);
+      delete t.uncheckedConfirm;
       t.saveRecord = {
         preMergeHead: preHead,
         taskCommit,
@@ -782,6 +883,13 @@ export class TaskRunner extends EventEmitter {
         branch: binding.branch,
         savedAt: new Date().toISOString(),
         checked,
+        ...(!checked && uncheckedKind
+          ? {
+              uncheckedKind,
+              ...(unavailableReason ? { unavailableReason } : {}),
+              ...(uncheckedConfirmedAt ? { uncheckedConfirmedAt } : {}),
+            }
+          : {}),
         checksSummary,
         ...(checkedAt ? { checkedAt } : {}),
         trialCommit,
@@ -824,6 +932,7 @@ export class TaskRunner extends EventEmitter {
       const t = await this.load(id);
       if (this.runs.has(id)) throw new Error('请先停止正在执行的任务。');
       if (!canFire(t.state, 'discard')) return { ok: false, reason: 'not_allowed', detail: '这个任务现在不能放弃。' };
+      delete t.uncheckedConfirm;
       this.beginOp(t, 'discard');
       await this.persist(t);
       const cleanup: G.CleanupResult = t.worktree ? await G.removeWorktree(this.opts.repo, t.worktree) : { ok: true, steps: [] };
@@ -1084,10 +1193,18 @@ export class TaskRunner extends EventEmitter {
             branch: t.binding?.branch ?? (await G.currentBranch(repo)),
             savedAt: new Date().toISOString(),
             checked: op.checked ?? false,
+            ...(!op.checked && op.uncheckedKind
+              ? {
+                  uncheckedKind: op.uncheckedKind,
+                  ...(op.unavailableReason ? { unavailableReason: op.unavailableReason } : {}),
+                  ...(op.uncheckedConfirmedAt ? { uncheckedConfirmedAt: op.uncheckedConfirmedAt } : {}),
+                }
+              : {}),
             checksSummary: op.checksSummary ?? { passed: 0, failed: 0 },
             ...(op.checkedAt ? { checkedAt: op.checkedAt } : {}),
             ...(op.trialCommit ? { trialCommit: op.trialCommit } : {}),
           };
+          delete t.uncheckedConfirm;
           this.opStep(t, '启动核对：合并已在分支上', true, f.merged);
           op.mergeCommit = f.merged;
           this.markReconciled(t, '上次保存在写入项目后中断，核对后确认内容已经保存到项目。');
@@ -1096,6 +1213,7 @@ export class TaskRunner extends EventEmitter {
           out.push({ taskId: id, action: r.ok && r.task.state === 'saved' ? '已修正为 saved' : '已修正为 saved_cleanup_pending' });
         } else if (f.kind === 'save_not_merged') {
           const op = t.op!;
+          delete t.uncheckedConfirm;
           if (op.trialWorktreePath) {
             const tc = await G.removeTrialWorktree(repo, op.trialWorktreePath).catch((err) => ({ ok: false as const, error: String(err) }));
             this.opStep(t, '清理临时副本', tc.ok, tc.error);
