@@ -355,6 +355,49 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
   align-items: baseline;
 }
 
+.g2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  gap: var(--space-grid);
+  align-items: start;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-grid);
+}
+
+.plan-extras {
+  margin-left: 24px;
+  padding-left: 12px;
+  border-left: 2px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.extra-dir-card {
+  border: 1px solid var(--color-warn);
+  background: var(--color-warn-bg);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.criterion-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.criterion-row input[type="text"] {
+  margin-top: 0;
+  flex: 1;
+}
+
 .filter-select {
   width: auto;
   min-width: 150px;
@@ -481,6 +524,11 @@ section { margin-top: var(--space-section); }
   border-radius: var(--radius-md);
   padding: var(--space-card-y) var(--space-card-x);
   background: var(--color-bg);
+}
+.taskpane-bare {
+  border: none;
+  padding: 0;
+  background: transparent;
 }
 
 .badge-trust {

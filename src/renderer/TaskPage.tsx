@@ -79,10 +79,10 @@ export function TaskPage({
 
       {error && <p role="alert" className="error" data-testid="task-error">{error}</p>}
 
-      <div className="taskpane" data-testid="task-pane">
+      <div className={`taskpane${task.running || task.state === 'running' || (['draft', 'planned', 'approved'].includes(task.state) && task.layer.runStatus !== '已锁定') ? ' taskpane-bare' : ''}`} data-testid="task-pane">
         {task.running || task.state === 'running' ? (
           <RunView task={task} onStop={onStop} />
-        ) : ['draft', 'planned', 'approved'].includes(task.state) ? (
+        ) : ['draft', 'planned', 'approved'].includes(task.state) && task.layer.runStatus !== '已锁定' ? (
           <PlanCard
             key={task.id}
             projectId={projectId}

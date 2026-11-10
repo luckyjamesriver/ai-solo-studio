@@ -271,8 +271,8 @@ describe('施工模式界面', () => {
     expect(planText).toContain('其他位置 AI 仍可读取');
     expect(planText).toContain('允许联网（例如安装依赖）——开启后 AI 可访问任意网站。');
     expect(planText).toContain('允许修改另一个文件夹');
-    expect(planText).toContain('没有可运行的构建或测试脚本');
-    expect(planText).not.toMatch(/域名|限制网站|白名单/); // 不暗示能限制网站
+    expect(planText).toContain('这个项目没有自动检查，验收时会显示未检查');
+    expect(planText).not.toMatch(/域名|限制网站|白名单|改为只读|更换|导出/); // 不暗示能限制网站，且无未接入按钮
     await shot(a.page, '4-计划卡（标准模式）');
 
     await a.page.getByTestId('start-button').click();

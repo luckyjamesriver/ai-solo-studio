@@ -46,6 +46,8 @@ export interface TaskView {
   mode: 'standard' | 'full_trust';
   network: boolean;
   extraDirs: ExtraDirView[];
+  /** 方案批准后修改验收标准导致退回待开工确认时的提示 */
+  reapproveNotice: string | null;
   /** 完全信任任务：列表与施工视图持续显示标记 */
   fullTrust: boolean;
   fullTrustConfirmed: boolean;
@@ -193,6 +195,7 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     mode: caps?.constructionMode ?? 'standard',
     network: caps?.externalNetwork === 'on',
     extraDirs,
+    reapproveNotice: task.reapproveNotice ?? null,
     fullTrust: caps?.constructionMode === 'full_trust',
     fullTrustConfirmed: !!task.fullTrustConfirmedAt,
     checks: opts.scripts.map((name) => ({ name, label: CHECK_LABEL[name] })),

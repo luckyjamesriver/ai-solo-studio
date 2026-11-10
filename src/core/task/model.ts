@@ -143,6 +143,8 @@ export interface Task {
   card?: AcceptanceCard;
   /** 批准时授权的检查脚本内容摘要（package.json 的 build/test 及 pre/post 脚本）；摘要变化则授权失效 */
   checkAuth?: { digest: string; at: string };
+  /** 方案批准后修改验收标准导致退回 planned 时的提示 */
+  reapproveNotice?: string;
   /** 本任务的完全信任确认标记（门禁 requireFullTrustConfirmed 读取；每个任务单独确认） */
   fullTrustConfirmedAt?: string;
   /** 最近一次开工时实际生效的权限（取自 thread/start 响应，核验通过后才记录） */

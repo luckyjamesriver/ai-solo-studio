@@ -191,6 +191,7 @@ export class TaskRunner extends EventEmitter {
 
   async setPlan(id: string, input: Omit<Plan, 'capabilities'> & { capabilities?: Partial<Capabilities> }): Promise<Task> {
     const t = await this.load(id);
+    const prevCriteria = t.criteria.map((c) => c.text);
     const capabilities = resolveCapabilities(input.capabilities);
     // 额外可写目录的完整校验（存在、是目录、真实路径同样合规、不在 .studio 内、不含项目本身）；通过后保存真实路径
     const dirs: string[] = [];
@@ -200,8 +201,14 @@ export class TaskRunner extends EventEmitter {
       dirs.push(r.dir);
     }
     const plan: Plan = { ...input, capabilities: { ...capabilities, extraWritableDirs: [...new Set(dirs)] } };
+    const criteriaChanged =
+      prevCriteria.length !== plan.criteria.length || prevCriteria.some((c, i) => c !== plan.criteria[i]);
+    const wasApproved = t.state === 'approved';
     t.plan = plan;
     delete t.fullTrustConfirmedAt; // 确认只对“被批准的那一版计划”有效：计划一改就必须重新确认
+    delete t.checkAuth;
+    if (wasApproved && criteriaChanged) t.reapproveNotice = '改了验收标准，需要重新确认后才能开工';
+    else if (!criteriaChanged && wasApproved) delete t.reapproveNotice;
     t.criteria = plan.criteria.map((text) => ({ text }));
     await this.fire(t, t.state === 'draft' || t.state === 'clarifying' ? 'plan' : 'edit_plan');
     return t;
@@ -215,6 +222,7 @@ export class TaskRunner extends EventEmitter {
     const digest = await scriptsDigest(this.opts.repo);
     if (digest) t.checkAuth = { digest, at: new Date().toISOString() };
     else delete t.checkAuth;
+    delete t.reapproveNotice;
     await this.fire(t, 'approve');
     return t;
   }

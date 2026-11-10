@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { studio, type PlanInput, type TaskView } from './api.js';
 import { COPY } from './copy.js';
 
@@ -13,34 +13,73 @@ function TrustPanel({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: 
         <label className="check">
           <input type="checkbox" data-testid="trust-ack" checked={ack} onChange={(e) => setAck(e.target.checked)} /> {COPY.fullTrustAck}
         </label>
-        <div className="row">
-          <button className="secondary" data-testid="trust-confirm" disabled={!ack} onClick={onConfirm}>{COPY.fullTrustConfirm}</button>
-          <button data-testid="trust-cancel" onClick={onCancel}>{COPY.fullTrustCancel}</button>
+        <div className="row" style={{ marginTop: '12px' }}>
+          <button type="button" className="secondary" data-testid="trust-confirm" disabled={!ack} onClick={onConfirm}>{COPY.fullTrustConfirm}</button>
+          <button type="button" data-testid="trust-cancel" onClick={onCancel}>{COPY.fullTrustCancel}</button>
         </div>
       </div>
     </div>
   );
 }
 
-/** 计划卡：模式二选一（默认标准）、扩展权限（仅标准模式）、将运行的检查。 */
+/** 施工计划确认页（#04-plan，UI v2.1 第 5 节）。每屏仅保留一个实心主按钮：「批准并开工」。 */
 export function PlanCard({ projectId, task, preferredMode, onChanged }: { projectId: string; task: TaskView; preferredMode: 'standard' | 'full_trust'; onChanged: (t: TaskView) => void }) {
   const hasPlan = task.state !== 'draft';
   const [goal, setGoal] = useState(task.goal);
-  const [criteria, setCriteria] = useState(task.criteria.join('\n'));
+  const [criteriaRows, setCriteriaRows] = useState<string[]>(task.criteria);
   // 已有计划按计划来；新任务按项目偏好预选（预选不等于确认）
   const [mode, setMode] = useState<'standard' | 'full_trust'>(hasPlan ? task.mode : preferredMode);
   const [network, setNetwork] = useState(task.network);
   const [showTrust, setShowTrust] = useState(false);
   const [dirError, setDirError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [savingCriteria, setSavingCriteria] = useState(false);
+  const savePromiseRef = useRef<Promise<unknown> | null>(null);
 
-  const form = (m = mode): PlanInput => ({ goal: goal.trim() || task.request, criteria: criteria.split('\n').map((s) => s.trim()).filter(Boolean), mode: m, network });
+  useEffect(() => {
+    setGoal(task.goal);
+    setCriteriaRows(task.criteria);
+    setMode(task.state !== 'draft' ? task.mode : preferredMode);
+    setNetwork(task.network);
+  }, [task.id, task.updatedAt, task.state, task.goal, task.criteria, task.mode, task.network, preferredMode]);
+
+  const cleanCriteria = (rows: string[]) => rows.map((s) => s.trim()).filter(Boolean);
+  const form = (m = mode, rows = criteriaRows): PlanInput => ({
+    goal: goal.trim() || task.request,
+    criteria: cleanCriteria(rows),
+    mode: m,
+    network,
+  });
   const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
+
+  const criteriaDirty = (() => {
+    const next = cleanCriteria(criteriaRows);
+    return next.length !== task.criteria.length || next.some((c, i) => c !== task.criteria[i]);
+  })();
+
+  const persistCriteria = async (rows: string[]) => {
+    const next = cleanCriteria(rows);
+    const changed = next.length !== task.criteria.length || next.some((c, i) => c !== task.criteria[i]);
+    if (!changed || savingCriteria) return;
+    setError(null);
+    setSavingCriteria(true);
+    const p = studio()
+      .savePlan(projectId, task.id, form(mode, rows))
+      .then((updated) => onChanged(updated))
+      .catch((e) => fail(e))
+      .finally(() => {
+        if (savePromiseRef.current === p) savePromiseRef.current = null;
+        setSavingCriteria(false);
+      });
+    savePromiseRef.current = p;
+    await p;
+  };
 
   const addDir = async () => {
     setError(null);
     setDirError(null);
     try {
+      await savePromiseRef.current?.catch(() => undefined);
       await studio().savePlan(projectId, task.id, form('standard')); // 先保存当前表单，保证计划存在
       const r = await studio().addExtraDir(projectId, task.id);
       if (r.rejected) setDirError(r.rejected);
@@ -52,6 +91,7 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
   const clickStart = async () => {
     setError(null);
     try {
+      await savePromiseRef.current?.catch(() => undefined);
       const saved = await studio().savePlan(projectId, task.id, form());
       onChanged(saved);
       if (mode === 'full_trust') setShowTrust(true); // 完全信任：每个任务都要重新确认，偏好不能跳过
@@ -69,57 +109,215 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
   };
 
   return (
-    <div className="plan" data-testid="plan-card">
-      <div className="head">
-        <h3>计划</h3>
-        <span className="muted" data-testid="executor-info">执行者：{task.executorText}</span>
+    <div className="plan stack" data-testid="plan-card">
+      <section className="box">
+        <h2>{COPY.planHeaderTitle}</h2>
+        <p className="muted">{task.state === 'approved' ? COPY.planApprovedHeaderDesc : COPY.planHeaderDesc}</p>
+        {task.reapproveNotice && (
+          <p role="status" className="notice" data-testid="criteria-reconfirm-notice" style={{ marginTop: '8px' }}>
+            {task.reapproveNotice}
+          </p>
+        )}
+      </section>
+
+      <div className="g2">
+        <div className="stack">
+          <section className="box">
+            <h2>{COPY.planGoalTitle}</h2>
+            <textarea
+              data-testid="goal"
+              aria-label={COPY.planGoalTitle}
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              rows={3}
+            />
+            <h2 style={{ marginTop: '12px' }}>{COPY.planExpectedTitle}</h2>
+            <p className="muted" data-testid="expected-changes">
+              {task.extraDirs.length > 0 ? COPY.planExpectedExtraDesc : COPY.planExpectedDesc}
+            </p>
+          </section>
+
+          <section className="box" data-testid="criteria">
+            <h2>{COPY.planCriteriaTitle}</h2>
+            <div className="stack" style={{ gap: '8px' }}>
+              {criteriaRows.length === 0 ? (
+                <p className="muted">{COPY.planCriteriaEmpty}</p>
+              ) : (
+                criteriaRows.map((c, idx) => (
+                  <div className="criterion-row" key={idx}>
+                    <input
+                      type="text"
+                      data-testid={`criterion-input-${idx}`}
+                      aria-label={`验收标准 ${idx + 1}`}
+                      value={c}
+                      onChange={(e) => {
+                        const copy = [...criteriaRows];
+                        copy[idx] = e.target.value;
+                        setCriteriaRows(copy);
+                      }}
+                      onBlur={() => {
+                        if (task.state === 'approved') void persistCriteria(criteriaRows);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="link"
+                      data-testid={`criterion-remove-${idx}`}
+                      onClick={() => {
+                        const next = criteriaRows.filter((_, i) => i !== idx);
+                        setCriteriaRows(next);
+                        if (task.state === 'approved') void persistCriteria(next);
+                      }}
+                    >
+                      {COPY.extraDirRemove}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="row" style={{ marginTop: '10px' }}>
+              <button
+                type="button"
+                className="secondary"
+                data-testid="add-criterion"
+                onClick={() => setCriteriaRows((prev) => [...prev, ''])}
+              >
+                {COPY.planCriteriaAdd}
+              </button>
+              {task.state === 'approved' && criteriaDirty && (
+                <button
+                  type="button"
+                  className="secondary"
+                  data-testid="save-criteria-button"
+                  disabled={savingCriteria}
+                  onClick={() => void persistCriteria(criteriaRows)}
+                >
+                  {COPY.planCriteriaSaveEdit}
+                </button>
+              )}
+            </div>
+            <p className="muted" style={{ marginTop: '8px' }}>{COPY.planCriteriaHint}</p>
+          </section>
+        </div>
+
+        <aside className="stack">
+          <section className="box hl">
+            <h2>权限</h2>
+            <div className="stack" style={{ gap: '10px' }}>
+              <label className="choice" style={{ marginTop: 0 }}>
+                <input
+                  type="radio"
+                  name="mode"
+                  data-testid="mode-standard"
+                  checked={mode === 'standard'}
+                  onChange={() => setMode('standard')}
+                />
+                <span>
+                  <strong>{COPY.standardTitle}</strong>
+                  <br />
+                  <span className="muted">{COPY.standardDesc}</span>
+                </span>
+              </label>
+
+              {mode === 'standard' && (
+                <div className="plan-extras" data-testid="extras">
+                  <label className="check" style={{ marginTop: 0 }}>
+                    <input
+                      type="checkbox"
+                      data-testid="net-toggle"
+                      checked={network}
+                      onChange={(e) => setNetwork(e.target.checked)}
+                    />
+                    <span>{COPY.netLabel}</span>
+                  </label>
+
+                  <div>
+                    <div className="row sb">
+                      <strong>{COPY.extraDirLabel}</strong>
+                      <button type="button" className="secondary" data-testid="add-dir" onClick={addDir}>
+                        {COPY.extraDirAdd}
+                      </button>
+                    </div>
+                    <ul className="dirs" data-testid="extra-dir-list" style={{ listStyle: 'none', padding: 0, margin: '8px 0 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {task.extraDirs.length > 0 ? (
+                        task.extraDirs.map((d) => (
+                          <li key={d.key} className="extra-dir-card" data-testid={`extra-dir-item-${d.key}`}>
+                            <div className="row sb">
+                              <strong>{d.path} · {COPY.extraDirWritableTag}</strong>
+                              <button type="button" className="link" onClick={() => removeDir(d.key)}>
+                                {COPY.extraDirRemove}
+                              </button>
+                            </div>
+                            <span>{COPY.extraDirWarn}</span>
+                            <span className="muted">{COPY.extraDirReadableNote}</span>
+                          </li>
+                        ))
+                      ) : (
+                        <li className="muted">
+                          {COPY.extraDirNone} {COPY.extraDirReadableNote}
+                        </li>
+                      )}
+                    </ul>
+                    {dirError && <p role="alert" className="error" data-testid="extra-dir-error">{dirError}</p>}
+                  </div>
+                </div>
+              )}
+
+              <label className="choice" style={{ marginTop: 0 }}>
+                <input
+                  type="radio"
+                  name="mode"
+                  data-testid="mode-full-trust"
+                  checked={mode === 'full_trust'}
+                  onChange={() => setMode('full_trust')}
+                />
+                <span>
+                  <strong>{COPY.fullTrustTitle}</strong>
+                  <br />
+                  <span className="muted">{COPY.fullTrustDesc}</span>
+                </span>
+              </label>
+
+              {!hasPlan && preferredMode === 'full_trust' && (
+                <p className="notice" data-testid="preselect-note">{COPY.fullTrustPreselected}</p>
+              )}
+              <p className="muted">{COPY.planNoAutoDecisionNote}</p>
+            </div>
+          </section>
+
+          <section className="box">
+            <div className="stack" style={{ gap: '8px' }}>
+              <div className="row sb">
+                <span className="muted">执行者与检查</span>
+                <span className="muted" data-testid="executor-info">执行者：{task.executorText}</span>
+              </div>
+              <div className="checks" data-testid="checks-plan">
+                <strong>{COPY.checksTitle}</strong>
+                {task.checks.length > 0 ? (
+                  <>
+                    <ul style={{ margin: '6px 0', paddingLeft: '18px' }}>
+                      {task.checks.map((c) => (
+                        <li key={c.name}>{c.name === 'build' ? COPY.checkBuildLabel : COPY.checkTestLabel}</li>
+                      ))}
+                    </ul>
+                    <p className="muted">{COPY.checksNote}</p>
+                  </>
+                ) : (
+                  <p className="muted" style={{ marginTop: '4px' }}>{COPY.checksNone}</p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {error && <p role="alert" className="error" data-testid="plan-error">{error}</p>}
+          {task.startFailure && <p role="alert" className="error" data-testid="start-failure">{task.startFailure}</p>}
+
+          <button type="button" data-testid="start-button" onClick={clickStart} style={{ width: '100%' }}>
+            {COPY.startButton}
+          </button>
+        </aside>
       </div>
-      <label>要做什么<textarea data-testid="goal" value={goal} onChange={(e) => setGoal(e.target.value)} rows={2} /></label>
-      <label>验收标准（每行一条，可留空）<textarea data-testid="criteria" value={criteria} onChange={(e) => setCriteria(e.target.value)} rows={2} /></label>
 
-      <fieldset className="modes">
-        <legend>施工模式</legend>
-        <label className="choice">
-          <input type="radio" name="mode" data-testid="mode-standard" checked={mode === 'standard'} onChange={() => setMode('standard')} />
-          <span><strong>{COPY.standardTitle}</strong><br /><span className="muted">{COPY.standardDesc}</span></span>
-        </label>
-        <label className="choice">
-          <input type="radio" name="mode" data-testid="mode-full-trust" checked={mode === 'full_trust'} onChange={() => setMode('full_trust')} />
-          <span><strong>{COPY.fullTrustTitle}</strong><br /><span className="muted">{COPY.fullTrustDesc}</span></span>
-        </label>
-        {!hasPlan && preferredMode === 'full_trust' && <p className="notice" data-testid="preselect-note">{COPY.fullTrustPreselected}</p>}
-      </fieldset>
-
-      {mode === 'standard' && (
-        <fieldset className="extras" data-testid="extras">
-          <legend>扩展权限（开工前决定，开工后不能再改）</legend>
-          <label className="check"><input type="checkbox" data-testid="net-toggle" checked={network} onChange={(e) => setNetwork(e.target.checked)} /> {COPY.netLabel}</label>
-          <div>
-            <strong>{COPY.extraDirLabel}</strong>
-            <ul className="dirs" data-testid="extra-dir-list">
-              {task.extraDirs.length ? task.extraDirs.map((d) => (
-                <li key={d.key}>{d.path} <button className="link" onClick={() => removeDir(d.key)}>{COPY.extraDirRemove}</button></li>
-              )) : <li className="muted">{COPY.extraDirNone}</li>}
-            </ul>
-            <button className="secondary" data-testid="add-dir" onClick={addDir}>{COPY.extraDirAdd}</button>
-            {dirError && <p role="alert" className="error" data-testid="extra-dir-error">{dirError}</p>}
-          </div>
-        </fieldset>
-      )}
-
-      <div className="checks" data-testid="checks-plan">
-        <strong>{COPY.checksTitle}</strong>
-        {task.checks.length ? (
-          <>
-            <ul>{task.checks.map((c) => <li key={c.name}>{c.label}</li>)}</ul>
-            <p className="muted">{COPY.checksNote}</p>
-          </>
-        ) : <p className="muted">{COPY.checksNone}</p>}
-      </div>
-
-      {error && <p role="alert" className="error" data-testid="plan-error">{error}</p>}
-      {task.startFailure && <p role="alert" className="error" data-testid="start-failure">{task.startFailure}</p>}
-      <div className="row"><button data-testid="start-button" onClick={clickStart}>{COPY.startButton}</button></div>
       {showTrust && <TrustPanel onConfirm={confirmTrust} onCancel={cancelTrust} />}
     </div>
   );
