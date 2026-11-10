@@ -190,7 +190,9 @@
 - **`9b77e6e`（`fix(ui): classify active approved tasks as running for workbench`）CI 通过**：[`https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42786116099`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42786116099)
   - `test (ubuntu-latest)`：`success`（耗时 `55s`）
   - `test (macos-latest)`：`success`（耗时 `6m35s`，含 37 项 Electron 端到端测试）
-- **本补丁提交（`fix(ui): count only needs-decision tasks in badges; add plan column; correct state mapping`）**：本地全量验证通过后推送 `rebuild`，待 CI 完成后补充运行链接。
+- **本补丁（`0b1fe9d` · `fix(ui): count only needs-decision tasks in badges; add plan column; correct state mapping`）CI 通过**：[`https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42796154360`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42796154360)
+  - `test (ubuntu-latest)`（[129761741947](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42796154360/job/129761741947)）：`success`（耗时 `40s`）
+  - `test (macos-latest)`（[129761741180](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42796154360/job/129761741180)）：`success`（耗时 `5m8s`，含 37 项 Electron 端到端测试）
 
 ### 4. 本次补丁过程中的失败记录
 - 本次补丁编码完成后，`typecheck`、546 项单元测试、37 项 Electron 端到端测试及 6 项桌面冒烟测试均一次通过，无新增失败或回滚（`tests/security.test.ts` 未作任何修改或放宽）。
