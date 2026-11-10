@@ -7,10 +7,12 @@ import { saveBlockerCodes, type BlockerCode } from '../task/save-rules.js';
 import type { OpFail } from '../task/runner.js';
 import { STATE_TEXT } from '../app/task-view.js';
 import { extractIncomplete, type IncompleteReport } from './incomplete.js';
+import { buildTaskProof, type ProofChangeEntry, type ProofDeniedEntry, type ProofTab, type SingleCheckProof, type TaskProofView, type TestCaseProof } from './proof.js';
 import type { ChangePreview } from './snippets.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from './texts.js';
 
 export { acceptanceVersion };
+export type { ProofChangeEntry, ProofDeniedEntry, ProofTab, SingleCheckProof, TaskProofView, TestCaseProof };
 
 /**
  * 用户验收视图模型（B4-2 第 1 节，评审 R02）。
@@ -111,6 +113,8 @@ export interface UserAcceptanceView {
   saveRecord: SaveRecordView | null;
   /** 最近一次保存返回“未检查待确认”且验收版本一致时的界面确认信息与按钮文案 */
   uncheckedConfirm: UncheckedConfirmView | null;
+  /** 检查依据详情页数据（按轮次绑定，已做命令行/环境变量/密钥/~路径过滤） */
+  proof: TaskProofView;
   /** 成果预览信息（步骤 ①） */
   preview: {
     kind: 'web' | 'finder' | null;
@@ -261,6 +265,8 @@ export function okMessage(t: Task): string {
 export interface ViewContext {
   /** 同一任务有操作进行中 */
   busy: boolean;
+  /** 项目根目录（供过滤检查输出中的绝对路径，不会直接传到渲染层） */
+  repoPath?: string;
   /** 改动片段（只有验收阶段才有） */
   previews?: Map<string, ChangePreview>;
   /** 保存的只读预判：null = 目前可以保存；undefined = 没有判断 */
@@ -492,6 +498,11 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
         }
       : null;
 
+  const proof = buildTaskProof(t, {
+    ...(ctx.previews ? { previews: ctx.previews } : {}),
+    ...(ctx.repoPath ? { repoPath: ctx.repoPath } : {}),
+  });
+
   const needsOverall = t.criteria.length === 0;
   return {
     taskId: t.id,
@@ -546,6 +557,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
         }
       : null,
     uncheckedConfirm,
+    proof,
     preview: {
       kind: ctx.previewKind !== undefined ? ctx.previewKind : (t.worktree?.path ? 'finder' : null),
       buttonText: ctx.previewButtonText ?? ((ctx.previewKind ?? (t.worktree?.path ? 'finder' : null)) === 'web' ? '在浏览器中打开预览' : '在访达中显示'),

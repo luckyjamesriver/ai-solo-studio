@@ -125,6 +125,19 @@ export interface AcceptedRiskRecord {
   at?: string;
 }
 
+export interface StoredCheckProof {
+  name: 'build' | 'test';
+  status: 'passed' | 'failed' | 'not_available';
+  ranAt?: string;
+  durationMs?: number;
+  env: 'sandbox' | 'local';
+  /** 完整原始输出只保存在本机 .studio/ 任务记录中，绝不直接原样透传给渲染层 */
+  rawOutput?: string;
+  exitKind?: ExitOutcome['kind'];
+  exitCode?: number | null;
+  unavailableReason?: string;
+}
+
 export interface Task {
   id: string;
   /** 记录的修订号：由存储层在读取和提交后填入，不随记录内容保存；提交时用来做 CAS（ADR 0005） */
@@ -174,6 +187,12 @@ export interface Task {
   overallNote?: string;
   /** 阶段 5 预留：用户确认并驳回评审意见后保留下来的已知风险 */
   acceptedRisks?: AcceptedRiskRecord[];
+  /** 当前施工/验收轮次（从 1 开始） */
+  currentRound?: number;
+  roundStartedAt?: string;
+  roundEndedAt?: string;
+  /** 当前轮次最近一次自动检查明细（含未脱敏的本机原始输出） */
+  currentChecks?: StoredCheckProof[];
   /** 保存时项目是否有自定义提交检查（保存不会运行它们） */
   customCommitChecks?: boolean;
   /** 保存结果（撤销依据） */

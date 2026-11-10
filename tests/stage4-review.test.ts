@@ -3,14 +3,19 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { buildCard } from '../src/core/acceptance/card.js';
+import { filterProofOutput, parseTestCases, buildTaskProof } from '../src/core/acceptance/proof.js';
 import { computeAcceptanceStatus, toUserView } from '../src/core/acceptance/view.js';
 import { saveBlockerCodes } from '../src/core/task/save-rules.js';
 import { TaskController } from '../src/core/app/task-controller.js';
 import { TaskPrefs } from '../src/core/app/prefs.js';
 import { FakeExecutor } from '../src/core/executor/adapters/fake.js';
 import { RecordStore } from '../src/core/persistence/index.js';
+import { CheckProofPage } from '../src/renderer/CheckProofPage.js';
 import type { Task } from '../src/core/task/model.js';
+import { testSandboxRunner } from './helpers.js';
 
 const tmpDirs: string[] = [];
 
@@ -180,5 +185,121 @@ describe('阶段 4 · 第一节：三种验收状态计算与「不做部分通�
     expect(withRisk.acceptedRisks).toHaveLength(1);
     expect(withRisk.acceptedRisks[0]?.title).toBe('保留旧版样式兼容');
     expect(withRisk.acceptedRisks[0]?.reason).not.toContain('/Users/alice');
+  });
+});
+
+describe('阶段 4 · 第二节：检查依据页、轮次绑定、测试解析与敏感信息脱敏', () => {
+  it('filterProofOutput 彻底过滤命令行、环境变量、密钥形态字符串，并把主目录绝对路径替换为 ~', () => {
+    const raw = [
+      '> my-site@1.0.0 test',
+      '$ vitest run --maxWorkers=4',
+      'export SECRET_TOKEN=super-secret-value',
+      'OPENAI_API_KEY=sk-proj-1234567890abcdef',
+      'Authorization: Bearer ghp_1234567890abcdefghij1234',
+      'AWS key AKIAIOSFODNN7EXAMPLE',
+      '✓ 首页标题能正确渲染 (12ms)',
+      '✗ 手机端卡片双列排版 in /Users/alice/workspace/site/tests/mobile.test.ts (8ms)',
+      'Trace in /home/bob/projects/app/index.ts',
+      'Ran npx vitest run tests/a.test.ts in /tmp/scratch-check',
+    ].join('\n');
+
+    const cleaned = filterProofOutput(raw);
+    expect(cleaned).not.toMatch(/vitest|my-site@1\.0\.0|npx\s|export\s+SECRET_TOKEN/);
+    expect(cleaned).not.toContain('super-secret-value');
+    expect(cleaned).not.toContain('sk-proj-');
+    expect(cleaned).not.toContain('ghp_123456');
+    expect(cleaned).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    expect(cleaned).not.toContain('/Users/alice');
+    expect(cleaned).not.toContain('/home/bob');
+    expect(cleaned).toContain('~/workspace/site/tests/mobile.test.ts');
+    expect(cleaned).toContain('~/projects/app/index.ts');
+    expect(cleaned).toContain('首页标题能正确渲染');
+    expect(cleaned).toContain('手机端卡片双列排版');
+  });
+
+  it('parseTestCases 能逐项列出测试名；不可解析时回退为通过/失败数量；无检查显示「未检查」不标通过', () => {
+    const withNames = parseTestCases('✓ 首页能正常显示 (4ms)\n✓ 作品卡片数量正确 2ms\n✗ 窄屏排版对齐\nTests 1 failed | 2 passed (3)', 'failed');
+    expect(withNames.parsedNames).toBe(true);
+    expect(withNames.passedCount).toBe(2);
+    expect(withNames.failedCount).toBe(1);
+    expect(withNames.cases.map((c) => [c.name, c.status])).toEqual([
+      ['首页能正常显示', 'passed'],
+      ['作品卡片数量正确', 'passed'],
+      ['窄屏排版对齐', 'failed'],
+    ]);
+
+    const opaque = parseTestCases('all assertions succeeded', 'passed');
+    expect(opaque.parsedNames).toBe(false);
+    expect(opaque.passedCount).toBe(1);
+    expect(opaque.failedCount).toBe(0);
+
+    const noScriptsProof = buildTaskProof(mkReviewingTask());
+    expect(noScriptsProof.test.status).toBe('not_checked');
+    expect(noScriptsProof.test.summaryText).toBe('未检查：这个项目没有自动测试');
+    expect(noScriptsProof.test.summaryText).not.toContain('通过');
+    expect(noScriptsProof.build.status).toBe('not_checked');
+    expect(noScriptsProof.build.summaryText).toBe('未检查：这个项目没有构建检查');
+  });
+
+  it('真实运行自动检查保存原始记录到本机，界面视图与 CheckProofPage 只拿到过滤结果且默认折叠详细记录', async () => {
+    const repo = initRepo({
+      'package.json': JSON.stringify({
+        scripts: {
+          build: 'node build.cjs',
+          test: 'node run-tests.cjs',
+        },
+      }),
+      'build.cjs': 'console.log("built ok");',
+      'run-tests.cjs': [
+        'console.log("> app@1.0.0 test");',
+        'console.log("SECRET_API_KEY=sk-proj-9999999999abcdef");',
+        'console.log("✓ renders home title (5ms)");',
+        'console.log("✓ keeps card layout /Users/devuser/proj/a.test.js (3ms)");',
+        'console.log("Tests 2 passed (2)");',
+      ].join('\n'),
+      'index.html': '<h1>old</h1>\n',
+    });
+
+    const ctl = new TaskController({
+      repo,
+      makeExecutor: () => {
+        const ex = new FakeExecutor([{ do: 'write', path: 'index.html', content: '<h1>new</h1>\n' }, { do: 'exit', code: 0 }]);
+        (ex as unknown as { sandboxRunner: unknown }).sandboxRunner = testSandboxRunner();
+        return ex;
+      },
+      pickDirectory: async () => null,
+      prefs: new TaskPrefs(mk('prefs')),
+    });
+    const t = await ctl.create('改进首页');
+    await ctl.savePlan(t.id, { goal: '改进首页', criteria: ['首页展示正常'], mode: 'standard', network: false });
+    await ctl.start(t.id, false);
+    let view = await ctl.getAcceptanceView(t.id);
+    while (view.state !== 'reviewing' || view.busy) {
+      await new Promise((r) => setTimeout(r, 20));
+      view = await ctl.getAcceptanceView(t.id);
+    }
+
+    // 原始记录存在于本机记录里；界面只获得过滤后的数据
+    const rawTasks = await ctl.listTasksRaw();
+    const rawTest = rawTasks[0]?.currentChecks?.find((c) => c.name === 'test');
+    expect(rawTest?.rawOutput).toContain('sk-proj-9999999999abcdef');
+
+    expect(view.proof.round).toBe(1);
+    expect(view.proof.test.originNote).toBe('由本应用运行，不是 AI 自报');
+    expect(view.proof.test.envLabel).toBe('沙箱环境');
+    expect(view.proof.test.ranAtText).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(view.proof.test.cases.length).toBe(2);
+    expect(view.proof.test.filteredDetails).not.toContain('sk-proj-');
+    expect(view.proof.test.filteredDetails).not.toContain('/Users/devuser');
+    expect(view.proof.test.filteredDetails).toContain('~/proj/a.test.js');
+    expect(JSON.stringify(view)).not.toContain('sk-proj-9999999999abcdef');
+
+    // SSR 验证：详细记录 <details> 默认折叠（不含 open）
+    const html = renderToStaticMarkup(React.createElement(CheckProofPage, { proof: view.proof, initialTab: 'test', onBack: () => undefined }));
+    expect(html).toContain('第 1 轮成果');
+    expect(html).toContain('由本应用运行，不是 AI 自报');
+    expect(html).toContain('沙箱环境');
+    expect(html).toContain('<details');
+    expect(html).not.toMatch(/<details[^>]*\bopen\b/);
   });
 });

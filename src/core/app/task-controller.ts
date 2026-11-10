@@ -288,7 +288,7 @@ export class TaskController {
   private async acceptanceView(t: Task): Promise<UserAcceptanceView> {
     const runner = this.r();
     const busy = this.active.has(t.id) || this.ops.has(t.id) || runner.isBusy(t.id);
-    const ctx: ViewContext = { busy };
+    const ctx: ViewContext = { busy, repoPath: this.o.repo };
     if (t.worktree?.path) {
       try {
         const indexPath = path.join(t.worktree.path, 'index.html');

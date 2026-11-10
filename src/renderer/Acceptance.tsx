@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { studio, type AcceptanceActionResult, type ChangePreview, type TaskView, type UserAcceptanceView } from './api.js';
+import { CheckProofPage } from './CheckProofPage.js';
+import { DiffPreview } from './DiffPreview.js';
+import { studio, type AcceptanceActionResult, type ProofTab, type TaskView, type UserAcceptanceView } from './api.js';
 import { COPY } from './copy.js';
 
 const KIND_TEXT: Record<string, string> = { added: '新增', modified: '修改', deleted: '删除', renamed: '改名', other: '变化' };
@@ -20,33 +22,6 @@ async function copyText(text: string): Promise<boolean> {
     ta.remove();
     return ok;
   }
-}
-
-function Preview({ p }: { p: ChangePreview }) {
-  if (p.kind === 'deleted' || p.kind === 'unavailable') return <p className="muted" data-testid="preview-note">{p.note}</p>;
-  if (p.kind === 'new') {
-    return (
-      <div data-testid="preview-new">
-        <p className="muted">{p.note}</p>
-        <pre className="snippet">{p.lines.join('\n')}{p.truncated ? '\n…' : ''}</pre>
-      </div>
-    );
-  }
-  return (
-    <div data-testid="preview-text">
-      {p.hunks.map((h, i) => (
-        <div className="hunk" key={`${h.line}-${i}`} data-testid="hunk">
-          <p className="muted">{COPY.hunkAt(h.line)}</p>
-          <div className="cols">
-            <div className="col" data-testid="hunk-before"><h5>{COPY.before}</h5><pre className="snippet">{h.before.join('\n') || ' '}</pre></div>
-            <div className="col" data-testid="hunk-after"><h5>{COPY.after}</h5><pre className="snippet">{h.after.join('\n') || ' '}</pre></div>
-          </div>
-          {h.truncated && <p className="muted">{COPY.hunkTruncated}</p>}
-        </div>
-      ))}
-      {p.note && <p className="muted" data-testid="preview-omitted">{p.note}</p>}
-    </div>
-  );
 }
 
 function factTag(status: 'verified' | 'not_checked' | 'failed' | 'pending_user'): { cls: string; text: string } {
@@ -87,6 +62,7 @@ export function Acceptance({
   const [copied, setCopied] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
+  const [proofTab, setProofTab] = useState<ProofTab | null>(null);
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
 
@@ -141,6 +117,10 @@ export function Acceptance({
 
   if (loadError && !view) return <p role="alert" className="error" data-testid="task-error">{loadError}</p>;
   if (!view) return <p className="muted">{COPY.noProgress}</p>;
+
+  if (proofTab) {
+    return <CheckProofPage proof={view.proof} initialTab={proofTab} onBack={() => setProofTab(null)} />;
+  }
 
   const v = view;
   const a = v.actions;
@@ -222,7 +202,7 @@ export function Acceptance({
                       <li key={c.path} data-kind={c.kind}>
                         <strong>{KIND_TEXT[c.kind] ?? '变化'}</strong>　{c.path}
                         {c.additions !== null && c.deletions !== null && <span className="muted"> （+{c.additions} −{c.deletions}）</span>}
-                        {c.preview && <Preview p={c.preview} />}
+                        {c.preview && <DiffPreview p={c.preview} />}
                       </li>
                     ))}
                   </ul>
@@ -243,6 +223,16 @@ export function Acceptance({
                       : i.key === 'denied' && v.denied.length > 0
                         ? { cls: 'tag warn', text: `被拦下 ${v.denied.length} 次` }
                         : factTag(i.status);
+                    const targetTab: ProofTab | null =
+                      i.key === 'build' ? 'build'
+                        : i.key === 'test' || i.key === 'checks_modified' ? 'test'
+                          : i.key === 'denied' ? 'denied'
+                            : i.key === 'changes' ? 'changes'
+                              : null;
+                    const linkLabel =
+                      targetTab === 'denied' ? COPY.acceptViewImpact
+                        : targetTab === 'changes' ? COPY.acceptViewChanges
+                          : COPY.acceptViewBasis;
                     return (
                       <div
                         className="item"
@@ -254,6 +244,16 @@ export function Acceptance({
                         <span className="grow">
                           <strong>{i.label}</strong>：{i.text}
                         </span>
+                        {targetTab && (
+                          <button
+                            type="button"
+                            className="link"
+                            data-testid={`proof-link-${i.key}`}
+                            onClick={() => setProofTab(targetTab)}
+                          >
+                            {linkLabel}
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -261,6 +261,14 @@ export function Acceptance({
                   <div className="item" data-item="no-checks" data-status="unchecked">
                     <span className="tag">未检查</span>
                     <span className="grow">{COPY.acceptNoChecksRow}</span>
+                    <button
+                      type="button"
+                      className="link"
+                      data-testid="proof-link-no-checks"
+                      onClick={() => setProofTab('test')}
+                    >
+                      {COPY.acceptViewBasis}
+                    </button>
                   </div>
                 )}
               </div>
@@ -603,7 +611,7 @@ export function Acceptance({
                   <li key={c.path} data-kind={c.kind}>
                     <strong>{KIND_TEXT[c.kind] ?? '变化'}</strong>　{c.path}
                     {c.additions !== null && c.deletions !== null && <span className="muted"> （+{c.additions} −{c.deletions}）</span>}
-                    {c.preview && <Preview p={c.preview} />}
+                    {c.preview && <DiffPreview p={c.preview} />}
                   </li>
                 ))}
               </ul>

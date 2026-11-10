@@ -7,7 +7,7 @@ import { saveBlockers } from './save-rules.js';
 import { TaskStore, type SaveOptions } from './store.js';
 import { RecordStore, StaleRunError, type OpenOptions } from '../persistence/index.js';
 import { resolveCapabilities, type Capabilities } from '../capabilities/model.js';
-import { acceptanceVersion, type OpLog, type Plan, type Task, type TimelineEntry } from './model.js';
+import { acceptanceVersion, type OpLog, type Plan, type StoredCheckProof, type Task, type TimelineEntry } from './model.js';
 import type { Decision, DeniedOperation, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
 import {
@@ -286,6 +286,9 @@ export class TaskRunner extends EventEmitter {
     };
     delete t.gitBinding;
     t.runId = RecordStore.newRunId(); // 每次开工是新的一次运行：之后旧运行的任何回传都会被拒绝
+    t.currentRound ??= 1;
+    t.roundStartedAt = new Date().toISOString();
+    delete t.roundEndedAt;
     await this.fire(t, 'start', { startRun: true });
 
     // 准备阶段收到停止：不启动执行体，直接进入 stopped 并照常验收
@@ -409,7 +412,10 @@ export class TaskRunner extends EventEmitter {
 
     let changes = await G.diffSummary(wt);
     const tree1 = await G.computeTree(repo, wt.path);
+    const checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
+    t.roundEndedAt = new Date().toISOString();
     let checks: CheckResult[] = [];
+    let checkProofs: StoredCheckProof[] = [];
     if (this.opts.runChecks !== false) {
       for (const name of ['build', 'test'] as const) {
         const c = await runCheck(wt.path, name, this.opts.sandboxRunner ?? this.opts.executor.sandboxRunner, {
@@ -420,6 +426,21 @@ export class TaskRunner extends EventEmitter {
         });
         this.log(t, 'check', `${name}: ${c.status}`);
         checks.push(c);
+        const ranAt = new Date().toISOString();
+        if (c.status === 'not_available') {
+          checkProofs.push({ name, status: 'not_available', env: checkEnv, unavailableReason: c.reason });
+        } else {
+          checkProofs.push({
+            name,
+            status: c.status,
+            ranAt,
+            durationMs: c.durationMs,
+            env: checkEnv,
+            rawOutput: c.output,
+            exitKind: c.outcome.kind,
+            ...(c.outcome.kind === 'exited' ? { exitCode: c.outcome.code } : {}),
+          });
+        }
       }
     }
     let tree = tree1;
@@ -429,10 +450,12 @@ export class TaskRunner extends EventEmitter {
         t.checksVoid = MESSAGES.checksModified;
         this.log(t, 'check', MESSAGES.checksModified, 'host');
         checks = checks.map((c): CheckResult => ({ name: c.name, status: 'not_available', reason: `${MESSAGES.checksModified}因此未检查。` }));
+        checkProofs = checkProofs.map((p): StoredCheckProof => ({ name: p.name, status: 'not_available', env: checkEnv, unavailableReason: `${MESSAGES.checksModified}因此未检查。` }));
         changes = await G.diffSummary(wt);
         tree = tree2;
       }
     }
+    t.currentChecks = checkProofs;
     t.acceptedTree = tree;
     t.card = buildCard({
       exit: t.exit!,
