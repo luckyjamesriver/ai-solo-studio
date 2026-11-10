@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Solo Studio · UI v2.1 原型</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&amp;family=Lato:wght@400;700&amp;family=Noto+Serif+SC:wght@400;600;700&amp;family=Noto+Sans+SC:wght@400;500;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#3D755D}a:hover{color:#2F5C49}
+.app{display:flex;flex-wrap:wrap;min-height:900px;font-family:"Lato","Noto Serif SC",serif;color:#1f2328;background:#fff;font-size:13px;line-height:1.55}
+.side{flex:1 1 200px;max-width:220px;background:#F5F3ED;border-right:1px solid #E2DED3;padding:14px 12px;display:flex;flex-direction:column;gap:2px;box-sizing:border-box}
+.nav{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border-radius:6px;color:#1f2328;text-decoration:none}
+.on{background:#E3ECE6;font-weight:600}
+.cnt{background:#3D755D;color:#fff;border-radius:10px;padding:0 7px;font-size:12px}
+.cntw{background:#c2410c;color:#fff;border-radius:10px;padding:0 7px;font-size:12px}
+.grp{font-size:12px;color:#57606a;margin:14px 10px 4px}
+.main{flex:999 1 560px;min-width:0;padding:20px 28px;display:flex;flex-direction:column;gap:12px;box-sizing:border-box;max-width:1120px}
+.box{border:1px solid #d0d4da;border-radius:8px;padding:12px 14px}
+.hl{border:2px solid #3D755D}
+.wbox{border:1px solid #c2410c;background:#fff8f3}
+.tag{font-size:12px;padding:1px 8px;border-radius:10px;border:1px solid #8c959f;color:#424a53;white-space:nowrap}
+.warn{border-color:#c2410c;color:#9a3412}
+.ok{border-color:#1a7f37;color:#1a7f37}
+.muted{color:#4b5560;font-size:12px}
+.btn{display:inline-flex;align-items:center;justify-content:center;font-size:13px;padding:6px 14px;border-radius:6px;border:1px solid #8c959f;background:#fff;color:#1f2328;text-decoration:none;min-height:34px;box-sizing:border-box}
+.pri{background:#3D755D;color:#fff;border-color:#3D755D}
+.pri:hover{color:#fff;background:#2F5C49}
+.off{background:#eef0f2;color:#424a53;border-color:#d0d4da;cursor:not-allowed}
+h1{font-family:"Instrument Serif","Noto Serif SC",serif;font-weight:400;font-size:26px;line-height:1.2;margin:0}h2{font-size:14px;font-weight:700;margin:0 0 6px}
+h2,strong,.btn,.tag,.st,.grp,.nav,.tabs a,label,select,summary{font-family:"Lato","Noto Sans SC",sans-serif}
+p{margin:0}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.sb{justify-content:space-between}
+.item{display:flex;gap:10px;align-items:center;padding:7px 0;border-top:1px solid #e5e7eb;flex-wrap:wrap}
+.grow{flex:1;min-width:200px}
+.stages{display:flex;font-size:12px}
+.st{padding:4px 12px;border:1px solid #d0d4da;background:#f6f8fa;color:#57606a}
+.cur{background:#3D755D;color:#fff;border-color:#3D755D;font-weight:600}
+.done{background:#E8F0EB;color:#2F5C49}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.g2{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr);gap:14px}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:8px 12px}
+.lane{background:#f6f8fa;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.card{border:1px solid #d0d4da;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;background:#fff;text-decoration:none;color:#1f2328}
+.tabs{display:flex;gap:22px;border-bottom:1px solid #d0d4da;flex-wrap:wrap}
+.tabs a{padding:8px 0;text-decoration:none;color:#57606a}
+.tabs .tc{color:#1f2328;font-weight:600;border-bottom:2px solid #3D755D}
+.crumb{font-size:12px;color:#57606a}
+textarea,input[type=text]{font:inherit;padding:8px;border:1px solid #8c959f;border-radius:6px;box-sizing:border-box;width:100%}
+.diff div{padding:4px 10px;font-size:12px}
+.del{background:#fdecea}.add{background:#e7f5ea}
+.variant{border:1px dashed #8c959f;border-radius:8px;padding:12px 14px;background:#fafaf7}
+.vlabel{font-size:12px;color:#4b5560;margin-bottom:8px;font-family:"Lato","Noto Sans SC",sans-serif}
+.shot{background:#eef0f2;border:1px solid #d0d4da;border-radius:6px;height:220px;display:flex;align-items:center;justify-content:center;color:#424a53}
+.screen{display:none;flex:999 1 560px;min-width:0}
+.screen:target{display:block}
+.app:not(:has(.screen:target)) [id="01-workbench"]{display:block}
+.toc{font-size:12px;padding:8px 16px;background:#fafaf7;border-bottom:1px solid #E2DED3;font-family:"Lato","Noto Sans SC",sans-serif}
+</style>
+</head>
+<body>
+<div class="toc">原型目录（设计文件用，不属于界面）：<a href="#01-workbench">01 待我处理</a> · <a href="#02-project">02 个人网站</a> · <a href="#03-discuss">03 讨论</a> · <a href="#04-plan">04 施工计划确认</a> · <a href="#05-build">05 施工中</a> · <a href="#06-stopped">06 已停止</a> · <a href="#07-accept">07 验收</a> · <a href="#08-evidence">08 检查依据</a> · <a href="#09-rework">09 退回修改</a> · <a href="#10-save-result">10 保存前检查</a> · <a href="#11-save-conflict">11 保存冲突</a> · <a href="#12-history">12 保存记录</a> · <a href="#13-settings">13 设置</a> · <a href="#14-project-settings">14 项目设置</a></div>
+<div class="app">
+<nav class="side" aria-label="主导航"><a class="nav" href="#01-workbench">待我处理 <span class="cnt">3</span></a><div class="grp">我的项目</div><a class="nav" href="#02-project">个人网站 <span class="cnt">2</span></a><a class="nav" href="#01-workbench">记账小工具 <span class="cntw">1</span></a><a class="nav" href="#01-workbench">读书笔记</a><a class="nav" href="#02-project">＋ 打开项目文件夹</a><div style="flex:1"></div><div class="row sb" style="padding:8px 10px;font-size:13px;color:#424a53"><span>额度：Codex 可用 · Claude 可用</span></div><a class="nav" href="#13-settings">设置</a><button class="btn" style="margin-top:6px;font-size:13px;min-height:32px">« 收起侧栏</button></nav>
+<section class="screen" id="01-workbench" aria-label="待我处理">
+<main class="main">
+<div class="row sb"><h1>待我处理</h1><div class="row"><label class="muted" for="f">项目</label><select id="f" style="font:inherit;padding:6px;border-radius:6px;border:1px solid #8c959f"><option>全部项目</option><option>个人网站</option><option>记账小工具</option></select><a class="btn pri" href="#02-project">＋ 新任务</a></div></div>
+<section class="box">
+<h2>需要你决定（3）</h2>
+<div class="item"><span class="tag">待批准方案</span><div class="grow"><strong>增加深色模式</strong><div class="muted">个人网站 · 复核提出 1 条重大意见，等你裁决后才能开工</div></div><a class="btn pri" href="#03-discuss">去裁决</a></div>
+<div class="item"><span class="tag">待验收</span><div class="grow"><strong>首页加入作品集</strong><div class="muted">个人网站 · 构建和测试都已通过，等你看成果</div></div><a class="btn pri" href="#07-accept">去验收</a></div>
+<div class="item"><span class="tag warn">已中断</span><div class="grow"><strong>导出 Excel</strong><div class="muted">记账小工具 · Codex 额度用完，已做的部分保留在任务副本里，你的项目没有变化</div></div><a class="btn" href="#06-stopped">选择怎么继续</a></div>
+</section>
+<section class="box">
+<h2>正在运行（2）</h2>
+<div class="item"><span class="tag">施工中</span><div class="grow"><strong>修复移动端菜单</strong><div class="muted">个人网站 · Codex · 6 分钟</div></div><a href="#05-build">查看</a></div>
+<div class="item"><span class="tag">讨论中</span><div class="grow"><strong>每月预算提醒</strong><div class="muted">记账小工具 · 首席正在起草方案</div></div><a href="#03-discuss">查看</a></div>
+</section>
+<section class="box"><h2>最近结束</h2><div class="item"><div class="grow">修改联系方式 <span class="muted">· 个人网站 · 已保存 11月8日</span></div><a href="#12-history">保存记录</a></div></section>
+</main>
+</section>
+<section class="screen" id="02-project" aria-label="个人网站">
+<main class="main">
+<div class="row sb"><div><h1>个人网站</h1><div class="muted">~/Projects/my-site</div></div><a class="btn" href="#02-project">在访达中显示</a></div>
+<div class="tabs"><a class="tc" href="#02-project">任务</a><a href="#12-history">保存记录</a><a href="#14-project-settings">项目设置</a></div>
+<div class="row" style="align-items:flex-end"><div class="grow"><label for="nt">你想让 AI 做什么？</label><textarea id="nt" rows="2">网站增加深色模式，访客可以自己切换</textarea></div><a class="btn pri" href="#03-discuss">开始讨论</a></div>
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+<div class="lane"><strong>讨论中 · 1</strong><a class="card" href="#03-discuss"><strong>增加深色模式</strong><span><span class="tag warn">等你裁决</span></span><span class="muted">首席 Claude · 复核 Codex</span></a></div>
+<div class="lane"><strong>施工中 · 1</strong><a class="card" href="#05-build"><strong>修复移动端菜单</strong><span><span class="tag">运行中 6 分钟</span></span><span class="muted">执行 Codex</span></a></div>
+<div class="lane"><strong>待验收 · 1</strong><a class="card" href="#07-accept"><strong>首页加入作品集</strong><span><span class="tag">等你验收</span></span><span class="muted">执行 Codex · 第 1 轮</span></a></div>
+<div class="lane"><strong>已结束</strong>
+<a class="card" href="#12-history"><strong>修改联系方式</strong><span><span class="tag ok">已保存</span></span><span class="muted">11月8日 · 可撤销</span></a>
+<div class="card"><strong>换背景图</strong><span><span class="tag">已放弃</span></span><span class="muted">11月7日</span></div>
+<div class="card"><strong>接入评论系统</strong><span><span class="tag warn">未完成而终止</span></span><span class="muted">11月6日 · 成果已丢弃</span></div>
+</div></div>
+</main>
+</section>
+<section class="screen" id="03-discuss" aria-label="讨论">
+<main class="main">
+<div class="row sb"><div><div class="crumb"><a href="#02-project">个人网站</a> › 任务</div><h1>增加深色模式</h1></div><div class="stages" aria-label="任务阶段"><span class="st cur">1 讨论</span><span class="st">2 施工</span><span class="st">3 验收</span></div></div>
+<div class="row sb"><div class="tabs" role="tablist"><a class="tc" href="#03-discuss">方案摘要</a><a href="#03-discuss">与 Claude（首席）对话</a><a href="#03-discuss">与 Codex（复核）对话</a><a href="#03-discuss">评审记录</a></div><a href="#03-discuss" class="muted">并排显示两个对话</a></div>
+<div class="g2"><div style="display:flex;flex-direction:column;gap:14px">
+<section class="box wbox"><h2>需要你裁决（1）</h2>
+<p><strong>深色背景下，照片和图表可能看不清，方案没有处理。</strong></p>
+<p class="muted" style="margin-top:4px">来自 Codex 独立评审 · 首席认为超出范围，交给你决定</p>
+<div class="kv" style="margin-top:10px;font-size:14px"><span class="muted">如果接受</span><span>首席把它补进方案第 3 版，复核再检查一次改动部分</span><span class="muted">如果驳回</span><span>写一句理由，方案保持第 2 版，可以开工。这条意见和你的理由会一直留在任务记录和验收页，标为「你已知晓并接受的风险」</span></div>
+<div class="row" style="margin-top:10px"><a class="btn" href="#03-discuss">接受，补进方案</a><a class="btn" href="#03-discuss">驳回并说明理由</a></div></section>
+<section class="box"><div class="row sb"><h2>需求（第 1 版，已冻结）</h2><a href="#03-discuss">修改需求</a></div>
+<div class="item"><strong>R1</strong><span class="grow">网站支持浅色 / 深色两种外观</span></div>
+<div class="item"><strong>R2</strong><span class="grow">默认跟随电脑系统设置</span></div>
+<div class="item"><strong>R3</strong><span class="grow">访客可以手动切换，下次打开仍记得</span></div>
+<p class="muted" style="margin-top:8px">修改需求会生成第 2 版，方案需要按新需求重新起草和评审。</p></section>
+<section class="box"><div class="row sb"><h2>方案（第 2 版）</h2><a href="#03-discuss">看全文</a></div><p>用颜色变量统一管理两套配色；页头加切换按钮；访客的选择保存在浏览器里。R1–R3 均已覆盖。</p></section>
+</div>
+<aside style="display:flex;flex-direction:column;gap:14px">
+<section class="box"><h2>进度</h2><div class="muted" style="line-height:1.9">✓ 拆解需求<br>✓ 首席起草<br>✓ 复核独立评审<br>✓ 首席修订<br><strong style="color:#1f2328">● 你裁决分歧</strong><br>○ 批准方案</div></section>
+<section class="box"><span class="btn off" aria-disabled="true" style="width:100%">批准方案</span><p class="muted" style="margin-top:6px">先裁决上面 1 条意见</p>
+<p style="margin-top:10px"><a href="#04-plan">（演示：裁决完成后 → 施工计划确认）</a></p></section>
+</aside></div>
+</main>
+</section>
+<section class="screen" id="04-plan" aria-label="施工计划确认">
+<main class="main">
+<div class="row sb"><div><div class="crumb"><a href="#02-project">个人网站</a> › 任务</div><h1>增加深色模式</h1></div><div class="stages" aria-label="任务阶段"><span class="st cur">1 讨论</span><span class="st">2 施工</span><span class="st">3 验收</span></div></div>
+<section class="box"><h2>施工计划 · 开工前最后确认</h2><p class="muted">方案已批准（第 3 版）。确认下面的内容后开工，施工中不会再逐条询问。</p></section>
+<div class="g2"><div style="display:flex;flex-direction:column;gap:14px">
+<section class="box"><h2>要做什么</h2><p>增加深色外观和切换按钮；深色时装饰图片自动调暗，作品图保持原样。</p>
+<h2 style="margin-top:12px">预计会改动</h2><p class="muted">样式文件、页头组件、少量图片样式。只在这个任务的独立副本里改，验收保存前你的项目不会变（下方另外授权的文件夹除外）。</p></section>
+<section class="box"><h2>验收标准（可修改）</h2>
+<div class="item"><input type="checkbox" checked aria-label="标准1"><span class="grow">切换按钮在页头，点击立即生效</span></div>
+<div class="item"><input type="checkbox" checked aria-label="标准2"><span class="grow">关闭网页再打开，仍是上次选的外观</span></div>
+<div class="item"><input type="checkbox" checked aria-label="标准3"><span class="grow">深色下文字清晰可读</span></div>
+<a href="#04-plan">＋ 添加一条</a>
+<p class="muted" style="margin-top:6px">只改措辞可以直接保存。新增或改变要求，会回到讨论阶段请首席确认方案是否需要改；不会悄悄扩大施工范围。</p></section>
+</div>
+<aside style="display:flex;flex-direction:column;gap:14px">
+<section class="box hl"><h2>权限</h2>
+<label class="item"><input type="radio" name="m" checked><span class="grow"><strong>标准模式</strong><br><span class="muted">只能改这个任务的副本；密钥和账号凭证已挡住</span></span></label>
+<label class="item" style="padding-left:24px"><input type="checkbox"><span class="grow">允许联网 <span class="muted">· 下载工具或查资料</span></span></label>
+<label class="item" style="padding-left:24px"><input type="checkbox" checked><span class="grow">允许修改另一个文件夹</span></label>
+<div class="wbox" style="margin-left:24px;border-radius:6px;padding:8px 10px;font-size:12px"><strong>~/Projects/shared-assets</strong> · 可读写<br>这个文件夹<strong>不在副本里</strong>：AI 会直接修改它，施工中就会变化；停止、放弃、撤销任务都<strong>无法还原</strong>这里的改动。<br><a href="#04-plan">更换文件夹</a> · <a href="#04-plan">改为只读</a></div>
+<label class="item"><input type="radio" name="m"><span class="grow"><strong>完全信任模式</strong><br><span class="muted">不做隔离，开工前会再请你单独确认风险</span></span></label>
+<p class="muted" style="margin-top:6px">碰到没给的权限，那一步会被拦下，原因和影响写进验收结果。</p></section>
+<section class="box"><div class="kv" style="font-size:14px"><span class="muted">执行者</span><span>Codex <a href="#04-plan">更换</a></span><span class="muted">自动检查</span><span>构建检查、自动测试</span></div></section>
+<a class="btn pri" href="#05-build">批准并开工</a>
+<a class="btn" href="#04-plan">导出给外部工具执行</a>
+<p class="muted">导出的只是任务说明。外部工具按它自己的规则运行，<strong>不受这里的隔离和权限保护</strong>；回来时导入报告，仍要在这里验收。</p>
+</aside></div>
+</main>
+</section>
+<section class="screen" id="05-build" aria-label="施工中">
+<main class="main">
+<div class="row sb"><div><div class="crumb"><a href="#02-project">个人网站</a> › 任务</div><h1>修复移动端菜单</h1></div><div class="stages" aria-label="任务阶段"><span class="st done">1 讨论 ✓</span><span class="st cur">2 施工</span><span class="st">3 验收</span></div></div>
+<div class="g2"><div style="display:flex;flex-direction:column;gap:14px">
+<section class="box"><div class="row sb"><h2>正在做：运行项目自带的测试</h2><span class="tag">运行中 6 分钟</span></div>
+<div class="muted" style="line-height:2">✓ 看懂了导航相关的 3 个文件<br>✓ 修改了菜单样式和点击逻辑<br><strong style="color:#1f2328">● 运行测试</strong><br>○ 整理成果，进入验收</div></section>
+<section class="box"><h2>目前的问题（1）</h2><p>想联网下载一个工具包，被拦下（这个任务没有允许联网）。AI 正在改用不联网的方法，不需要你处理。</p></section>
+<section class="box"><h2>需要你介入吗？</h2><p>不需要。完成后会出现在「待我处理」。</p></section>
+</div>
+<aside style="display:flex;flex-direction:column;gap:14px">
+<section class="box"><div class="kv" style="font-size:14px"><span class="muted">执行者</span><span>Codex</span><span class="muted">权限</span><span>标准模式 · 不联网</span><span class="muted">你的项目</span><span>不受影响（在副本中施工）</span></div></section>
+<details class="box"><summary style="cursor:pointer"><strong>执行日志</strong> <span class="muted">· 只读</span></summary>
+<div class="muted" style="margin-top:8px;line-height:1.9">14:02 打开 Nav.tsx<br>14:03 修改 Nav.tsx（+18 −6 行）<br>14:03 修改 nav.css（+9 −2 行）<br>14:05 联网下载被拦下<br>14:06 运行测试…</div></details>
+<a class="btn" href="#06-stopped">停止执行…</a>
+<p class="muted">停止后已做的修改保留在副本里，可以继续、直接验收或放弃。</p>
+</aside></div>
+</main>
+</section>
+<section class="screen" id="06-stopped" aria-label="已停止">
+<main class="main">
+<div class="row sb"><div><div class="crumb"><a href="#02-project">个人网站</a> › 任务</div><h1>修复移动端菜单</h1></div><div class="stages" aria-label="任务阶段"><span class="st done">1 讨论 ✓</span><span class="st cur">2 施工</span><span class="st">3 验收</span></div></div>
+<section class="box wbox"><div class="row"><span class="tag warn">已停止</span><strong>你在 14:07 停止了执行</strong></div>
+<div class="kv" style="margin-top:10px"><span class="muted">已经做完</span><span>菜单样式和点击逻辑已修改（2 个文件）</span><span class="muted">没做完</span><span>测试没跑完，结果未知</span><span class="muted">你的项目</span><span>没有任何变化</span></div></section>
+<section class="box"><h2>接下来怎么办？</h2>
+<div class="item"><div class="grow"><strong>继续执行</strong><div class="muted">从停下的地方接着做，可以换一个执行者</div></div><a class="btn pri" href="#05-build">继续</a></div>
+<div class="item"><div class="grow"><strong>先看看已有成果</strong><div class="muted">进入验收；测试会先补跑一遍</div></div><a class="btn" href="#07-accept">去验收</a></div>
+<div class="item"><div class="grow"><strong>放弃这个任务</strong><div class="muted">丢弃副本里的修改，任务进入「已结束 · 未完成而终止」</div></div><a class="btn" href="#02-project">放弃</a></div></section>
+<section class="variant"><div class="vlabel">设计说明</div><h2>其他中断情况用同一个版式</h2><p class="muted">额度用完、执行者出错、电脑重启后恢复，都显示「已经做完 / 没做完 / 你的项目」三行和可选操作。额度用完时多一个选项：「换另一个 AI 接手」，如果它还没获得资料外发同意，会先请你同意。</p></section>
+</main>
+</section>
+<section class="screen" id="07-accept" aria-label="验收">
+<main class="main">
+<div class="row sb"><div><div class="crumb"><a href="#02-project">个人网站</a> › 任务</div><h1>首页加入作品集</h1></div><div class="stages" aria-label="任务阶段"><span class="st done">1 讨论 ✓</span><span class="st done">2 施工 ✓</span><span class="st cur">3 验收</span></div></div>
+<div class="g2"><div style="display:flex;flex-direction:column;gap:14px">
+<section class="box"><div class="row sb"><h2>成果预览</h2><div class="row"><span class="tag">电脑</span><span class="tag">手机</span><a class="btn" href="#07-accept">在浏览器中打开</a></div></div>
+<div class="shot">修改后的首页预览（作品集区域，6 张卡片）</div></section>
+<section class="box"><h2>检查与证据</h2>
+<div class="item"><span class="tag ok">通过</span><span class="grow">构建检查</span><a href="#08-evidence">查看依据</a></div>
+<div class="item"><span class="tag ok">通过</span><span class="grow">自动测试 24 项</span><a href="#08-evidence">查看依据</a></div>
+<div class="item"><span class="tag warn">被拦下 1 次</span><span class="grow">联网下载图片压缩工具 → 图片未压缩，页面可能稍慢</span><a href="#08-evidence">查看影响</a></div>
+<div class="item"><span class="tag">改动</span><span class="grow">3 个文件</span><a href="#08-evidence">查看改动</a></div>
+<p class="muted" style="margin-top:6px">以上都是应用对<strong>第 1 轮成果</strong>运行和记录的。AI 的说法：「全部完成」，仅供参考。</p></section>
+<section class="variant"><div class="vlabel">状态变体（设计说明，界面中同一时刻只出现一种）</div><div class="row"><span><span class="tag ok">验收通过</span> 全部标准已确认 → 「验收通过并保存」可点</span><span><span class="tag">验收未完成</span> 有标准没确认</span><span><span class="tag warn">验收未通过</span> 有标准确认不符合 → 主按钮变为「退回修改」</span></div></section>
+</div>
+<aside style="display:flex;flex-direction:column;gap:14px">
+<section class="box hl"><h2>验收标准</h2>
+<label class="item"><input type="checkbox" checked><span class="grow">首页出现作品集区域</span></label>
+<label class="item"><input type="checkbox"><span class="grow">手机上一行显示 2 张 <span class="muted">· 请在预览里切到手机查看</span></span></label>
+<label class="item"><input type="checkbox" checked><span class="grow">点击卡片打开作品详情</span></label></section>
+<div class="box" style="padding:10px 12px"><span class="tag">验收未完成</span> <span class="muted">还有 1 条标准没确认</span></div>
+<span class="btn off" aria-disabled="true">验收通过并保存</span>
+<a class="btn pri" href="#09-rework">退回修改</a>
+<div class="row"><a class="btn" href="#01-workbench">暂不处理</a><a class="btn" href="#02-project">放弃</a></div>
+<p class="muted">每条标准都要确认「符合」才能保存。有一条不符合，就退回修改或放弃；保存记录里不会出现「部分通过」。</p>
+</aside></div>
+</main>
+</section>
+<section class="screen" id="08-evidence" aria-label="检查依据">
+<main class="main">
+<div class="row sb"><div><div class="crumb"><a href="#02-project">个人网站</a> › 任务</div><h1>首页加入作品集</h1></div><div class="stages" aria-label="任务阶段"><span class="st done">1 讨论 ✓</span><span class="st done">2 施工 ✓</span><span class="st cur">3 验收</span></div></div>
+<div class="row"><a href="#07-accept">‹ 返回验收</a></div>
+<div class="tabs"><a class="tc" href="#08-evidence">自动测试</a><a href="#08-evidence">构建检查</a><a href="#08-evidence">被拦下的操作</a><a href="#08-evidence">改动的文件</a></div>
+<section class="box"><div class="row sb"><h2>自动测试 · 24 项通过 · 0 项失败</h2><span class="muted">第 1 轮成果 · 本应用于 11月10日 14:21 运行 · 本机环境，不是 AI 自报</span></div>
+<div class="item"><span class="tag ok">通过</span><span class="grow">首页能正常显示</span></div>
+<div class="item"><span class="tag ok">通过</span><span class="grow">作品卡片数量正确</span></div>
+<div class="item"><span class="tag ok">通过</span><span class="grow">……其余 22 项</span><a href="#08-evidence">全部展开</a></div>
+<details style="margin-top:10px"><summary style="cursor:pointer">详细记录</summary><div class="muted" style="margin-top:6px">测试程序的逐项输出，已去掉命令行和可能的密钥、路径等敏感内容。完整原始记录保存在本机任务记录中，界面不直接显示。</div></details></section>
+<section class="box"><h2>改动的文件</h2><p class="muted">index.html · 第 42 行附近</p>
+<div class="diff" style="border:1px solid #d0d4da;border-radius:6px;margin-top:6px"><div class="del">原来：关于我</div><div class="add">现在：作品集（6 张卡片）</div></div></section>
+<section class="box"><h2>没有证据时怎么显示</h2><p class="muted">项目没有测试 → 显示「未检查：这个项目没有自动测试」，不会因为 AI 说「测过了」就标成通过。</p></section>
+</main>
+</section>
+<section class="screen" id="09-rework" aria-label="退回修改">
+<main class="main">
+<div class="row sb"><div><div class="crumb"><a href="#02-project">个人网站</a> › 任务</div><h1>首页加入作品集</h1></div><div class="stages" aria-label="任务阶段"><span class="st done">1 讨论 ✓</span><span class="st done">2 施工 ✓</span><span class="st cur">3 验收</span></div></div>
+<section class="box hl"><h2>退回修改</h2><p class="muted">AI 会在这一轮成果的基础上继续改，不会从头开始。这一轮的成果和证据会保留，可以对比。</p>
+<label for="fb" style="display:block;margin-top:12px"><strong>哪里需要改？</strong></label>
+<textarea id="fb" rows="4">手机上卡片一行显示了 1 张，应该是 2 张。卡片之间的间距也太大。</textarea>
+<div class="item"><span class="grow">没通过的标准会自动附上：<strong>手机上一行显示 2 张</strong></span></div>
+<div class="item"><span class="grow">执行者</span><select style="font:inherit;padding:6px;border-radius:6px;border:1px solid #8c959f"><option>Codex（同上一轮）</option><option>Claude</option></select></div>
+<div class="item"><span class="grow">权限</span><span>沿用上一轮：标准模式 · 不联网 <a href="#04-plan">修改</a></span></div>
+<div class="row" style="margin-top:12px"><a class="btn pri" href="#05-build">开始第 2 轮</a><a class="btn" href="#07-accept">取消</a></div></section>
+<section class="box"><h2>之后</h2><p class="muted">任务卡片显示「第 2 轮」。验收页可以切换查看第 1 轮和第 2 轮的成果与证据。</p></section>
+</main>
+</section>
+<section class="screen" id="10-save-result" aria-label="保存前检查">
+<main class="main">
+<div class="row sb"><div><div class="crumb"><a href="#02-project">个人网站</a> › 任务</div><h1>首页加入作品集</h1></div><div class="stages" aria-label="任务阶段"><span class="st done">1 讨论 ✓</span><span class="st done">2 施工 ✓</span><span class="st cur">3 验收</span></div></div>
+<section class="box hl"><h2>正在保存…</h2>
+<div class="item"><span class="tag ok">完成</span><span class="grow">检查你的项目在验收期间是否有变化 → 有：「修复移动端菜单」刚保存过</span></div>
+<div class="item"><span class="tag ok">完成</span><span class="grow">合并两边的改动 → 改的是不同文件，已自动合并</span></div>
+<div class="item"><span class="tag ok">完成</span><span class="grow">合并后重新运行检查 → 构建、24 项测试通过</span></div>
+<div class="item"><span class="tag ok">完成</span><span class="grow">写入前再确认一次 → 期间没有新的改动</span></div>
+<p style="margin-top:10px"><strong>已保存。</strong> 可以在「保存记录」里撤销。</p>
+<div class="row" style="margin-top:10px"><a class="btn pri" href="#02-project">完成</a><a class="btn" href="#12-history">查看保存记录</a></div></section>
+<section class="variant"><div class="vlabel">状态变体（设计说明：同一位置只出现其中一种）</div>
+<div class="grid">
+<div class="box"><span class="tag">未检查</span><p style="margin-top:6px">已合并，但项目没有自动检查，<strong>无法确认两次改动放在一起没有问题</strong>。建议先预览一遍再保存。</p><div class="row" style="margin-top:8px"><span class="btn">打开预览</span><span class="btn">仍然保存</span></div></div>
+<div class="box wbox"><span class="tag warn">检查失败</span><p style="margin-top:6px">合并后测试有 2 项失败。<strong>没有保存</strong>，你的项目未变化。</p><div class="row" style="margin-top:8px"><a class="btn" href="#09-rework">退回修改</a><span class="btn">查看失败项</span></div></div>
+<div class="box wbox"><span class="tag warn">冲突</span><p style="margin-top:6px">两个任务改了同一处，无法自动合并。</p><div class="row" style="margin-top:8px"><a class="btn pri" href="#11-save-conflict">看看怎么处理</a></div></div>
+<div class="box wbox"><span class="tag warn">保存失败 · 已安全恢复</span><p style="margin-top:6px">写入时出错。系统已把项目恢复并<strong>核对过与保存前一致</strong>。任务成果仍在副本里。</p><div class="row" style="margin-top:8px"><span class="btn">重试</span></div></div>
+<div class="box wbox"><span class="tag warn">保存失败 · 恢复未确认</span><p style="margin-top:6px">写入中途出错，<strong>无法确认项目是否完好</strong>。已停止一切写入，保留了保存前的恢复点。受影响的文件：3 个。</p><div class="row" style="margin-top:8px"><span class="btn">恢复到保存前</span><span class="btn">查看受影响的文件</span></div><p class="muted" style="margin-top:6px">恢复并核对通过前，这个项目不能开始新的保存。</p></div>
+</div></section>
+</main>
+</section>
+<section class="screen" id="11-save-conflict" aria-label="保存冲突">
+<main class="main">
+<div class="row sb"><div><div class="crumb"><a href="#02-project">个人网站</a> › 任务</div><h1>首页加入作品集</h1></div><div class="stages" aria-label="任务阶段"><span class="st done">1 讨论 ✓</span><span class="st done">2 施工 ✓</span><span class="st cur">3 验收</span></div></div>
+<section class="box wbox"><div class="row"><span class="tag warn">没有保存</span><strong>这个任务和「修复移动端菜单」改了同一处</strong></div>
+<p style="margin-top:8px">位置：页头导航（Nav.tsx）。你的项目保持着「修复移动端菜单」保存后的样子，这个任务的成果仍完整保留。</p></section>
+<section class="box"><h2>选一种处理方式</h2>
+<div class="item"><div class="grow"><strong>让 AI 在最新项目上重做这部分</strong> <span class="tag">推荐</span><div class="muted">把另一个任务的改动带进来，再改一轮，然后重新验收</div></div><a class="btn pri" href="#05-build">开始</a></div>
+<div class="item"><div class="grow"><strong>以这个任务为准</strong><div class="muted">会替换「修复移动端菜单」在这一处已通过验收的改动</div></div><a class="btn" href="#11-save-conflict">查看影响并确认覆盖</a></div>
+<div class="item"><div class="grow"><strong>先不处理</strong><div class="muted">任务留在「待验收」</div></div><a class="btn" href="#01-workbench">稍后</a></div>
+<section class="box hl" style="margin-top:10px"><h2>确认覆盖前：会发生什么</h2><div class="item"><span class="grow">被替换的已保存改动：「修复移动端菜单」的汉堡按钮</span></div><div class="item"><span class="grow">可能受影响：手机上的菜单将恢复为横向排列，该任务的标准「手机上能展开菜单」可能不再成立</span></div><div class="item"><span class="grow">覆盖后重新检查：构建通过，测试 2 项失败</span><span class="tag warn">建议不要覆盖</span></div><div class="row" style="margin-top:8px"><span class="btn">仍然覆盖</span><a class="btn pri" href="#05-build">改为让 AI 重做</a></div></section>
+<details style="margin-top:8px"><summary style="cursor:pointer">对比两边的改动</summary><div class="diff" style="border:1px solid #d0d4da;border-radius:6px;margin-top:6px"><div class="del">已保存的（修复移动端菜单）：菜单改为汉堡按钮</div><div class="add">这个任务：菜单加入「作品集」入口</div></div></details></section>
+</main>
+</section>
+<section class="screen" id="12-history" aria-label="保存记录">
+<main class="main">
+<div class="row sb"><div><h1>个人网站</h1><div class="muted">~/Projects/my-site</div></div></div>
+<div class="tabs"><a href="#02-project">任务</a><a class="tc" href="#12-history">保存记录</a><a href="#14-project-settings">项目设置</a></div>
+<section class="box">
+<div class="item"><div class="grow"><strong>首页加入作品集</strong><div class="muted">今天 14:30 · Codex · 第 2 轮 · 检查通过</div></div><a href="#07-accept">查看任务</a><a class="btn" href="#12-history">撤销…</a></div>
+<div class="item"><div class="grow"><strong>修复移动端菜单</strong><div class="muted">今天 14:12 · Codex · 检查通过</div></div><a href="#05-build">查看任务</a><a class="btn" href="#12-history">撤销…</a></div>
+<div class="item"><div class="grow"><strong>修改联系方式</strong><div class="muted">11月8日 · Claude · 未检查（项目当时没有测试）</div></div><a href="#12-history">查看任务</a><a class="btn" href="#12-history">撤销…</a></div></section>
+<section class="box hl"><h2>撤销「修复移动端菜单」？</h2>
+<p>撤销这次保存带来的改动，之后的保存尽量保留。</p>
+<div class="box" style="margin-top:8px;padding:8px 12px"><strong>影响范围（撤销前检查结果）</strong><div class="item"><span class="grow">之后的保存「首页加入作品集」也改过页头 → 可能受影响</span></div><div class="item"><span class="grow">撤销后会重新运行检查；检查不通过或无法确认安全，就不执行撤销</span></div></div>
+<p class="muted" style="margin-top:6px">撤销会作为一次新的保存记录下来。能否再恢复，取决于之后有没有新的改动，届时会再检查一次，不做事先保证。</p>
+<div class="row" style="margin-top:10px"><a class="btn pri" href="#12-history">检查并撤销</a><a class="btn" href="#12-history">取消</a></div></section>
+<section class="variant"><div class="vlabel">状态变体（设计说明）</div><div class="row"><span class="tag warn">无法撤销</span><strong>撤销失败时的样子</strong></div><p style="margin-top:6px">「修复移动端菜单」和之后的保存改了同一处，单独撤销会弄坏页面。<strong>没有改动任何文件。</strong></p>
+<div class="row" style="margin-top:8px"><span class="btn">连同之后的保存一起撤销</span><a class="btn" href="#02-project">新建任务来修改</a></div></section>
+</main>
+</section>
+<section class="screen" id="13-settings" aria-label="设置">
+<main class="main">
+<h1>设置</h1>
+<p class="muted">「资料外发」沿用已实现的外发说明与按服务同意；「环境体检」沿用已实现的 5 层检查，首次使用作为引导，出问题时出现在「待我处理」。两者本稿不重画。</p>
+<div class="tabs"><a class="tc" href="#13-settings">AI 与角色</a><a href="#13-settings">额度与接手</a><a href="#13-settings">资料外发</a><a href="#13-settings">环境体检</a></div>
+<div class="grid">
+<section class="box"><div class="row sb"><h2>已接入的 AI</h2><a class="btn" href="#13-settings">＋ 添加</a></div>
+<div class="item"><div class="grow"><strong>Codex</strong><div class="muted">ChatGPT 计划登录</div></div><span class="tag ok">可用</span></div>
+<div class="item"><div class="grow"><strong>Claude</strong><div class="muted">API Key</div></div><span class="tag ok">可用</span></div></section>
+<section class="box"><h2>默认角色</h2>
+<div class="item"><div class="grow"><strong>首席</strong> <span class="muted">· 写方案</span></div><select aria-label="首席" style="font:inherit;padding:6px;border-radius:6px;border:1px solid #8c959f"><option>Claude</option><option>Codex</option></select></div>
+<div class="item"><div class="grow"><strong>复核</strong> <span class="muted">· 独立找错</span></div><select aria-label="复核" style="font:inherit;padding:6px;border-radius:6px;border:1px solid #8c959f"><option>Codex</option><option>Claude</option><option>不复核</option></select></div>
+<div class="item"><div class="grow"><strong>执行</strong> <span class="muted">· 每个任务一个</span></div><select aria-label="执行" style="font:inherit;padding:6px;border-radius:6px;border:1px solid #8c959f"><option>Codex</option><option>Claude</option></select></div></section>
+<section class="box"><h2>额度用完时</h2>
+<label class="item"><input type="radio" name="q" checked><span class="grow">提醒我，由我决定 <span class="muted">（默认）</span></span></label>
+<label class="item"><input type="radio" name="q"><span class="grow">自动换另一个 AI 接手</span></label>
+<p class="muted" style="margin-top:6px">接手的 AI 沿用原任务的权限，不会多给；如果它还没得到资料外发同意，会先暂停问你。</p></section>
+<section class="box"><h2>额度</h2>
+<div class="item"><span class="grow">Codex</span><span class="muted">无法获取</span></div>
+<div class="item"><span class="grow">Claude</span><span class="muted">按服务方提供的用量显示</span></div></section>
+</div>
+</main>
+</section>
+<section class="screen" id="14-project-settings" aria-label="项目设置">
+<main class="main">
+<div class="row sb"><div><h1>个人网站</h1><div class="muted">~/Projects/my-site</div></div></div>
+<div class="tabs"><a href="#02-project">任务</a><a href="#12-history">保存记录</a><a class="tc" href="#14-project-settings">项目设置</a></div>
+<div class="grid">
+<section class="box"><h2>AI 角色</h2><div class="item"><span class="grow">首席 / 复核 / 执行</span><select aria-label="角色来源" style="font:inherit;padding:6px;border-radius:6px;border:1px solid #8c959f"><option>跟随全局设置</option><option>本项目单独设置</option></select></div></section>
+<section class="box"><h2>权限</h2>
+<div class="item"><div class="grow"><strong>新任务默认选中</strong><div class="muted">只是预选，每个任务开工前仍会确认</div></div><select aria-label="默认模式" style="font:inherit;padding:6px;border-radius:6px;border:1px solid #8c959f"><option>标准模式</option><option>完全信任模式</option></select></div>
+<div class="item"><div class="grow"><strong>项目风险说明</strong><div class="muted">11月7日已阅读。阅读不等于批准以后的任务</div></div><a href="#14-project-settings">查看</a></div></section>
+<section class="box"><div class="row sb"><h2>扩展能力</h2><a class="btn" href="#14-project-settings">＋ 添加</a></div>
+<div class="item"><div class="grow"><strong>文件访问</strong> <span class="muted">· MCP</span><div class="muted">只能访问当前任务的副本，受任务权限限制</div></div><span class="tag ok">已启用</span></div>
+<div class="item"><div class="grow"><strong>前端设计规范</strong> <span class="muted">· Skill</span><div class="muted">只提供写作指引，不能读写文件或联网</div></div><span class="tag ok">已启用</span></div>
+<p class="muted" style="margin-top:6px">任何扩展都在任务权限范围内运行。需要联网的扩展，只在开工时允许联网的任务里可用。</p></section>
+<section class="box"><h2>自动检查</h2>
+<div class="item"><span class="grow">构建检查</span><span class="tag ok">已就绪</span></div>
+<div class="item"><span class="grow">自动测试</span><span class="tag ok">已就绪</span></div>
+<p class="muted" style="margin-top:6px">没有可用的检查时，验收会如实显示「未检查」。</p></section>
+</div>
+</main>
+</section>
+</div>
+</body>
+</html>
