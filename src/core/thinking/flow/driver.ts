@@ -135,6 +135,8 @@ export interface ApprovedThreadPlanPayload {
   frozenItems: RequirementItem[];
   planMarkdown: string;
   planPath: string;
+  planSha256?: string;
+  planArtifactVersion?: number;
   single: boolean;
   rejectedRisks: { title: string; reason: string; at: string }[];
 }
@@ -543,6 +545,8 @@ export async function readApprovedThreadPlan(projectRoot: string, threadId: stri
     frozenItems: reqBody?.items ?? [],
     planMarkdown: planBody?.plan ?? '',
     planPath: rec.plan.path,
+    planSha256: rec.plan.sha256,
+    planArtifactVersion: rec.plan.artifactVersion,
     single: rec.single,
     rejectedRisks,
   };

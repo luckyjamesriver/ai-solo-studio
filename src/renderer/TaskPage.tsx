@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Acceptance } from './Acceptance.js';
 import { DiscussionPage } from './DiscussionPage.js';
+import { ExternalWaitingPage } from './ExternalWaitingPage.js';
 import { PlanCard } from './PlanCard.js';
 import { RunView } from './RunView.js';
 import { StoppedPage } from './StoppedPage.js';
@@ -54,7 +55,8 @@ export function TaskPage({
   }, [showRun]);
   const showDiscuss = !showRun && ['draft', 'clarifying'].includes(task.state) && task.layer.runStatus !== '已锁定';
   const showPlan = !showRun && ['planned', 'approved'].includes(task.state) && task.layer.runStatus !== '已锁定';
-  const stoppedInfo = !showRun && !showDiscuss && !showPlan ? task.stoppedInfo : null;
+  const showExternalWaiting = !showRun && task.state === 'waiting_external' && task.layer.runStatus !== '已锁定';
+  const stoppedInfo = !showRun && !showDiscuss && !showPlan && !showExternalWaiting ? task.stoppedInfo : null;
   const showStopped = !!stoppedInfo && ackStopToken !== stoppedInfo.token;
 
   const stage = task.layer.stage;
@@ -65,7 +67,7 @@ export function TaskPage({
   const acceptDone = !showStopped && stage === 'ended';
   const acceptCur = !showStopped && stage === 'reviewing';
 
-  const useBare = showRun || showDiscuss || showPlan || showStopped || !error;
+  const useBare = showRun || showDiscuss || showPlan || showExternalWaiting || showStopped || !error;
 
   return (
     <main className="main" data-testid="task-page" aria-label={task.goal}>
@@ -127,6 +129,14 @@ export function TaskPage({
             task={task}
             preferredMode={preferredMode}
             onChanged={onTaskChanged}
+          />
+        ) : showExternalWaiting ? (
+          <ExternalWaitingPage
+            key={task.id}
+            projectId={projectId}
+            task={task}
+            onTaskChanged={onTaskChanged}
+            onDiscarded={onAcceptanceChanged}
           />
         ) : showStopped && stoppedInfo ? (
           <StoppedPage

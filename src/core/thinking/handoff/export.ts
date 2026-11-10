@@ -8,10 +8,14 @@ export type { TaskManifest };
 
 export interface ExportInput {
   projectRoot: string;
+  /** 独立任务副本（worktree）目录；传入时绑定信息读自副本，而清单仍存储在 projectRoot/.studio */
+  worktreeDir?: string;
   taskId: string;
   threadId: string;
   /** 导出目录：由参数或配置给出，代码中不写死任何路径 */
   exportDir: string;
+  /** 可选自定义导出文件名（例如 'task.md'）；缺省为 `${taskId}-task.md` */
+  taskFileName?: string;
   /** 允许重复导出覆盖已有文件与清单（更新模式） */
   overwrite?: boolean;
   /** 只有用户明确选择“设为当前任务”才更新 next-task.md */
@@ -20,6 +24,8 @@ export interface ExportInput {
   confirmReplaceCurrent?: (firstLine: string) => Promise<boolean>;
   plan: { path: string; text: string; sha256: string; artifactVersion: number };
   requirements: { id: string; text: string }[];
+  /** 可选验收标准（存在时一并写入任务文件） */
+  criteria?: string[];
   single: boolean;
   now?: () => Date;
 }
@@ -45,7 +51,10 @@ export async function gitBinding(projectRoot: string): Promise<{ repoRoot: strin
 }
 
 /** 生成符合 docs/PROTOCOL.md 的任务文件正文（首行任务编号）。 */
-export function renderTaskFile(i: { taskId: string; binding: { repoRoot: string; worktreePath: string; branch: string; head: string }; plan: ExportInput['plan']; requirements: ExportInput['requirements']; single: boolean; threadId: string }): string {
+export function renderTaskFile(i: { taskId: string; binding: { repoRoot: string; worktreePath: string; branch: string; head: string }; plan: ExportInput['plan']; requirements: ExportInput['requirements']; criteria?: string[]; single: boolean; threadId: string }): string {
+  const criteriaBlock = i.criteria?.length
+    ? ['', '## 验收标准（完成后将按以下逐条核对）', ...i.criteria.map((c, idx) => `- C${idx + 1}：${c}`)]
+    : [];
   return [
     `任务编号：${i.taskId}`,
     '',
@@ -64,6 +73,7 @@ export function renderTaskFile(i: { taskId: string; binding: { repoRoot: string;
     '',
     '## 1. 目标（需求条目，用户已确认并冻结）',
     ...i.requirements.map((r) => `- ${r.id}：${r.text}`),
+    ...criteriaBlock,
     '',
     '## 2. 方案（已批准）',
     i.plan.text,
@@ -100,11 +110,13 @@ export async function exportTask(i: ExportInput): Promise<ExportResult> {
   if (!TASK_ID.test(i.taskId)) throw new Error(`任务编号不合法：${i.taskId}`);
   if (!i.exportDir) throw new Error('必须指定导出目录（--export-dir 或配置）');
   const now = (i.now ?? (() => new Date()))();
-  const binding = await gitBinding(i.projectRoot);
+  const binding = await gitBinding(i.worktreeDir ?? i.projectRoot);
   const manifestStore = new ManifestStore(i.projectRoot);
   const manifestFile = manifestStore.recordFile(i.taskId);
   const exportDir = path.resolve(i.exportDir);
-  const taskFile = path.join(exportDir, `${i.taskId}-task.md`);
+  const fileName = i.taskFileName?.trim() || `${i.taskId}-task.md`;
+  if (path.basename(fileName) !== fileName || !fileName.endsWith('.md')) throw new Error(`任务文件名不合法：${fileName}`);
+  const taskFile = path.join(exportDir, fileName);
 
   // 先检查两个唯一性，再写入任何东西（未指定 overwrite 时禁止覆盖）
   if (!i.overwrite) {
@@ -114,7 +126,15 @@ export async function exportTask(i: ExportInput): Promise<ExportResult> {
     if (await fs.stat(taskFile).then(() => true, () => false)) throw new Error(`任务文件已存在，拒绝覆盖：${taskFile}`);
   }
 
-  const text = renderTaskFile({ taskId: i.taskId, binding, plan: i.plan, requirements: i.requirements, single: i.single, threadId: i.threadId });
+  const text = renderTaskFile({
+    taskId: i.taskId,
+    binding,
+    plan: i.plan,
+    requirements: i.requirements,
+    ...(i.criteria?.length ? { criteria: i.criteria } : {}),
+    single: i.single,
+    threadId: i.threadId,
+  });
   const manifest: TaskManifest = {
     schema: 1,
     taskId: i.taskId,

@@ -1,4 +1,6 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { StaleRunError, StateConflictError, WriterLockedError, type OpenOptions } from '../persistence/index.js';
 import * as G from '../git/git.js';
@@ -83,6 +85,8 @@ export interface ControllerOptions {
   storeOptions?: OpenOptions;
   /** 外部打开预览的回调（主进程中调用 Electron shell；测试中可注入模拟） */
   openPreview?: (target: { kind: 'web' | 'finder'; targetPath: string }) => Promise<void>;
+  /** 在访达中显示外部交接文件或副本文件夹（仅接受控制器校验后的路径） */
+  revealPath?: (targetPath: string) => Promise<void>;
   /** 讨论阶段思考者构造工厂（默认 Codex 单思考者；主进程按环境注入 dev-personal） */
   makeThinkers?: (preset: DiscussionPreset) => ResolvedThinkerSet;
   /** 是否开启开发者预设（STUDIO_DEV_PERSONAL_CLAUDE=1 且未打包） */
@@ -180,11 +184,15 @@ export class TaskController {
     const worktreeChanges =
       t.worktree && (running || stoppedOrFailed) ? await G.diffSummary(t.worktree).catch(() => undefined) : undefined;
     const discussion = await this.d().getClassifyHint(t);
+    const handoffContent = t.handoff?.taskFilePath
+      ? await fsp.readFile(t.handoff.taskFilePath, 'utf8').catch(() => '')
+      : undefined;
     const v = buildTaskView(t, {
       scripts,
       running,
       ...(worktreeChanges ? { worktreeChanges } : {}),
       ...(discussion ? { discussion } : {}),
+      ...(handoffContent !== undefined ? { handoffContent } : {}),
     });
     const err = this.startErrors.get(t.id);
     if (err && !v.startFailure) v.startFailure = err;
@@ -302,6 +310,87 @@ export class TaskController {
     const t = await this.load(id);
     await this.r().stop(t.id);
     return this.view((await this.r().store.get(t.id)) ?? t);
+  }
+
+  private async resolveExternalExportInput(t: Task): Promise<{
+    plan: { path: string; text: string; sha256: string; artifactVersion: number };
+    requirements: { id: string; text: string }[];
+    criteria: string[];
+    single: boolean;
+    threadId: string;
+  }> {
+    if (!t.plan) throw new Error('没有施工计划，不能交给外部工具执行。');
+    const criteria = t.plan.criteria.length > 0 ? t.plan.criteria : t.criteria.map((c) => c.text);
+    if (t.approvedPlanPath && t.threadId) {
+      try {
+        const payload = await this.d().readApprovedPayload(t.threadId);
+        const requirements =
+          payload.frozenItems.length > 0
+            ? payload.frozenItems.map((it) => ({ id: it.id, text: it.text }))
+            : [{ id: 'R1', text: t.plan.goal }];
+        const baseText = payload.planMarkdown || t.plan.goal;
+        const planText =
+          t.plan.goal && !baseText.includes(t.plan.goal) ? `${baseText}\n\n当前确认目标：${t.plan.goal}` : baseText;
+        return {
+          threadId: payload.threadId,
+          single: payload.single,
+          requirements,
+          criteria,
+          plan: {
+            path: payload.planPath,
+            text: planText,
+            sha256: payload.planSha256 ?? crypto.createHash('sha256').update(planText).digest('hex'),
+            artifactVersion: payload.planArtifactVersion ?? 1,
+          },
+        };
+      } catch {
+        // 若讨论记录不可读，退回手工计划结构
+      }
+    }
+    const text = [
+      `目标：${t.plan.goal}`,
+      ...(t.plan.inScope.length ? ['', '要做：', ...t.plan.inScope.map((x) => `- ${x}`)] : []),
+      ...(t.plan.outOfScope.length ? ['', '不要做：', ...t.plan.outOfScope.map((x) => `- ${x}`)] : []),
+    ].join('\n');
+    return {
+      threadId: t.threadId ?? `manual-${t.id}`,
+      single: !!t.planUnreviewed,
+      requirements: [{ id: 'R1', text: t.plan.goal || t.request }],
+      criteria,
+      plan: {
+        path: '施工计划（界面手工编辑）',
+        text,
+        sha256: crypto.createHash('sha256').update(text).digest('hex'),
+        artifactVersion: t.currentRound ?? 1,
+      },
+    };
+  }
+
+  /** 交给外部工具执行：确认说明后创建独立副本并导出 .studio/handoff/<taskId>/task.md，任务进入 waiting_external。 */
+  async exportExternalTask(id: unknown, ack: unknown): Promise<TaskView> {
+    if (ack !== true) throw new Error('请先确认外部执行说明后再导出。');
+    const tid = this.checkArg(TASK_ID, id);
+    await this.ready();
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (this.active.has(t.id) || this.ops.has(t.id) || this.r().isBusy(t.id)) throw new Error(MESSAGES.busy);
+    if (!t.plan) throw new Error('请先保存计划。');
+    if (t.state !== 'planned' && t.state !== 'approved') throw new Error('当前状态不能交给外部工具执行。');
+    const input = await this.resolveExternalExportInput(t);
+    const updated = await this.r().exportExternal(t.id, input);
+    return this.view(updated);
+  }
+
+  /** 在访达中显示已导出的 task.md 或对应的任务副本文件夹（由主进程控制路径）。 */
+  async revealHandoff(id: unknown, target: unknown): Promise<void> {
+    if (target !== 'task_file' && target !== 'worktree') throw new Error(VIEW_TEXT.invalidArgument);
+    const tid = this.checkArg(TASK_ID, id);
+    await this.ready();
+    const t = await this.load(tid);
+    if (!t.handoff) throw new Error('这个任务还没有导出给外部工具。');
+    const dest = target === 'worktree' ? t.handoff.worktreePath : t.handoff.taskFilePath;
+    if (!this.o.revealPath) throw new Error('当前环境不支持打开访达。');
+    await this.o.revealPath(dest);
   }
 
   /**

@@ -180,12 +180,51 @@ export interface RoundCriterionSnapshot {
   note?: string;
 }
 
+export interface ExternalImportSummary {
+  at: string;
+  reportName: string;
+  verdict: 'bound' | 'mismatch' | 'unverified';
+  checks: { item: string; ok: boolean; detail: string }[];
+  mismatches: string[];
+  unverifiedReasons: string[];
+  notes: string[];
+  readOnlyNotice?: string;
+  claimed: { startHead?: string; endHead?: string; repo?: string; branch?: string; worktree?: string };
+  worktreeStatus: {
+    branch: string;
+    head: string;
+    extendsBase: boolean;
+    dirty: string[];
+    untracked: string[];
+    autoCommitted?: boolean;
+    error?: string;
+  };
+  recordFile?: string;
+  realityDiscrepancies?: string[];
+}
+
+export interface TaskHandoffInfo {
+  exportedAt: string;
+  worktreePath: string;
+  branch: string;
+  baseSha: string;
+  taskFilePath: string;
+  taskFileRelPath: string;
+  manifestFilePath: string;
+  singleThinker: boolean;
+  planPath: string;
+  round: number;
+  importedReportSummary?: string;
+  lastImport?: ExternalImportSummary;
+}
+
 export interface TaskRound {
   round: number;
   startedAt: string;
   endedAt?: string;
   /** 本轮补充说明：继续执行记为「接着上次停下的地方继续」，退回修改记为反馈+不符合的标准；第 1 轮省略 */
   feedback?: string;
+  executionKind?: 'internal' | 'external';
   capabilities?: Capabilities;
   executorId?: string;
   executorName?: string;
@@ -194,6 +233,9 @@ export interface TaskRound {
   exit?: ExitOutcome;
   gitBinding?: GitBinding;
   acceptedTree?: string;
+  roundBaseSha?: string;
+  roundCommit?: string;
+  roundRef?: string;
   checksVoid?: string;
   denied: DeniedOperation[];
   deniedAcks: boolean[];
@@ -204,6 +246,8 @@ export interface TaskRound {
   checks: StoredCheckProof[];
   card?: AcceptanceCard;
   aiMessages: string[];
+  importedReportSummary?: string;
+  realityDiscrepancies?: string[];
 }
 
 export interface ConflictInfo {
@@ -230,6 +274,10 @@ export interface Task {
   request: string;
   state: TaskState;
   plan?: Plan;
+  executionKind?: 'internal' | 'external';
+  handoff?: TaskHandoffInfo;
+  discardedAt?: string;
+  roundRefsPrunedAt?: string;
   executorId?: string;
   executorName?: string;
   model?: string;

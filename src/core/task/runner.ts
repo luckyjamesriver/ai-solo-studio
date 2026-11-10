@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import * as G from '../git/git.js';
+import { exportTask } from '../thinking/handoff/index.js';
 import { next, canFire, type TaskEvent } from './state.js';
 import { MESSAGES, uncheckedReasonText } from './messages.js';
 import { saveBlockers } from './save-rules.js';
@@ -293,6 +295,7 @@ export class TaskRunner extends EventEmitter {
       const r = await validateExtraDir(d, { repo: this.opts.repo, worktree: t.worktree.path });
       if (!r.ok) throw new Error(`不能让 AI 修改“${d}”：${r.reason}`);
     }
+    t.executionKind = 'internal';
     t.executorId = this.opts.executor.id;
     t.executorName = this.opts.executor.displayName;
     // 报告绑定 Git 状态：记录开始时的主线 HEAD、工作树路径与其 HEAD
@@ -401,6 +404,106 @@ export class TaskRunner extends EventEmitter {
       o.kind === 'exited' ? (o.code === 0 ? 'exec_exit_ok' : 'exec_exit_fail') : o.kind === 'stopped' ? 'stop' : o.kind === 'timed_out' ? 'timeout' : 'exec_exit_fail';
     await this.fire(t, ev);
     return this.review(t);
+  }
+
+  /**
+   * 交给外部工具执行（Stage 7）：
+   * 创建或复用独立任务副本（worktree），使用 exportTask 生成 .studio/handoff/<taskId>/task.md 与绑定清单，
+   * 状态进入 waiting_external（「外部执行中（等待导入报告）」）。
+   */
+  async exportExternal(
+    id: string,
+    input: {
+      plan: { path: string; text: string; sha256: string; artifactVersion: number };
+      requirements: { id: string; text: string }[];
+      criteria?: string[];
+      single: boolean;
+      threadId: string;
+    },
+  ): Promise<Task> {
+    if (!this.enter(id)) throw new Error(MESSAGES.busy);
+    try {
+      const t = await this.load(id);
+      if (t.manualReview) throw new Error(MESSAGES.abnormal);
+      if (!t.plan) throw new Error('没有施工计划，不能交给外部工具执行。');
+      if (t.state !== 'planned' && t.state !== 'approved') throw new Error('当前状态不能交给外部工具执行。');
+      if (!t.worktree) {
+        const drivers = await G.detectExternalDrivers(this.opts.repo);
+        if (!drivers.supported) throw new Error(`${MESSAGES.externalDriver}（${drivers.drivers.join('；')}）`);
+        t.worktree = await G.createWorktree(this.opts.repo, t.id);
+      }
+      t.binding ??= {
+        repoPath: await fs.realpath(this.opts.repo),
+        branch: await G.currentBranch(this.opts.repo),
+        baseHead: t.worktree.baseSha,
+      };
+      t.executionKind = 'external';
+      t.executorId = 'external';
+      t.executorName = '外部工具';
+      delete t.model;
+      delete t.reapproveNotice;
+      t.gitStart = {
+        mainHeadAtStart: await G.headSha(this.opts.repo),
+        worktreeHeadAtStart: await G.headSha(t.worktree.path),
+        worktreePath: t.worktree.path,
+      };
+      delete t.gitBinding;
+      const roundNo = t.currentRound ?? 1;
+      t.currentRound = roundNo;
+      t.roundStartedAt = new Date().toISOString();
+      delete t.roundEndedAt;
+      const roundFeedback = t.pendingFeedback;
+      delete t.pendingFeedback;
+
+      const planText = roundFeedback
+        ? `${input.plan.text}\n\n## 第 ${roundNo} 轮修改要求\n${roundFeedback}`
+        : input.plan.text;
+      const ex = await exportTask({
+        projectRoot: this.opts.repo,
+        worktreeDir: t.worktree.path,
+        taskId: t.id,
+        threadId: input.threadId,
+        exportDir: path.join(this.opts.repo, '.studio', 'handoff', t.id),
+        taskFileName: 'task.md',
+        overwrite: !!t.handoff || roundNo > 1,
+        plan: { ...input.plan, text: planText },
+        requirements: input.requirements,
+        criteria: input.criteria ?? t.plan.criteria,
+        single: input.single,
+      });
+
+      t.handoff = {
+        exportedAt: ex.manifest.exportedAt,
+        worktreePath: ex.manifest.worktreePath,
+        branch: ex.manifest.branch,
+        baseSha: ex.manifest.startHead,
+        taskFilePath: ex.taskFile,
+        taskFileRelPath: path.relative(this.opts.repo, ex.taskFile),
+        manifestFilePath: ex.manifestFile,
+        singleThinker: ex.manifest.singleThinker,
+        planPath: ex.manifest.plan.path,
+        round: roundNo,
+      };
+      this.upsertRound(t, {
+        round: roundNo,
+        startedAt: t.roundStartedAt,
+        executionKind: 'external',
+        ...(roundFeedback ? { feedback: roundFeedback } : {}),
+        ...(t.plan?.capabilities ? { capabilities: structuredClone(t.plan.capabilities) } : {}),
+        executorId: 'external',
+        executorName: '外部工具',
+        denied: [],
+        deniedAcks: [],
+        criteria: t.criteria.map((c) => ({ text: c.text })),
+        checks: [],
+        aiMessages: [],
+      });
+      this.log(t, 'message', `已导出给外部工具执行（第 ${roundNo} 轮）：${t.handoff.taskFileRelPath}`, 'host');
+      await this.fire(t, 'export_external');
+      return t;
+    } finally {
+      this.leave(id);
+    }
   }
 
   async respond(id: string, requestId: string, decision: Decision): Promise<void> {
@@ -653,6 +756,7 @@ export class TaskRunner extends EventEmitter {
       startedAt: prev?.startedAt ?? t.roundStartedAt ?? t.createdAt,
       ...(t.roundEndedAt ? { endedAt: t.roundEndedAt } : prev?.endedAt ? { endedAt: prev.endedAt } : {}),
       ...(prev?.feedback ? { feedback: prev.feedback } : {}),
+      ...(prev?.executionKind ? { executionKind: prev.executionKind } : t.executionKind ? { executionKind: t.executionKind } : {}),
       ...(t.plan?.capabilities ? { capabilities: structuredClone(t.plan.capabilities) } : prev?.capabilities ? { capabilities: prev.capabilities } : {}),
       ...(t.executorId ? { executorId: t.executorId } : {}),
       ...(t.executorName ? { executorName: t.executorName } : {}),
@@ -661,6 +765,9 @@ export class TaskRunner extends EventEmitter {
       ...(t.exit ? { exit: structuredClone(t.exit) } : {}),
       ...(t.gitBinding ? { gitBinding: structuredClone(t.gitBinding) } : {}),
       ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}),
+      ...(prev?.roundBaseSha ? { roundBaseSha: prev.roundBaseSha } : {}),
+      ...(prev?.roundCommit ? { roundCommit: prev.roundCommit } : {}),
+      ...(prev?.roundRef ? { roundRef: prev.roundRef } : {}),
       ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
       denied: structuredClone(t.denied ?? []),
       deniedAcks: [...(t.deniedAcks ?? [])],
@@ -675,6 +782,8 @@ export class TaskRunner extends EventEmitter {
       checks: structuredClone(t.currentChecks ?? []),
       ...(t.card ? { card: structuredClone(t.card) } : {}),
       aiMessages: this.latestRunAiMessages(t.timeline),
+      ...(prev?.importedReportSummary ? { importedReportSummary: prev.importedReportSummary } : {}),
+      ...(prev?.realityDiscrepancies ? { realityDiscrepancies: prev.realityDiscrepancies } : {}),
     };
     this.upsertRound(t, snap);
   }
@@ -1418,6 +1527,7 @@ export class TaskRunner extends EventEmitter {
       if (this.runs.has(id)) throw new Error('请先停止正在执行的任务。');
       if (!canFire(t.state, 'discard')) return { ok: false, reason: 'not_allowed', detail: '这个任务现在不能放弃。' };
       delete t.uncheckedConfirm;
+      t.discardedAt = new Date().toISOString();
       this.beginOp(t, 'discard');
       await this.persist(t);
       const cleanup: G.CleanupResult = t.worktree ? await G.removeWorktree(this.opts.repo, t.worktree) : { ok: true, steps: [] };

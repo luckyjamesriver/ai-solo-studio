@@ -215,6 +215,9 @@ async function createController(dir: string): Promise<TaskController> {
         if (err) throw new Error(err);
       }
     },
+    revealPath: async (targetPath: string) => {
+      shell.showItemInFolder(targetPath);
+    },
     onSaveProgress: (ev) => {
       const entry = openProjects.findByPath(dir);
       if (win && !win.isDestroyed()) {
@@ -353,6 +356,8 @@ ipcMain.handle('tasks:savePlan', (_e, projectId: unknown, id: unknown, plan: unk
 ipcMain.handle('tasks:addExtraDir', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).addExtraDir(id));
 ipcMain.handle('tasks:removeExtraDir', (_e, projectId: unknown, id: unknown, key: unknown) => controllerFor(projectId).removeExtraDir(id, key));
 ipcMain.handle('tasks:start', (_e, projectId: unknown, id: unknown, ack: unknown) => controllerFor(projectId).start(id, ack));
+ipcMain.handle('tasks:exportExternal', (_e, projectId: unknown, id: unknown, ack: unknown) => controllerFor(projectId).exportExternalTask(id, ack));
+ipcMain.handle('tasks:revealHandoff', (_e, projectId: unknown, id: unknown, target: unknown) => controllerFor(projectId).revealHandoff(id, target));
 ipcMain.handle('tasks:stop', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).stop(id));
 ipcMain.handle('tasks:continue', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).continueTask(id));
 ipcMain.handle('tasks:rework', (_e, projectId: unknown, id: unknown, feedback: unknown) => controllerFor(projectId).reworkTask(id, feedback));

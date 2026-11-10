@@ -344,6 +344,16 @@ export function classifyTaskState(
         impact: '正在独立副本中施工，你的项目当前保持原样',
         actionLabel: '查看',
       });
+    case 'waiting_external':
+      return mk('building', {
+        runStatus: '外部执行中',
+        outcome: null,
+        workbenchGroup: 'running',
+        isRunning: false,
+        needsAttention: false,
+        impact: '已导出给外部工具执行，等待完成后导入报告，你的项目当前保持原样',
+        actionLabel: '查看任务',
+      });
     case 'exec_succeeded':
       return mk('building', {
         runStatus: opts.isLiveRunning ? '运行中' : '待生成验收',

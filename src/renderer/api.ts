@@ -35,6 +35,7 @@ export interface DisclosureState {
 
 export type {
   TaskView,
+  HandoffView,
   ResultView,
   FactView,
   ExtraDirView,
@@ -137,6 +138,8 @@ interface StudioApi {
   addExtraDir(projectId: string, id: string): Promise<AddDirResult>;
   removeExtraDir(projectId: string, id: string, key: string): Promise<TaskView>;
   startTask(projectId: string, id: string, ack: boolean): Promise<TaskView>;
+  exportExternalTask(projectId: string, id: string, ack: boolean): Promise<TaskView>;
+  revealHandoff(projectId: string, id: string, target: string): Promise<void>;
   stopTask(projectId: string, id: string): Promise<TaskView>;
   continueTask(projectId: string, id: string): Promise<TaskView>;
   reworkTask(projectId: string, id: string, feedback: string): Promise<TaskView>;

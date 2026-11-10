@@ -80,6 +80,18 @@ export interface ResultView {
   /** 意外的权限请求（已自动拒绝）的次数 */
   unexpectedRequests: number;
 }
+export interface HandoffView {
+  exportedAt: string;
+  exportedAtText: string;
+  worktreePath: string;
+  branch: string;
+  taskFileRelPath: string;
+  planPath: string;
+  singleThinker: boolean;
+  taskContent: string;
+  round: number;
+}
+
 export interface TaskView {
   id: string;
   request: string;
@@ -121,6 +133,8 @@ export interface TaskView {
   executorText: string;
   /** 当前施工/验收轮次（从 1 开始） */
   round: number;
+  /** 外部执行交接信息（导出给外部工具后存在） */
+  handoff: HandoffView | null;
   /** 保存记录的检查结论（已保存或曾保存任务显示“检查通过”或“未检查”，不含命令） */
   saveCheckText: '检查通过' | '未检查' | null;
   /** 由单思考者讨论生成、未经过独立评审的计划 */
@@ -137,6 +151,7 @@ export const STATE_TEXT: Record<TaskState, string> = {
   planned: '计划待批准',
   approved: '已批准，准备开工',
   running: '施工中',
+  waiting_external: '外部执行中（等待导入报告）',
   exec_succeeded: 'AI 已结束',
   exec_failed: 'AI 没有顺利结束',
   stopped: '已停止',
@@ -339,9 +354,16 @@ function buildStoppedInfo(task: Task, opts: { running: boolean; worktreeChanges?
   };
 }
 
+function formatShortTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function buildTaskView(
   task: Task,
-  opts: { scripts: ('build' | 'test')[]; running: boolean; worktreeChanges?: FileChange[]; discussion?: DiscussionClassifyHint },
+  opts: { scripts: ('build' | 'test')[]; running: boolean; worktreeChanges?: FileChange[]; discussion?: DiscussionClassifyHint; handoffContent?: string },
 ): TaskView {
   const caps = task.plan?.capabilities;
   const aiMessages = task.timeline.filter((e) => e.kind === 'message' && !isHost(e)).map((e) => e.text);
@@ -399,11 +421,31 @@ export function buildTaskView(
   }
 
   const extraDirs = (caps?.extraWritableDirs ?? []).map((p) => ({ key: extraDirKey(p), path: p }));
-  const executorName = task.executorName ?? (task.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex');
+  const executorName =
+    task.executionKind === 'external' || task.executorId === 'external'
+      ? '外部工具'
+      : (task.executorName ?? (task.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex'));
   const modelFromTimeline = task.timeline.find((e) => e.kind === 'isolation' && e.text.includes('模型='))
     ?.text.match(/模型=([^，；\s]+)/)?.[1];
-  const model = task.model ?? (modelFromTimeline && modelFromTimeline !== '未知' ? modelFromTimeline : undefined);
+  const model =
+    task.executionKind === 'external' || task.executorId === 'external'
+      ? undefined
+      : (task.model ?? (modelFromTimeline && modelFromTimeline !== '未知' ? modelFromTimeline : undefined));
   const executorText = model ? `${executorName} · ${model}` : executorName;
+
+  const handoff: HandoffView | null = task.handoff
+    ? {
+        exportedAt: task.handoff.exportedAt,
+        exportedAtText: formatShortTime(task.handoff.exportedAt),
+        worktreePath: task.handoff.worktreePath,
+        branch: task.handoff.branch,
+        taskFileRelPath: task.handoff.taskFileRelPath,
+        planPath: task.handoff.planPath,
+        singleThinker: task.handoff.singleThinker,
+        taskContent: opts.handoffContent ?? '',
+        round: task.handoff.round,
+      }
+    : null;
 
   return {
     id: task.id,
@@ -432,6 +474,7 @@ export function buildTaskView(
     model,
     executorText,
     round: task.currentRound ?? (task.rounds?.length ? Math.max(...task.rounds.map((r) => r.round)) : 1),
+    handoff,
     saveCheckText: task.saveRecord ? (task.saveRecord.checked === true ? '检查通过' : '未检查') : null,
     planUnreviewed: !!task.planUnreviewed,
     layer: classifyTaskState(task, { isLiveRunning: opts.running, ...(opts.discussion ? { discussion: opts.discussion } : {}) }),

@@ -17,6 +17,7 @@ export type TaskState =
   | 'planned'
   | 'approved'
   | 'running'
+  | 'waiting_external'
   | 'exec_succeeded'
   | 'exec_failed'
   | 'stopped'
@@ -36,6 +37,7 @@ export type TaskEvent =
   | 'plan'
   | 'approve'
   | 'start'
+  | 'export_external'
   | 'exec_exit_ok'
   | 'exec_exit_fail'
   | 'stop'
@@ -55,9 +57,10 @@ export type TaskEvent =
 const T: Record<TaskState, Partial<Record<TaskEvent, TaskState>>> = {
   draft: { ask_clarification: 'clarifying', plan: 'planned', discard: 'discarded', discard_cleanup_pending: 'discard_cleanup_pending' },
   clarifying: { answer: 'draft', plan: 'planned', discard: 'discarded', discard_cleanup_pending: 'discard_cleanup_pending' },
-  planned: { approve: 'approved', edit_plan: 'planned', ask_clarification: 'clarifying', discard: 'discarded', discard_cleanup_pending: 'discard_cleanup_pending' },
-  approved: { start: 'running', edit_plan: 'planned', discard: 'discarded', discard_cleanup_pending: 'discard_cleanup_pending' },
+  planned: { approve: 'approved', edit_plan: 'planned', ask_clarification: 'clarifying', export_external: 'waiting_external', discard: 'discarded', discard_cleanup_pending: 'discard_cleanup_pending' },
+  approved: { start: 'running', export_external: 'waiting_external', edit_plan: 'planned', discard: 'discarded', discard_cleanup_pending: 'discard_cleanup_pending' },
   running: { exec_exit_ok: 'exec_succeeded', exec_exit_fail: 'exec_failed', stop: 'stopped', timeout: 'timed_out' },
+  waiting_external: { review: 'reviewing', discard: 'discarded', discard_cleanup_pending: 'discard_cleanup_pending' },
   exec_succeeded: { review: 'reviewing' },
   exec_failed: { review: 'reviewing' },
   stopped: { review: 'reviewing' },

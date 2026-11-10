@@ -285,6 +285,7 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
       'planned',
       'approved',
       'running',
+      'waiting_external',
       'exec_succeeded',
       'exec_failed',
       'stopped',
@@ -299,7 +300,7 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
       'undo_failed',
     ];
 
-    expect(allStates).toHaveLength(17);
+    expect(allStates).toHaveLength(18);
 
     for (const s of allStates) {
       const cls = classifyTaskState(baseTask(s));
@@ -316,6 +317,7 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
     expect(classifyTaskState(baseTask('approved'), { isLiveRunning: false })).toMatchObject({ stage: 'discussing', stageLabel: '讨论', boardColumn: 'discussing', runStatus: '待开工确认', isRunning: false, workbenchGroup: 'needs_decision' });
     expect(classifyTaskState(baseTask('approved'), { isLiveRunning: true })).toMatchObject({ stage: 'building', stageLabel: '施工', boardColumn: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
     expect(classifyTaskState(baseTask('running'))).toMatchObject({ stage: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
+    expect(classifyTaskState(baseTask('waiting_external'))).toMatchObject({ stage: 'building', boardColumn: 'building', runStatus: '外部执行中', isRunning: false, needsAttention: false, workbenchGroup: 'running' });
     expect(classifyTaskState(baseTask('exec_succeeded'), { isLiveRunning: true })).toMatchObject({ stage: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
     expect(classifyTaskState(baseTask('exec_succeeded'), { isLiveRunning: false })).toMatchObject({
       stage: 'building',

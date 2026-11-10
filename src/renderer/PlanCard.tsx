@@ -22,6 +22,30 @@ function TrustPanel({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: 
   );
 }
 
+/** 外部执行交接前确认面板（UI v2.1 第 5 节；确认三条规则后才导出）。 */
+function ExternalConfirmPanel({ onConfirm, onCancel, busy }: { onConfirm: () => void; onCancel: () => void; busy: boolean }) {
+  return (
+    <div className="overlay">
+      <div role="dialog" aria-modal="true" aria-labelledby="ext-handoff-h" className="dialog" data-testid="external-confirm-panel">
+        <h2 id="ext-handoff-h">{COPY.externalConfirmTitle}</h2>
+        <ul style={{ margin: '10px 0 0', paddingLeft: '18px', lineHeight: 1.6 }}>
+          {COPY.externalConfirmRules.map((rule) => (
+            <li key={rule}>{rule}</li>
+          ))}
+        </ul>
+        <div className="row" style={{ marginTop: '14px' }}>
+          <button type="button" data-testid="external-confirm-export" disabled={busy} onClick={onConfirm}>
+            {COPY.externalConfirmSubmit}
+          </button>
+          <button type="button" className="secondary" data-testid="external-confirm-cancel" disabled={busy} onClick={onCancel}>
+            {COPY.externalConfirmCancel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** 施工计划确认页（#04-plan，UI v2.1 第 5 节）。每屏仅保留一个实心主按钮：「批准并开工」。 */
 export function PlanCard({ projectId, task, preferredMode, onChanged }: { projectId: string; task: TaskView; preferredMode: 'standard' | 'full_trust'; onChanged: (t: TaskView) => void }) {
   const hasPlan = task.state !== 'draft';
@@ -31,6 +55,8 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
   const [mode, setMode] = useState<'standard' | 'full_trust'>(hasPlan ? task.mode : preferredMode);
   const [network, setNetwork] = useState(task.network);
   const [showTrust, setShowTrust] = useState(false);
+  const [showExternalConfirm, setShowExternalConfirm] = useState(false);
+  const [externalBusy, setExternalBusy] = useState(false);
   const [dirError, setDirError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savingCriteria, setSavingCriteria] = useState(false);
@@ -97,6 +123,31 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
       if (mode === 'full_trust') setShowTrust(true); // 完全信任：每个任务都要重新确认，偏好不能跳过
       else onChanged(await studio().startTask(projectId, task.id, false));
     } catch (e) { fail(e); }
+  };
+
+  const clickExternal = async () => {
+    setError(null);
+    try {
+      await savePromiseRef.current?.catch(() => undefined);
+      const saved = await studio().savePlan(projectId, task.id, form());
+      onChanged(saved);
+      setShowExternalConfirm(true);
+    } catch (e) { fail(e); }
+  };
+
+  const confirmExternal = async () => {
+    if (externalBusy) return;
+    setExternalBusy(true);
+    setError(null);
+    try {
+      const updated = await studio().exportExternalTask(projectId, task.id, true);
+      setShowExternalConfirm(false);
+      onChanged(updated);
+    } catch (e) {
+      fail(e);
+    } finally {
+      setExternalBusy(false);
+    }
   };
   const confirmTrust = async () => {
     setShowTrust(false);
@@ -340,10 +391,20 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
           <button type="button" data-testid="start-button" onClick={clickStart} style={{ width: '100%' }}>
             {COPY.startButton}
           </button>
+          <button type="button" className="secondary" data-testid="external-handoff-button" onClick={clickExternal} style={{ width: '100%' }}>
+            {COPY.externalHandoffButton}
+          </button>
         </aside>
       </div>
 
       {showTrust && <TrustPanel onConfirm={confirmTrust} onCancel={cancelTrust} />}
+      {showExternalConfirm && (
+        <ExternalConfirmPanel
+          busy={externalBusy}
+          onConfirm={confirmExternal}
+          onCancel={() => !externalBusy && setShowExternalConfirm(false)}
+        />
+      )}
     </div>
   );
 }
