@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckProofPage } from './CheckProofPage.js';
 import { DiffPreview } from './DiffPreview.js';
 import { ReworkPage } from './ReworkPage.js';
+import { SaveConflictPage } from './SaveConflictPage.js';
 import { SaveResultPanel } from './SaveResultPanel.js';
 import {
   studio,
@@ -328,6 +329,20 @@ export function Acceptance({
   }
 
   const conflict = v.state === 'save_failed_unmerged';
+  if (conflict && v.conflict && !v.readOnly && !viewingHistorical) {
+    return (
+      <SaveConflictPage
+        projectId={projectId}
+        taskId={v.taskId}
+        conflict={v.conflict}
+        onStartedRedo={() => onChanged()}
+        onDefer={() => {
+          if (onBackToProject) onBackToProject();
+          else setDeferred(true);
+        }}
+      />
+    );
+  }
   const disabled = (enabled: boolean) => !enabled || pending;
   const statusKind = displayStatus.kind;
 

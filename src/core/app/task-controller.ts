@@ -4,7 +4,7 @@ import { StaleRunError, StateConflictError, WriterLockedError, type OpenOptions 
 import * as G from '../git/git.js';
 import { GitError } from '../git/git.js';
 import { MESSAGES } from '../task/messages.js';
-import { buildPreviews, type ChangePreview } from '../acceptance/snippets.js';
+import { buildPreviews, buildSingleFilePreview, PREVIEW_LIMITS, type ChangePreview } from '../acceptance/snippets.js';
 import {
   acceptanceVersion,
   buildSaveOutcomeFromFail,
@@ -13,6 +13,7 @@ import {
   okMessage,
   toUserView,
   VIEW_TEXT,
+  type SaveConflictDiffView,
   type SaveOutcomeView,
   type UserAcceptanceView,
   type ViewContext,
@@ -427,6 +428,28 @@ export class TaskController {
   }
 
   /** 用户验收视图：计算实时判定（保存前提、撤销条件、改动片段），再交给 view.ts 生成 */
+  private async buildConflictDiffs(t: Task): Promise<SaveConflictDiffView[]> {
+    const conflict = t.conflict;
+    const baseSha = t.worktree?.baseSha;
+    const taskTree = t.acceptedTree;
+    if (!conflict || !baseSha || !taskTree || !conflict.files.length) return [];
+    const mainTitle = conflict.otherGoal ? `主项目这边的改动（来自「${conflict.otherGoal}」）` : '主项目这边的改动（项目里后来的改动）';
+    const taskTitle = '当前任务这边的改动';
+    const out: SaveConflictDiffView[] = [];
+    for (const filePath of conflict.files.slice(0, PREVIEW_LIMITS.maxFiles)) {
+      const [leftPreview, rightPreview] = await Promise.all([
+        buildSingleFilePreview(this.o.repo, baseSha, conflict.againstHead, filePath),
+        buildSingleFilePreview(this.o.repo, baseSha, taskTree, filePath),
+      ]);
+      out.push({
+        path: filePath,
+        left: { title: mainTitle, preview: leftPreview },
+        right: { title: taskTitle, preview: rightPreview },
+      });
+    }
+    return out;
+  }
+
   private async acceptanceView(t: Task): Promise<UserAcceptanceView> {
     const runner = this.r();
     const busy = this.active.has(t.id) || this.ops.has(t.id) || runner.isBusy(t.id);
@@ -468,6 +491,9 @@ export class TaskController {
             }
           }
           if (roundPreviews.size > 0) ctx.roundPreviews = roundPreviews;
+        }
+        if (t.state === 'save_failed_unmerged' && t.conflict && t.worktree?.baseSha && t.acceptedTree) {
+          ctx.conflictDiffs = await this.buildConflictDiffs(t);
         }
       } catch (e) {
         await this.diagnose(t.id, '计算验收视图', e);
@@ -692,6 +718,32 @@ export class TaskController {
     return this.act(tid, async (t) => {
       const r = await this.r().retryCleanup(t.id);
       return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
+    });
+  }
+
+  /**
+   * 阶段 6（#11-save-conflict）：「让 AI 在最新项目上重做这部分」。
+   * 先在临时 worktree 中验证将非冲突改动合并到主项目最新 HEAD；若发生冲突则中止更新并返回如实提示，不破坏任务副本；
+   * 若成功更新，则写入冲突反馈并按阶段 4 路径进入新一轮施工。
+   */
+  async reworkConflictTask(id: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    await this.load(tid);
+    return this.act(tid, async (t) => {
+      if (t.state !== 'save_failed_unmerged') {
+        return { ok: false, message: '这个任务当前没有可重做的保存冲突。' };
+      }
+      const r = await this.r().prepareConflictRedo(t.id);
+      if (!r.ok) {
+        return { ok: false, message: r.message, ...(r.files?.length ? { files: r.files } : {}) };
+      }
+      this.startErrors.delete(t.id);
+      this.active.add(t.id);
+      void this.r()
+        .start(t.id, r.prompt)
+        .catch((e: Error) => this.startErrors.set(t.id, this.persistenceMessage(e) ?? e.message))
+        .finally(() => this.active.delete(t.id));
+      return { ok: true, message: '已基于最新项目重新开始修改。' };
     });
   }
 

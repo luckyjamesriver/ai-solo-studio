@@ -713,3 +713,24 @@ blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--col
 .discuss-chat-msg.from-user {
   background: var(--color-surface-subtle);
 }
+
+/* 阶段 6：保存冲突双侧片段对照（全部引用 tokens.css 变量） */
+.subtle-card {
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border);
+}
+.conflict-diff-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.conflict-side {
+  min-width: 0;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-row-divider);
+  background: var(--color-bg);
+}
+@media (max-width: 860px) {
+  .conflict-diff-cols { grid-template-columns: 1fr; }
+}

@@ -59,6 +59,9 @@ export type {
   SaveOutcomeButton,
   SaveOutcomeButtonAction,
   SaveFailedCheckSummary,
+  SaveConflictView,
+  SaveConflictDiffView,
+  SaveConflictSideView,
   UncheckedConfirmView,
   AcceptanceStatusView,
   AcceptanceStatusKind,
@@ -153,6 +156,7 @@ interface StudioApi {
   discardTask(projectId: string, id: string): Promise<AcceptanceActionResult>;
   undoSave(projectId: string, id: string): Promise<AcceptanceActionResult>;
   retryCleanup(projectId: string, id: string): Promise<AcceptanceActionResult>;
+  reworkConflictTask(projectId: string, id: string): Promise<AcceptanceActionResult>;
   revealProject(): Promise<void>;
   onSaveProgress(listener: (ev: SaveProgressEvent) => void): () => void;
   detectEnvironment(): Promise<HealthReport>;

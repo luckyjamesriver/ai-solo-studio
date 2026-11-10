@@ -202,6 +202,15 @@ export interface TaskRound {
   aiMessages: string[];
 }
 
+export interface ConflictInfo {
+  files: string[];
+  againstHead: string;
+  otherTaskId?: string;
+  otherGoal?: string;
+  otherSavedAt?: string;
+  at: string;
+}
+
 export interface Task {
   id: string;
   /** 记录的修订号：由存储层在读取和提交后填入，不随记录内容保存；提交时用来做 CAS（ADR 0005） */
@@ -279,6 +288,8 @@ export interface Task {
   lastSave?: LastSaveSnapshot;
   /** 保存前试检查中失败的检查原始凭证（供从检查失败页跳转到 #08-evidence 查看） */
   trialChecks?: StoredCheckProof[];
+  /** 保存冲突记录（供 #11-save-conflict 展示与在最新项目上重做） */
+  conflict?: ConflictInfo;
   /** 启动核对或操作后无法判定的状态：需要人工查看（不自动动手） */
   manualReview?: { reason: string; at: string; files?: string[] };
   /** 最近一次执行的执行体进程记录（启动核对时据此判断它是否仍在运行） */

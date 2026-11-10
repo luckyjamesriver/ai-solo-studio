@@ -13,10 +13,13 @@ import {
   type UserAcceptanceView,
 } from '../src/core/acceptance/view.js';
 import { FakeExecutor, type FakeStep } from '../src/core/executor/adapters/fake.js';
+import type { Executor } from '../src/core/executor/types.js';
 import { RecordStore } from '../src/core/persistence/index.js';
 import { TaskRunner } from '../src/core/task/runner.js';
 import type { SaveProgressEvent } from '../src/core/task/model.js';
 import { SaveResultPanel } from '../src/renderer/SaveResultPanel.js';
+import { SaveConflictPage } from '../src/renderer/SaveConflictPage.js';
+import * as G from '../src/core/git/git.js';
 import { makeRepo, tmpDir, testSandboxRunner } from './helpers.js';
 
 const cleanDirs: string[] = [];
@@ -300,6 +303,196 @@ describe('阶段 6 提交①：保存过程实时进度与 8 类结果视图', (
     // 任务 B 直接调用 saveTask 也会返回相同结果与去处理目标
     const res = await ctl.saveTask(b.id, vb0.version);
     expect(res.ok).toBe(false);
+  });
+});
+
+describe('阶段 6 提交②：保存冲突专页与基于最新项目重做（#11-save-conflict）', () => {
+  it('两个任务修改同一文件导致冲突：定位关联已保存任务、展示双边片段对照、重做更新副本后第 2 轮保存成功', async () => {
+    const repo = await makeRepo({
+      'package.json': JSON.stringify({ name: 's6-c', scripts: { build: 'node -e "process.exit(0)"' } }),
+      'shared.txt': 'line1\nline2\n',
+      'extra.txt': 'init\n',
+    });
+    cleanDirs.push(repo);
+    const data = await makeTempDir('data-s6-conflict-');
+
+    let turn = 0;
+    const baseEx = new FakeExecutor([]);
+    const exWrapper: Executor = {
+      id: baseEx.id,
+      displayName: baseEx.displayName,
+      capabilities: baseEx.capabilities,
+      sandboxRunner: testSandboxRunner(),
+      detect: () => baseEx.detect(),
+      start: (opts) => {
+        turn++;
+        const steps: FakeStep[] =
+          turn === 1
+            ? [
+                { do: 'write', path: 'shared.txt', content: 'from-task-A\nline2\n' },
+                { do: 'exit', code: 0 },
+              ]
+            : turn === 2
+              ? [
+                  { do: 'write', path: 'shared.txt', content: 'from-task-B\nline2\n' },
+                  { do: 'write', path: 'extra.txt', content: 'from-task-B-extra\n' },
+                  { do: 'exit', code: 0 },
+                ]
+              : [
+                  { do: 'write', path: 'shared.txt', content: 'from-task-A + from-task-B\nline2\n' },
+                  { do: 'exit', code: 0 },
+                ];
+        const inner = new FakeExecutor(steps);
+        (inner as unknown as { sandboxRunner: unknown }).sandboxRunner = testSandboxRunner();
+        return inner.start(opts);
+      },
+    };
+    const ctl = new TaskController({
+      repo,
+      makeExecutor: () => exWrapper,
+      pickDirectory: async () => null,
+      prefs: new TaskPrefs(data),
+    });
+
+    // 任务 A、B 均在相同初始基线上开工
+    const a = await ctl.create('改进顶部标题');
+    await ctl.savePlan(a.id, { goal: '改进顶部标题', criteria: [], mode: 'standard', network: false });
+    const b = await ctl.create('重构页眉样式');
+    await ctl.savePlan(b.id, { goal: '重构页眉样式', criteria: [], mode: 'standard', network: false });
+
+    await ctl.start(a.id, false);
+    await until(async () => {
+      const v = await ctl.getAcceptanceView(a.id);
+      return v.state === 'reviewing' && !v.busy ? v : false;
+    });
+    await ctl.start(b.id, false);
+    await until(async () => {
+      const v = await ctl.getAcceptanceView(b.id);
+      return v.state === 'reviewing' && !v.busy ? v : false;
+    });
+
+    // 任务 A 先保存成功
+    const vaReady = await confirmAll(ctl, a.id);
+    const saveA = await ctl.saveTask(a.id, vaReady.version);
+    expect(saveA.ok).toBe(true);
+
+    // 任务 B 再保存：触发 shared.txt 冲突
+    const vbReady = await confirmAll(ctl, b.id);
+    const saveB = await ctl.saveTask(b.id, vbReady.version);
+    expect(saveB.ok).toBe(false);
+    expect(saveB.view.state).toBe('save_failed_unmerged');
+    expect(saveB.view.conflict).toBeTruthy();
+
+    const cv = saveB.view.conflict!;
+    expect(cv.headline).toBe('没有保存');
+    expect(cv.files).toEqual(['shared.txt']);
+    expect(cv.otherLabel).toBe('改进顶部标题');
+    expect(cv.otherTaskId).toBe(a.id);
+    expect(cv.redoLabel).toBe('让 AI 在最新项目上重做这部分');
+    expect(cv.deferLabel).toBe('先不处理');
+    expect(cv.canRedo).toBe(true);
+    expect(cv.diffs).toHaveLength(1);
+    expect(cv.diffs[0]!.path).toBe('shared.txt');
+    expect(cv.diffs[0]!.left.title).toContain('改进顶部标题');
+    expect(cv.diffs[0]!.right.title).toContain('当前任务');
+    expect(JSON.stringify(cv.diffs[0]!.left.preview)).toContain('from-task-A');
+    expect(JSON.stringify(cv.diffs[0]!.right.preview)).toContain('from-task-B');
+    expect(JSON.stringify(cv)).not.toMatch(/以这个任务为准|覆盖保存|git merge/);
+
+    // B4-2 原有 actions 键集合保持完全不变
+    expect(Object.keys(saveB.view.actions).sort()).toEqual(['discard', 'recheck', 'retryCleanup', 'save', 'undo']);
+
+    // SaveConflictPage 渲染结果仅包含两个操作按钮，不含覆盖保存
+    const html = renderToStaticMarkup(
+      createElement(SaveConflictPage, {
+        projectId: 'proj-1',
+        taskId: b.id,
+        conflict: cv,
+        onStartedRedo: () => undefined,
+        onDefer: () => undefined,
+      }),
+    );
+    expect(html).toContain('让 AI 在最新项目上重做这部分');
+    expect(html).toContain('先不处理');
+    expect(html).not.toMatch(/以这个任务为准|覆盖保存|仍然保存/);
+
+    // 点击「让 AI 在最新项目上重做这部分」→ 干净更新副本到最新主项目并跑完第 2 轮
+    const redoRes = await ctl.reworkConflictTask(b.id);
+    expect(redoRes.ok).toBe(true);
+    const vB2 = await until(async () => {
+      const v = await ctl.getAcceptanceView(b.id);
+      return v.state === 'reviewing' && !v.busy && v.currentRound === 2 ? v : false;
+    });
+    const bTask = (await new TaskRunner({ repo, executor: new FakeExecutor([]) }).store.get(b.id))!;
+    expect(bTask.currentRound).toBe(2);
+    expect(bTask.rounds?.some((r) => r.round === 2 && r.feedback?.includes('改进顶部标题'))).toBe(true);
+    expect(vB2.currentRound).toBe(2);
+
+    // 确认第 2 轮并保存：非冲突改动 extra.txt 与最新合入结果一并保存成功，无冲突标记
+    const vB2Ready = await confirmAll(ctl, b.id);
+    const saveB2 = await ctl.saveTask(b.id, vB2Ready.version);
+    expect(saveB2.ok).toBe(true);
+    expect(await fs.readFile(path.join(repo, 'shared.txt'), 'utf8')).toBe('from-task-A + from-task-B\nline2\n');
+    expect(await fs.readFile(path.join(repo, 'extra.txt'), 'utf8')).toBe('from-task-B-extra\n');
+  });
+
+  it('找不到已保存任务记录时冲突来源显示「项目里后来的改动」；更新副本本身遇新冲突时立即中止、副本保持原样且不留冲突标记', async () => {
+    const repo = await makeRepo({ 'shared.txt': 'init-s\n', 'other.txt': 'init-o\n' });
+    cleanDirs.push(repo);
+    const data = await makeTempDir('data-s6-abort-');
+
+    const ctl = new TaskController({
+      repo,
+      makeExecutor: () =>
+        new FakeExecutor([
+          { do: 'write', path: 'shared.txt', content: 'task-shared\n' },
+          { do: 'write', path: 'other.txt', content: 'task-other\n' },
+          { do: 'exit', code: 0 },
+        ]),
+      pickDirectory: async () => null,
+      prefs: new TaskPrefs(data),
+    });
+
+    const t = await ctl.create('改两个文件');
+    await ctl.savePlan(t.id, { goal: '改两个文件', criteria: [], mode: 'standard', network: false });
+    await ctl.start(t.id, false);
+    await until(async () => {
+      const v = await ctl.getAcceptanceView(t.id);
+      return v.state === 'reviewing' && !v.busy ? v : false;
+    });
+
+    // 主项目外部提交改 shared.txt → 保存遇到冲突，且查不到 studio 任务保存记录
+    await fs.writeFile(path.join(repo, 'shared.txt'), 'manual-shared\n');
+    await G_commit(repo, 'manual commit outside studio', 'shared.txt');
+
+    const ready = await confirmAll(ctl, t.id);
+    const failedSave = await ctl.saveTask(t.id, ready.version);
+    expect(failedSave.ok).toBe(false);
+    expect(failedSave.view.conflict?.otherLabel).toBe('项目里后来的改动');
+
+    const wtPath = (await new TaskRunner({ repo, executor: new FakeExecutor([]) }).store.get(t.id))!.worktree!.path;
+    const baseBefore = (await new TaskRunner({ repo, executor: new FakeExecutor([]) }).store.get(t.id))!.worktree!.baseSha;
+    const sharedBefore = await fs.readFile(path.join(wtPath, 'shared.txt'), 'utf8');
+    const otherBefore = await fs.readFile(path.join(wtPath, 'other.txt'), 'utf8');
+
+    // 在点击重做前，主项目再次推进并对任务改动过的文件做了不兼容更改
+    await fs.writeFile(path.join(repo, 'other.txt'), 'manual-other-conflict\n');
+    await G_commit(repo, 'manual follow-up change', 'other.txt');
+
+    const redoAbort = await ctl.reworkConflictTask(t.id);
+    expect(redoAbort.ok).toBe(false);
+    expect(redoAbort.view.state).toBe('save_failed_unmerged');
+    expect(redoAbort.view.conflict).toBeTruthy();
+
+    // 副本必须完全保持原样，无任何冲突标记、无状态跃迁
+    const afterTask = (await new TaskRunner({ repo, executor: new FakeExecutor([]) }).store.get(t.id))!;
+    expect(afterTask.worktree!.baseSha).toBe(baseBefore);
+    expect(await fs.readFile(path.join(wtPath, 'shared.txt'), 'utf8')).toBe(sharedBefore);
+    expect(await fs.readFile(path.join(wtPath, 'other.txt'), 'utf8')).toBe(otherBefore);
+    expect(sharedBefore).not.toContain('<<<<<<<');
+    expect(otherBefore).not.toContain('<<<<<<<');
+    expect(await G.mergeInProgress(wtPath)).toBe(false);
+    expect(await G.dirtyFiles(repo)).toEqual([]);
   });
 });
 

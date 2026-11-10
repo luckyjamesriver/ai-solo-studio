@@ -382,6 +382,7 @@ ipcMain.handle('acceptance:saveUnchecked', (_e, projectId: unknown, id: unknown,
 ipcMain.handle('acceptance:discard', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).discardTask(id));
 ipcMain.handle('acceptance:undo', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).undoSave(id));
 ipcMain.handle('acceptance:retryCleanup', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).retryCleanup(id));
+ipcMain.handle('acceptance:reworkConflict', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).reworkConflictTask(id));
 // 项目状态异常时的只读出口：在访达中显示当前项目。没有参数——位置永远是用户选定的项目，渲染进程不能指定。
 ipcMain.handle('project:reveal', () => {
   shell.showItemInFolder(requireProject());

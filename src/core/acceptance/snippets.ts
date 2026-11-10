@@ -126,6 +126,31 @@ export function makeHunks(before: string, after: string): { hunks: Hunk[]; omitt
 
 const unavailable = (): ChangePreview => ({ kind: 'unavailable', note: PREVIEW_TEXT.unavailable });
 
+/** 对任意两个 rev（提交或 tree）之间的单个文件生成轻量片段（供冲突页对比两边改动复用）。 */
+export async function buildSingleFilePreview(repo: string, fromRev: string, toRev: string, filePath: string): Promise<ChangePreview> {
+  const max = PREVIEW_LIMITS.maxBytes;
+  try {
+    const now = await G.readBlob(repo, toRev, filePath, max);
+    if (now.kind === 'missing') {
+      const old = await G.readBlob(repo, fromRev, filePath, max);
+      if (old.kind === 'missing') return unavailable();
+      return { kind: 'deleted', note: PREVIEW_TEXT.deleted };
+    }
+    if (now.kind !== 'ok' || notDisplayable(now.text)) return unavailable();
+    const old = await G.readBlob(repo, fromRev, filePath, max);
+    if (old.kind === 'missing') {
+      const lines = toLines(now.text);
+      const n = PREVIEW_LIMITS.maxNewFileLines;
+      return { kind: 'new', note: PREVIEW_TEXT.newFile, lines: lines.slice(0, n), truncated: lines.length > n };
+    }
+    if (old.kind !== 'ok' || notDisplayable(old.text)) return unavailable();
+    const { hunks, omitted } = makeHunks(old.text, now.text);
+    return { kind: 'text', hunks, omitted, ...(omitted > 0 ? { note: PREVIEW_TEXT.omitted(omitted) } : {}) };
+  } catch {
+    return unavailable();
+  }
+}
+
 /** 为一个任务的改动清单生成片段（只读 Git；任何一步读不到都退回“无法直接显示”）。 */
 export async function buildPreviews(repo: string, task: Pick<Task, 'acceptedTree' | 'worktree' | 'card'>): Promise<Map<string, ChangePreview>> {
   const out = new Map<string, ChangePreview>();

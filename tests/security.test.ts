@@ -279,8 +279,9 @@ describe('安全基线（防回归）', () => {
     // 阶段 4 修订（按前例同步登记 rejectCriterion / reworkTask / editReworkPermissions，参数形态固定且带 projectId，不放宽任何约束）
     // 阶段 5a 修订（按前例同步登记 10 个讨论与流程引擎驱动方法，参数形态固定且带 projectId，无路径参数）
     // 阶段 5b 修订（按前例同步登记项目简介、Claude Key 与 AI 角色设置 IPC 方法，参数形态固定，无路径与明文读取接口）
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'getProjectRoles', 'saveProjectRoles', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'reworkTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
-    expect(entries).toHaveLength(55);
+    // 阶段 6（提交②）：新增 reworkConflictTask(projectId, id)
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'getProjectRoles', 'saveProjectRoles', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'reworkTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'reworkConflictTask', 'revealProject']);
+    expect(entries).toHaveLength(56);
     const SHAPES = ['', 'id: string', 'secret: string', 'chief: string, reviewer: string, model: string', 'projectId: string', 'projectId: string, brief: ProjectBriefInput', 'projectId: string, mode: string, chief: string, reviewer: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string', 'projectId: string, id: string, preset: string', 'projectId: string, id: string, service: string, allow: boolean', 'projectId: string, id: string, edits: RequirementEditInput[]', 'projectId: string, id: string, choice: string, note: string', 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string', 'projectId: string, id: string, decision: string', 'projectId: string, id: string, newRequest: string', 'projectId: string, id: string, target: string, message: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
@@ -509,6 +510,7 @@ describe('安全基线（防回归）', () => {
         discardTask: 'projectId: string, id: string',
         undoSave: 'projectId: string, id: string',
         retryCleanup: 'projectId: string, id: string',
+        reworkConflictTask: 'projectId: string, id: string',
         revealProject: '',
       };
       for (const [name, params] of Object.entries(NEW)) {
@@ -823,8 +825,8 @@ describe('安全基线（防回归）', () => {
     it('每个接收 projectId 的 IPC 处理函数都先校验 projectId 在已打开项目表中', () => {
       const handlerPattern = /ipcMain\.handle\('([^']+)',\s*\(([^)]*)\)\s*=>\s*([^\n]+)\);/g;
       const guarded = [...main.matchAll(handlerPattern)].filter((m) => /\bprojectId\b/.test(m[2]!));
-      // 1 个 projects:close + 1 个 project:status + 2 个 project:Brief + 2 个 project:Roles + 11 个 tasks:* + 10 个 discussion:* + 13 个 acceptance:* = 40 个带 projectId 的处理函数
-      expect(guarded).toHaveLength(40);
+      // 1 个 projects:close + 1 个 project:status + 2 个 project:Brief + 2 个 project:Roles + 11 个 tasks:* + 10 个 discussion:* + 14 个 acceptance:* = 41 个带 projectId 的处理函数
+      expect(guarded).toHaveLength(41);
       const validBody = /^(?:controllerFor\(projectId\)\.\w+\(|projectStatus\(projectId\)|openProjects\.close\(projectId\))/;
       for (const m of guarded) {
         expect(m[3], `handler ${m[1]} 必须首先通过 openProjects 校验 projectId`).toMatch(validBody);
@@ -1130,6 +1132,16 @@ describe('安全基线（防回归）', () => {
       // 渲染层不得写死结果判断逻辑或跳过受限文字检查（仍严格遵守 B4-2 不得出现禁用字面量）
       expect(panel).not.toMatch(/仍然保存|强制保存|全部确认|让 ?AI ?修改/);
       expect(panel).not.toMatch(/\b(?:rawOutput|currentChecks|evidence|command|stderr|stdout)\b/i);
+    });
+
+    it('保存冲突页（#11-save-conflict）不提供覆盖保存，不显示命令原文或碰撞标记', () => {
+      const conflictPage = read('src/renderer/SaveConflictPage.tsx');
+      const viewSrc = stripComments(read('src/core/acceptance/view.ts'));
+      expect(conflictPage).not.toMatch(/以这个任务为准|覆盖保存|仍然保存|强制保存|让 ?AI ?修改/);
+      expect(conflictPage).not.toMatch(/\b(?:rawOutput|currentChecks|evidence|command|stderr|stdout)\b/i);
+      expect(viewSrc).not.toMatch(/以这个任务为准|覆盖保存/);
+      const gitSrc = read('src/core/git/git.ts');
+      expect(gitSrc).toMatch(/prepareWorktreeRedoOnMain[\s\S]*?merge[\s\S]*?--abort/);
     });
   });
 });

@@ -163,6 +163,34 @@ export interface SaveOutcomeView {
   blockingTaskGoal?: string;
 }
 
+export interface SaveConflictSideView {
+  title: string;
+  preview: ChangePreview;
+}
+
+export interface SaveConflictDiffView {
+  path: string;
+  left: SaveConflictSideView;
+  right: SaveConflictSideView;
+}
+
+export interface SaveConflictView {
+  headline: string;
+  summary: string;
+  otherLabel: string;
+  otherTaskId?: string;
+  otherSavedAt?: string;
+  files: string[];
+  projectStateText: string;
+  preservedText: string;
+  diffToggleLabel: string;
+  redoLabel: string;
+  deferLabel: string;
+  canRedo: boolean;
+  redoBlockedReason?: string;
+  diffs: SaveConflictDiffView[];
+}
+
 export interface UserAcceptanceView {
   taskId: string;
   goal: string;
@@ -206,6 +234,8 @@ export interface UserAcceptanceView {
   trialProof: TaskProofView | null;
   /** 最近一次保存尝试的结果视图（#10-save-result：含四步进度与单结果状态与按钮） */
   saveOutcome: SaveOutcomeView | null;
+  /** 保存冲突专用视图（#11-save-conflict） */
+  conflict: SaveConflictView | null;
   /** 当前轮次编号与各轮独立记录（多轮可切换对照） */
   currentRound: number;
   rounds: RoundSnapshotView[];
@@ -376,6 +406,8 @@ export interface ViewContext {
   previewKind?: 'web' | 'finder' | null;
   /** 成果预览按钮文案 */
   previewButtonText?: string;
+  /** 保存冲突位置的两边文件内容片段（只读，不含命令） */
+  conflictDiffs?: SaveConflictDiffView[];
 }
 
 const off = (reason: string, extra: Partial<ActionState> = {}): ActionState => ({ enabled: false, reason, ...extra });
@@ -735,6 +767,32 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
           ? buildSaveOutcomeView(effectiveLastSave)
           : null;
 
+  const conflictFiles = (t.conflict?.files ?? effectiveLastSave?.files ?? [])
+    .map((f) => safeRelPath(f))
+    .filter((f): f is string => !!f);
+  const conflictOtherLabel = t.conflict?.otherGoal ? scrubAiText(t.conflict.otherGoal) : '项目里后来的改动';
+  const conflict: SaveConflictView | null =
+    state === 'save_failed_unmerged'
+      ? {
+          headline: '没有保存',
+          summary: t.conflict?.otherGoal
+            ? `与已保存的任务「${conflictOtherLabel}」改动了同一处位置，无法自动合并。`
+            : '与项目里后来的改动发生在同一处位置，无法自动合并。',
+          otherLabel: conflictOtherLabel,
+          ...(t.conflict?.otherTaskId ? { otherTaskId: t.conflict.otherTaskId } : {}),
+          ...(t.conflict?.otherSavedAt ? { otherSavedAt: t.conflict.otherSavedAt } : {}),
+          files: conflictFiles,
+          projectStateText: '你的项目保持保存前的状态，没有任何修改。',
+          preservedText: '这个任务的成果完整保留在任务副本里，没有丢失。',
+          diffToggleLabel: '查看两边对冲突位置的改动对比',
+          redoLabel: '让 AI 在最新项目上重做这部分',
+          deferLabel: '先不处理',
+          canRedo: !readOnly && !ctx.busy && !hasDrivers && !!t.worktree?.path,
+          ...(lock ? { redoBlockedReason: lock } : hasDrivers ? { redoBlockedReason: MESSAGES.externalDriver } : {}),
+          diffs: ctx.conflictDiffs ?? [],
+        }
+      : null;
+
   const needsOverall = t.criteria.length === 0;
   const criteriaViews = t.criteria.map((c, i) => ({
     id: `c${i}`,
@@ -816,6 +874,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     proof,
     trialProof,
     saveOutcome,
+    conflict,
     currentRound,
     rounds,
     rework: {

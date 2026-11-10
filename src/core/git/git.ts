@@ -619,3 +619,123 @@ export async function hasCustomCommitChecks(dir: string): Promise<boolean> {
   } catch {}
   return false;
 }
+
+/** 当前工作区处于未解决合并冲突（stage 1-3）的文件相对路径列表。 */
+export async function conflictedFiles(dir: string): Promise<string[]> {
+  const out = await git(dir, ['diff', '--name-only', '--diff-filter=U', '-z']).catch(() => '');
+  return [...new Set(out.split('\0').filter(Boolean))].sort();
+}
+
+/** 两个提交 / tree 之间发生变更的文件列表。 */
+export async function changedFilesBetween(repo: string, fromRev: string, toRev: string): Promise<string[]> {
+  const out = await git(repo, ['diff', '--name-only', '-z', fromRev, toRev]).catch(() => '');
+  return [...new Set(out.split('\0').filter(Boolean))];
+}
+
+/** 单个提交（含 --no-ff 合并提交，相对其第一父提交）改动过的文件列表。 */
+export async function changedFilesInCommit(repo: string, sha: string): Promise<string[]> {
+  const out = await git(repo, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '-m', '--first-parent', sha]).catch(() => '');
+  return [...new Set(out.split('\0').filter(Boolean))];
+}
+
+export type WorktreeRedoResult =
+  | { ok: true; mainHead: string }
+  | { ok: false; conflictFiles: string[]; detail: string };
+
+/**
+ * 冲突重做前更新任务副本到最新主项目 HEAD：
+ * 先在独立临时 worktree（位于 .studio/trials/）上验证把非冲突文件改动合并到 mainHead；
+ * 若主项目在冲突后对相关文件又有新改动，或非冲突文件在合并到 mainHead 时发生任何冲突，
+ * 立即中止并清理临时 worktree，绝不改动或污染任务原本的 worktree，不留下任何冲突标记。
+ */
+export async function prepareWorktreeRedoOnMain(
+  repo: string,
+  wt: Worktree,
+  opts: { taskId: string; taskTree: string; mainHead: string; knownConflictFiles: string[]; againstHead: string },
+): Promise<WorktreeRedoResult> {
+  if (await mergeInProgress(wt.path).catch(() => true)) {
+    return { ok: false, conflictFiles: [], detail: '任务副本当前处于未完成的合并状态，已停止更新，原副本保持不变。' };
+  }
+
+  const taskFiles = await changedFilesBetween(repo, wt.baseSha, opts.taskTree);
+  if (opts.mainHead !== opts.againstHead) {
+    const movedFiles = await changedFilesBetween(repo, opts.againstHead, opts.mainHead);
+    const touched = movedFiles.filter((f) => taskFiles.includes(f));
+    if (touched.length > 0) {
+      return {
+        ok: false,
+        conflictFiles: touched,
+        detail: `主项目在冲突后又改动了 ${touched.join('、')}，无法自动将任务副本同步到最新版本；副本已保持原样。`,
+      };
+    }
+  }
+
+  const knownSet = new Set(opts.knownConflictFiles);
+  const nonConflictFiles = taskFiles.filter((f) => !knownSet.has(f));
+  const trialPath = trialWorktreePath(repo, opts.taskId);
+  const studioDir = path.join(repo, '.studio');
+  await makeDir(studioDir);
+  const tmpIdx = path.join(studioDir, `redo-index-${crypto.randomBytes(6).toString('hex')}`);
+
+  let finalTree = '';
+  try {
+    await createTrialWorktree(repo, trialPath, opts.mainHead);
+    if (nonConflictFiles.length > 0) {
+      const idxEnv = { GIT_INDEX_FILE: tmpIdx };
+      await git(repo, ['read-tree', wt.baseSha], { env: idxEnv });
+      for (const file of nonConflictFiles) {
+        const ls = await git(repo, ['ls-tree', '-z', opts.taskTree, '--', file]).catch(() => '');
+        const rec = ls.split('\0').find(Boolean);
+        if (rec) {
+          const tab = rec.indexOf('\t');
+          const header = tab === -1 ? rec : rec.slice(0, tab);
+          const [mode = '', , sha = ''] = header.split(' ');
+          if (mode && sha) {
+            await git(repo, ['update-index', '--add', '--cacheinfo', `${mode},${sha},${file}`], { env: idxEnv });
+          }
+        } else {
+          await git(repo, ['update-index', '--force-remove', '--', file], { env: idxEnv });
+        }
+      }
+      const nonConflictTree = (await git(repo, ['write-tree'], { env: idxEnv })).trim();
+      const nonConflictCommit = await commitTree(repo, nonConflictTree, wt.baseSha, 'studio: preserve non-conflict changes');
+      await ensureIdentity(repo);
+      try {
+        await git(trialPath, ['merge', '--no-commit', '--no-ff', nonConflictCommit]);
+      } catch {
+        const conflicts = await conflictedFiles(trialPath);
+        await git(trialPath, ['merge', '--abort']).catch(() => undefined);
+        const list = conflicts.length ? conflicts : nonConflictFiles;
+        return {
+          ok: false,
+          conflictFiles: list,
+          detail: `同步任务副本到最新主项目时，${list.join('、')} 发生冲突；已中止更新，任务副本保持原样，未写入冲突标记。`,
+        };
+      }
+      const leftover = await conflictedFiles(trialPath);
+      if (leftover.length > 0) {
+        await git(trialPath, ['merge', '--abort']).catch(() => undefined);
+        return {
+          ok: false,
+          conflictFiles: leftover,
+          detail: `同步任务副本到最新主项目时，${leftover.join('、')} 发生冲突；已中止更新，任务副本保持原样，未写入冲突标记。`,
+        };
+      }
+      finalTree = (await git(trialPath, ['write-tree'])).trim();
+    } else {
+      finalTree = await treeOf(repo, opts.mainHead);
+    }
+  } finally {
+    await removeFile(tmpIdx);
+    await removeFile(`${tmpIdx}.lock`);
+    await removeTrialWorktree(repo, trialPath).catch(() => undefined);
+  }
+
+  // 临时副本已验证无任何冲突，现在干净地把任务工作树推进到 mainHead 并还原已保留的非冲突变更
+  await git(wt.path, ['checkout', '-f', '-B', wt.branch, opts.mainHead]);
+  await git(wt.path, ['clean', '-fd']);
+  if (nonConflictFiles.length > 0 && finalTree) {
+    await git(wt.path, ['read-tree', '--reset', '-u', finalTree]);
+  }
+  return { ok: true, mainHead: opts.mainHead };
+}

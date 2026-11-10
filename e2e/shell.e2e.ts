@@ -846,7 +846,7 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     expect(await a.page.getByRole('button', { name: /提交/ }).count()).toBe(0);
   });
 
-  it('冲突：只有“放弃”和“暂不处理”，没有保存与任何让 AI 继续修改的入口；成果仍保留', async () => {
+  it('冲突（#11-save-conflict）：显示没有保存、冲突位置与后来改动，仅提供“重做”和“先不处理”（留在待验收）', async () => {
     const proj = gitProject('conflict-site', { 'index.html': '<h1>old</h1>\n' });
     const a = await toReview(proj, WRITE);
     await confirmStep1(a.page);
@@ -855,16 +855,22 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
     fs.writeFileSync(path.join(proj, 'index.html'), '<h1>other</h1>\n');
     git(proj, 'commit', '-q', '-am', 'other change');
     await a.page.getByTestId('save-button').click();
-    await inState(a.page, 'save_failed_unmerged');
-    expect(await a.page.getByTestId('verdict').innerText()).toContain('AI 的修改与项目当前版本有冲突');
-    expect(await a.page.getByTestId('actions').locator('button').allInnerTexts()).toEqual(['放弃', '暂不处理']);
-    expect(await a.page.getByTestId('result').innerText()).not.toMatch(/让 ?AI|仍然保存|强制保存/);
+    await a.page.getByTestId('save-conflict-page').waitFor();
+    expect(await a.page.getByTestId('verdict').innerText()).toBe('没有保存');
+    expect(await a.page.getByTestId('conflict-files').innerText()).toContain('index.html');
+    expect(await a.page.getByTestId('conflict-other').innerText()).toContain('项目里后来的改动');
+    expect(await a.page.getByTestId('conflict-actions').locator('button').allInnerTexts()).toEqual([
+      '让 AI 在最新项目上重做这部分',
+      '先不处理',
+    ]);
+    expect(await a.page.getByTestId('save-conflict-page').innerText()).not.toMatch(/以这个任务为准|覆盖保存|仍然保存|强制保存/);
     expect(fs.existsSync(taskFiles(proj)[0]!.worktree.path)).toBe(true);
-    await a.page.getByTestId('defer-button').click();
-    expect(await a.page.getByTestId('deferred-note').innerText()).toContain('仍然保留');
-    await a.page.getByTestId('discard-button').click();
-    await a.page.getByTestId('confirm-yes').click();
-    await inState(a.page, 'discarded');
+    await a.page.getByTestId('conflict-diff-toggle').click();
+    await a.page.getByTestId('conflict-diff-body').waitFor();
+    expect(await a.page.getByTestId('conflict-diff-body').innerText()).not.toMatch(/git merge|git diff/i);
+    await a.page.getByTestId('conflict-defer-button').click();
+    await a.page.getByTestId('board').waitFor();
+    expect(await a.page.locator('[data-testid="column-wait_accept"] [data-testid="card"]').first().getAttribute('data-state')).toBe('save_failed_unmerged');
   });
 
   it('清理失败 → “需要处理”并给出“重试清理” → 重试成功', async () => {

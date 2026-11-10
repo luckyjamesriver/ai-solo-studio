@@ -9,6 +9,7 @@ import { RecordStore, StaleRunError, type OpenOptions } from '../persistence/ind
 import { resolveCapabilities, type Capabilities } from '../capabilities/model.js';
 import {
   acceptanceVersion,
+  type ConflictInfo,
   type LastSaveSnapshot,
   type OpLog,
   type Plan,
@@ -712,6 +713,7 @@ export class TaskRunner extends EventEmitter {
     delete t.uncheckedConfirm;
     delete t.lastSave;
     delete t.trialChecks;
+    delete t.conflict;
     delete t.card;
     delete t.exit;
     delete t.currentChecks;
@@ -733,6 +735,73 @@ export class TaskRunner extends EventEmitter {
   async requestFix(id: string, instruction: string): Promise<Task> {
     const { prompt } = await this.prepareContinue(id, instruction);
     return this.start(id, prompt);
+  }
+
+  /**
+   * 阶段 6：冲突后「让 AI 在最新项目上重做这部分」。
+   * 先通过独立临时 worktree 验证非冲突改动可合并到当前主项目，再干净更新任务副本并清空冲突标记；
+   * 若更新过程中发现新冲突或异常，立即中止并保持原副本原样，绝不遗留冲突标记直接开工。
+   */
+  async prepareConflictRedo(
+    id: string,
+  ): Promise<{ ok: true; task: Task; prompt: string } | { ok: false; message: string; files?: string[] }> {
+    if (!this.enter(id)) return { ok: false, message: MESSAGES.busy };
+    try {
+      const t = await this.load(id);
+      const repo = this.opts.repo;
+      if (t.manualReview) return { ok: false, message: MESSAGES.abnormal };
+      if (t.state !== 'save_failed_unmerged' || !t.worktree || !t.binding) {
+        return { ok: false, message: '这个任务当前没有可重做的保存冲突。' };
+      }
+      if (t.card?.items.some((i) => i.key === 'drivers')) return { ok: false, message: MESSAGES.externalDriver };
+      for (const dir of [t.worktree.path, repo]) {
+        const d = await G.detectExternalDrivers(dir);
+        if (!d.supported) return { ok: false, message: MESSAGES.externalDriver, files: d.drivers };
+      }
+      if ((await fs.realpath(repo)) !== t.binding.repoPath) return { ok: false, message: MESSAGES.repoChanged };
+      if ((await G.currentBranch(repo)) !== t.binding.branch) return { ok: false, message: MESSAGES.branchChanged };
+      const dirty = await G.dirtyFiles(repo);
+      if (dirty.length > 0) {
+        return { ok: false, message: MESSAGES.dirtyMain, files: dirty };
+      }
+
+      const mainHead = await G.headSha(repo);
+      const taskTree = t.acceptedTree ?? (await G.computeTree(repo, t.worktree.path));
+      const knownFiles = t.conflict?.files ?? [];
+      const againstHead = t.conflict?.againstHead ?? mainHead;
+
+      const upd = await G.prepareWorktreeRedoOnMain(repo, t.worktree, {
+        taskId: t.id,
+        taskTree,
+        mainHead,
+        knownConflictFiles: knownFiles,
+        againstHead,
+      });
+      if (!upd.ok) {
+        return {
+          ok: false,
+          message: upd.detail,
+          ...(upd.conflictFiles.length ? { files: upd.conflictFiles } : {}),
+        };
+      }
+
+      const conflictTarget = t.conflict?.otherGoal
+        ? `与已保存的任务「${t.conflict.otherGoal}」的改动发生冲突`
+        : '与项目里后来的改动发生冲突';
+      const fileText = knownFiles.length ? knownFiles.join('、') : '部分文件';
+      const instruction = `上一次保存时，${fileText} ${conflictTarget}。现已将任务副本更新到主项目最新版本，请基于最新代码重新修改这部分，不要覆盖主项目里新合入的改动。`;
+
+      t.worktree.baseSha = mainHead;
+      t.binding.baseHead = mainHead;
+      delete t.conflict;
+      this.log(t, 'message', '已将任务副本更新到主项目最新版本，准备进入新一轮修改。', 'host');
+      await this.persist(t);
+
+      const prepared = await this.prepareContinue(t.id, instruction);
+      return { ok: true, ...prepared };
+    } finally {
+      this.leave(id);
+    }
   }
 
   // ───────────────────────── 保存 / 放弃 / 撤销 / 清理（B4） ─────────────────────────
@@ -814,6 +883,44 @@ export class TaskRunner extends EventEmitter {
       return `有：刚刚撤销了「${scrubAiText(undoMsg[1]!)}」`;
     }
     return commits.length === 1 ? '有：项目里后来的改动' : `有：项目里后来的 ${commits.length} 次改动`;
+  }
+
+  /**
+   * 从主线保存记录里查找冲突位置（conflictFiles）对应哪个已保存任务。
+   * 仅匹配确定与冲突文件有交集且能关联到已保存任务（或工作台保存提交）的记录，找不到则省略。
+   */
+  private async findConflictSource(
+    repo: string,
+    baseHead: string,
+    conflictFiles: string[],
+    excludeTaskId: string,
+  ): Promise<Omit<ConflictInfo, 'files' | 'againstHead' | 'at'>> {
+    const commits = await G.firstParentCommitsAfter(repo, baseHead).catch(() => null);
+    if (!commits || !commits.length) return {};
+    const tasks = await this.store.list();
+    const targetSet = new Set(conflictFiles);
+    for (const c of commits) {
+      if (targetSet.size > 0) {
+        const touched = await G.changedFilesInCommit(repo, c.sha).catch(() => []);
+        if (!touched.some((f) => targetSet.has(f))) continue;
+      }
+      const owner = tasks.find((x) => x.id !== excludeTaskId && x.saveRecord?.mergeCommit === c.sha);
+      if (owner) {
+        return {
+          otherTaskId: owner.id,
+          otherGoal: scrubAiText(owner.plan?.goal ?? owner.request),
+          ...(owner.saveRecord?.savedAt ? { otherSavedAt: owner.saveRecord.savedAt } : {}),
+        };
+      }
+      const saveMsg = c.message.match(/^studio: 保存「(.+)」$/);
+      if (saveMsg) {
+        return {
+          otherGoal: scrubAiText(saveMsg[1]!),
+          ...(c.date ? { otherSavedAt: c.date } : {}),
+        };
+      }
+    }
+    return {};
   }
 
   private projectLockFail(blocker: Task): OpFail {
@@ -1006,6 +1113,8 @@ export class TaskRunner extends EventEmitter {
       } catch (e) {
         const stderr = e instanceof G.GitError ? e.stderr : String(e);
         const inConflict = await G.mergeInProgress(trialPath).catch(() => false);
+        const rawConflictFiles = inConflict ? await G.conflictedFiles(trialPath) : [];
+        const conflictFiles = rawConflictFiles.map(safeRelPath).filter((x): x is string => !!x);
         await G.git(trialPath, ['merge', '--abort']).catch(() => undefined);
         this.opStep(t, '试合并', false, inConflict ? 'conflict' : stderr.trim().slice(0, 500));
         const postDirty = await G.dirtyFiles(repo).catch(() => ['?']);
@@ -1033,11 +1142,18 @@ export class TaskRunner extends EventEmitter {
         saveSteps[1] = { ...saveSteps[1]!, status: 'failed', detail: inConflict ? '改了同一处，无法自动合并' : '试合并未成功，主项目未改动' };
         skipRemaining(2);
         this.emitSaveProgress(t.id, saveSteps, true);
-        recordSnapshot(inConflict ? 'conflict' : 'failed');
+        recordSnapshot(inConflict ? 'conflict' : 'failed', { ...(conflictFiles.length ? { files: conflictFiles } : {}) });
         this.endOp(t, 'interrupted');
         if (inConflict) {
+          const srcInfo = await this.findConflictSource(repo, binding.baseHead, conflictFiles, t.id);
+          t.conflict = {
+            files: conflictFiles,
+            againstHead: preHead,
+            ...srcInfo,
+            at: new Date().toISOString(),
+          };
           await this.fire(t, 'save_conflict');
-          return { ok: false, reason: 'conflict', detail: MESSAGES.conflict };
+          return { ok: false, reason: 'conflict', detail: MESSAGES.conflict, ...(conflictFiles.length ? { files: conflictFiles } : {}) };
         }
         await this.persist(t);
         return { ok: false, reason: 'failed', detail: stderr.trim() || '试合并失败，本次没有保存。' };
@@ -1233,6 +1349,7 @@ export class TaskRunner extends EventEmitter {
       const mergeCommit = await G.headSha(repo);
       delete t.uncheckedConfirm;
       delete t.trialChecks;
+      delete t.conflict;
       saveSteps[3] = { ...saveSteps[3]!, status: 'done', detail: '期间没有新的改动，已写入主项目' };
       this.emitSaveProgress(t.id, saveSteps, true);
       recordSnapshot('saved');
