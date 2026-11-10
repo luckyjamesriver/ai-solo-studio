@@ -119,6 +119,12 @@ export interface SaveRecord {
   trialCommit?: string;
 }
 
+export interface AcceptedRiskRecord {
+  title: string;
+  reason: string;
+  at?: string;
+}
+
 export interface Task {
   id: string;
   /** 记录的修订号：由存储层在读取和提交后填入，不随记录内容保存；提交时用来做 CAS（ADR 0005） */
@@ -162,6 +168,12 @@ export interface Task {
   isolationWarnings?: string[];
   /** 验收标准为空时，用户对“我已看过改动，结果符合我的要求”的整体确认 */
   overallConfirmed?: boolean;
+  /** 验收标准为空时，用户在验收页选择的“符合 / 不符合” */
+  overallDecision?: 'confirmed' | 'rejected';
+  /** 验收标准为空且选择“不符合”时的说明（选填） */
+  overallNote?: string;
+  /** 阶段 5 预留：用户确认并驳回评审意见后保留下来的已知风险 */
+  acceptedRisks?: AcceptedRiskRecord[];
   /** 保存时项目是否有自定义提交检查（保存不会运行它们） */
   customCommitChecks?: boolean;
   /** 保存结果（撤销依据） */

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { studio, type AcceptanceActionResult, type ChangePreview, type TaskView, type UserAcceptanceView, type ViewItem } from './api.js';
+import { studio, type AcceptanceActionResult, type ChangePreview, type TaskView, type UserAcceptanceView } from './api.js';
 import { COPY } from './copy.js';
 
-const MARK: Record<ViewItem['status'], string> = { verified: '✓', failed: '✗', not_checked: '？', pending_user: '…' };
 const KIND_TEXT: Record<string, string> = { added: '新增', modified: '修改', deleted: '删除', renamed: '改名', other: '变化' };
 
 /** 写进剪贴板：优先用系统接口，失败时退回临时文本框 */
@@ -50,28 +49,62 @@ function Preview({ p }: { p: ChangePreview }) {
   );
 }
 
-type Dialog = 'discard' | 'undo' | 'skipPreview' | null;
+function factTag(status: 'verified' | 'not_checked' | 'failed' | 'pending_user'): { cls: string; text: string } {
+  switch (status) {
+    case 'verified':
+      return { cls: 'tag ok', text: '通过' };
+    case 'failed':
+      return { cls: 'tag warn', text: '未通过' };
+    case 'pending_user':
+      return { cls: 'tag warn', text: '待确认' };
+    default:
+      return { cls: 'tag', text: '未检查' };
+  }
+}
+
+type Dialog = 'discard' | 'undo' | null;
 
 /**
- * 验收与结果：只使用主进程给的用户验收视图（UserAcceptanceView）。
- * 所有文案（结论、各项说明、失败原因、按钮不可用的原因）都来自视图，这里不自拟任何失败文案。
+ * 验收页（#07-accept）：左主区按「成果预览 → 检查与证据（及接受的风险） → AI 自己的说法」，
+ * 右侧按「验收状态 → 验收标准（符合 / 不符合 + 说明） → 被拦下的操作 → 操作按钮」展示。
+ * 所有结论、状态、失败原因与保存条件都由核心层计算下发，渲染层不自拟判断。
  */
-export function Acceptance({ projectId, task, onChanged }: { projectId: string; task: TaskView; onChanged: () => void }) {
+export function Acceptance({
+  projectId,
+  task,
+  onChanged,
+  onBackToProject,
+}: {
+  projectId: string;
+  task: TaskView;
+  onChanged: () => void;
+  onBackToProject?: () => void;
+}) {
   const [view, setView] = useState<UserAcceptanceView | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string; files?: string[] } | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [deferred, setDeferred] = useState(false);
   const [copied, setCopied] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  /** 同步的“操作中”标记：按钮点击后立刻生效，界面层先挡住重复点击（核心层还有互斥作为第二道） */
+  const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
 
   const load = useCallback(() => {
-    studio().getAcceptanceView(projectId, task.id).then((v) => { setView(v); setLoadError(null); }).catch((e: Error) => setLoadError(e.message));
+    studio()
+      .getAcceptanceView(projectId, task.id)
+      .then((v) => {
+        setView(v);
+        setLoadError(null);
+        const notes: Record<string, string> = {};
+        for (const c of v.criteria) if (c.note !== undefined) notes[c.id] = c.note;
+        if (v.overall.note !== undefined) notes.overall = v.overall.note;
+        setDraftNotes(notes);
+      })
+      .catch((e: Error) => setLoadError(e.message));
   }, [projectId, task.id]);
   useEffect(load, [load, task.state]);
-  // 取到视图时任务可能还在收尾（主进程标记 busy）：稍后重新取一次，避免界面停在“全部置灰”
+
   const viewBusy = view?.busy ?? false;
   useEffect(() => {
     if (!viewBusy || pending) return;
@@ -88,6 +121,10 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
     try {
       const r = await call(studio());
       setView(r.view);
+      const notes: Record<string, string> = {};
+      for (const c of r.view.criteria) if (c.note !== undefined) notes[c.id] = c.note;
+      if (r.view.overall.note !== undefined) notes.overall = r.view.overall.note;
+      setDraftNotes(notes);
       setMessage(
         (r.message && r.message !== r.view.uncheckedConfirm?.reason) || r.files?.length
           ? { ok: r.ok, text: r.message, ...(r.files?.length ? { files: r.files } : {}) }
@@ -110,26 +147,24 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
   const reviewing = v.state === 'reviewing';
   const conflict = v.state === 'save_failed_unmerged';
   const disabled = (enabled: boolean) => !enabled || pending;
-
-  const step1Completed = !reviewing || !!v.preview?.completed;
-  const criteriaCompleted = v.criteria.length > 0 ? v.criteria.every((c) => c.confirmed) : v.overall.confirmed;
-  const deniedCompleted = v.denied.every((d) => d.acked);
-  const step2Completed = !reviewing || (step1Completed && criteriaCompleted && deniedCompleted);
+  const statusKind = v.acceptanceStatus.kind;
+  const hasAutoCheck = v.items.some((i) => i.key === 'build' || i.key === 'test');
 
   return (
-    <div className="result acceptance" data-testid="result" data-state={v.state} data-fulltrust={task.fullTrust}>
-      <div className="head">
-        <strong>{v.goal}</strong>
-        {task.fullTrust && <span className="badge-trust" data-testid="fulltrust-badge">{COPY.fullTrustBadge}</span>}
-        <span className="muted" data-testid="executor-info">执行者：{task.executorText}</span>
-        <span className="muted">{v.stateText}</span>
-        {v.saveRecord && <span className="badge-checked" data-testid="save-record-check">{v.saveRecord.checksText}</span>}
-        {v.reconciled && <span className="badge-checked" data-testid="reconciled-badge">{COPY.reconciledBadge}</span>}
+    <div className="result acceptance stack" data-testid="result" data-state={v.state} data-fulltrust={task.fullTrust}>
+      <div className="row sb">
+        <div className="row" style={{ gap: '8px' }}>
+          {task.fullTrust && <span className="badge-trust" data-testid="fulltrust-badge">{COPY.fullTrustBadge}</span>}
+          <span className="muted" data-testid="executor-info">执行者：{task.executorText}</span>
+          <span className="muted">{v.stateText}</span>
+          {v.saveRecord && <span className="badge-checked" data-testid="save-record-check">{v.saveRecord.checksText}</span>}
+          {v.reconciled && <span className="badge-checked" data-testid="reconciled-badge">{COPY.reconciledBadge}</span>}
+        </div>
       </div>
+
       {v.reconciled && <p className="muted" data-testid="reconciled-note">{v.reconciled}</p>}
       {task.startFailure && <p role="alert" className="error" data-testid="start-failure">{task.startFailure}</p>}
       {loadError && <p role="alert" className="error">{loadError}</p>}
-      <p className="headline" data-testid="verdict">{v.verdict}</p>
       {pending && (
         <div role="status" className="notice" data-testid="pending-feedback">
           正在处理中，请稍候...
@@ -145,6 +180,7 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
 
       {v.readOnly ? (
         <div className="readonly" data-testid="readonly-panel">
+          <p data-testid="verdict">{v.verdict}</p>
           <p>{COPY.readOnlyHint}</p>
           <div className="row">
             <button className="secondary" data-testid="reveal-project" onClick={() => void studio().revealProject()}>{COPY.revealProject}</button>
@@ -153,37 +189,23 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
           {copied && <p className="muted" role="status" data-testid="copy-done">{COPY.copied}</p>}
           <pre className="snippet" data-testid="summary-text">{v.diagnosticSummary}</pre>
         </div>
-      ) : (
-        <>
-          {v.items.length > 0 && (
-            <section className="facts" data-testid="facts">
-              <h3>{COPY.factsTitle}</h3>
-              <ul>
-                {v.items.map((i) => (
-                  <li key={i.key} data-status={i.status === 'verified' ? 'ok' : i.status === 'failed' ? 'bad' : 'unchecked'} data-item={i.key}>
-                    <span className="mark">{MARK[i.status]}</span> <strong>{i.label}</strong>：{i.text}
-                  </li>
-                ))}
-              </ul>
-              {v.notes.length > 0 && <ul className="notes" data-testid="notes">{v.notes.map((n) => <li key={n} className="notice">{n}</li>)}</ul>}
-            </section>
-          )}
-
-          {reviewing ? (
-            <>
-              {/* ① 查看成果 */}
-              <section data-testid="step-1">
-                <div className="head">
-                  <h3>① 查看成果</h3>
-                  {step1Completed && (
-                    <span className="badge-checked" data-testid="step1-status">
-                      {v.preview?.skipped ? '已跳过查看' : '✓ 已查看成果'}
+      ) : reviewing ? (
+        <div className="g2">
+          {/* 左侧主区：成果预览 → 检查与证据 → AI 自己的说法 */}
+          <div className="stack">
+            <section className="box" data-testid="preview-section">
+              <div className="row sb">
+                <h2>{COPY.acceptPreviewTitle}</h2>
+                <div className="row">
+                  {v.preview.completed && (
+                    <span className="badge-checked" data-testid="preview-done">
+                      {v.preview.skipped ? '已跳过查看' : COPY.acceptPreviewOpened}
                     </span>
                   )}
-                </div>
-                <div className="row" style={{ marginTop: '0.25rem', marginBottom: '0.75rem', flexDirection: 'column', alignItems: 'flex-start', gap: '0.35rem' }}>
-                  {v.preview?.kind && !v.preview?.completed && (
+                  {v.preview.kind && (
                     <button
+                      type="button"
+                      className="secondary"
                       data-testid="preview-button"
                       disabled={pending}
                       onClick={() => run((s) => s.openPreview(projectId, v.taskId, v.version))}
@@ -191,198 +213,10 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
                       {v.preview.buttonText}
                     </button>
                   )}
-                  {!v.preview?.completed ? (
-                    <div>
-                      <button
-                        className="link"
-                        data-testid="skip-preview"
-                        disabled={pending}
-                        onClick={() => setDialog('skipPreview')}
-                      >
-                        不查看成果，直接验收
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="muted" data-testid="preview-done">
-                      {v.preview?.skipped ? '已跳过查看' : '已完成成果查看'}
-                    </span>
-                  )}
                 </div>
-                {v.changes.length > 0 && (
-                  <div data-testid="changes">
-                    <h4>{COPY.changesTitle}</h4>
-                    <ul className="changes">
-                      {v.changes.map((c) => (
-                        <li key={c.path} data-kind={c.kind}>
-                          <strong>{KIND_TEXT[c.kind] ?? '变化'}</strong>　{c.path}
-                          {c.additions !== null && c.deletions !== null && <span className="muted"> （+{c.additions} −{c.deletions}）</span>}
-                          {c.preview && <Preview p={c.preview} />}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </section>
-
-              {/* ② 确认验收标准 */}
-              <section data-testid="step-2">
-                <div className="head">
-                  <h3>② 确认验收标准</h3>
-                  {step2Completed && <span className="badge-checked" data-testid="step2-status">✓ 验收标准已确认</span>}
-                </div>
-                {!step1Completed && (
-                  <p className="muted" data-testid="step2-reason">请先完成「① 查看成果」，才能确认验收标准。</p>
-                )}
-
-                {v.denied.length > 0 && (
-                  <div data-testid="denied">
-                    <h4>{COPY.deniedTitle}</h4>
-                    <ul>
-                      {v.denied.map((d) => (
-                        <li key={d.id} data-acked={d.acked}>
-                          {d.text}
-                          {d.acked ? (
-                            <span className="muted"> · {COPY.acked}</span>
-                          ) : (
-                            <button
-                              className="secondary"
-                              data-testid={`ack-${d.id}`}
-                              disabled={disabled(step1Completed)}
-                              onClick={() => run((s) => s.ackDenied(projectId, v.taskId, d.id, v.version))}
-                            >
-                              {COPY.ackButton}
-                            </button>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {(v.criteria.length > 0 || v.overall.needed) && (
-                  <div data-testid="criteria">
-                    <h4>{COPY.criteriaTitle}</h4>
-                    <ul>
-                      {v.criteria.map((c) => (
-                        <li key={c.id} data-confirmed={c.confirmed}>
-                          {c.text}
-                          {c.confirmed ? (
-                            <span className="muted"> · {COPY.confirmed}</span>
-                          ) : (
-                            <button
-                              className="secondary"
-                              data-testid={`confirm-${c.id}`}
-                              disabled={disabled(step1Completed)}
-                              onClick={() => run((s) => s.confirmCriterion(projectId, v.taskId, c.id, v.version))}
-                            >
-                              {COPY.confirmButton}
-                            </button>
-                          )}
-                        </li>
-                      ))}
-                      {v.overall.needed && (
-                        <li data-confirmed={v.overall.confirmed}>
-                          {v.overall.text}
-                          {v.overall.confirmed ? (
-                            <span className="muted"> · {COPY.confirmed}</span>
-                          ) : (
-                            <button
-                              className="secondary"
-                              data-testid="confirm-overall"
-                              disabled={disabled(step1Completed)}
-                              onClick={() => run((s) => s.confirmOverall(projectId, v.taskId, v.version))}
-                            >
-                              {COPY.overallButton}
-                            </button>
-                          )}
-                        </li>
-                      )}
-                    </ul>
-                  </div>
-                )}
-              </section>
-
-              {/* ③ 保存到项目 */}
-              <section data-testid="step-3">
-                <div className="head">
-                  <h3>③ 保存到项目</h3>
-                </div>
-                {v.confirmTexts.save && <p className="notice" data-testid="save-note">{v.confirmTexts.save}</p>}
-                <div className="row" data-testid="actions">
-                  <button
-                    className={v.uncheckedConfirm || a.recheck.highlight ? 'secondary' : ''}
-                    data-testid="save-button"
-                    disabled={disabled(step1Completed && step2Completed && a.save.enabled)}
-                    onClick={() => run((s) => s.saveTask(projectId, v.taskId, v.version))}
-                  >
-                    {COPY.saveButton}
-                  </button>
-                  <button
-                    className={a.recheck.highlight ? '' : 'secondary'}
-                    data-testid="recheck-button"
-                    data-highlight={!!a.recheck.highlight}
-                    disabled={disabled(a.recheck.enabled)}
-                    onClick={() => run((s) => s.recheck(projectId, v.taskId))}
-                  >
-                    {COPY.recheckButton}
-                  </button>
-                  <button
-                    className="secondary"
-                    data-testid="discard-button"
-                    disabled={disabled(a.discard.enabled)}
-                    onClick={() => setDialog('discard')}
-                  >
-                    {COPY.discardButton}
-                  </button>
-                </div>
-                {/* 按钮不可用时一律说明原因（未完成前一步时说明前一步，否则展示后端原因） */}
-                {!step1Completed && (
-                  <p className="muted" data-testid="save-reason">请先确认已查看成果。</p>
-                )}
-                {step1Completed && !step2Completed && (
-                  <p className="muted" data-testid="save-reason">
-                    {!criteriaCompleted
-                      ? (v.criteria.length === 0 ? '请先确认“我已看过改动，结果符合我的要求”。' : '请逐条确认验收标准。')
-                      : '有被拦下的操作，请逐条确认你知晓。'}
-                  </p>
-                )}
-                {step1Completed && step2Completed && !a.save.enabled && a.save.reason && (
-                  <p className="muted" data-testid="save-reason">{a.save.reason}</p>
-                )}
-                {!a.save.enabled && a.save.files && (
-                  <ul className="muted" data-testid="save-files">{a.save.files.map((f) => <li key={f}>{f}</li>)}</ul>
-                )}
-                {v.uncheckedConfirm && (
-                  <div className="confirm-panel" role="alertdialog" aria-modal="false" data-testid="unchecked-confirm-panel">
-                    <p data-testid="unchecked-confirm-reason">{v.uncheckedConfirm.reason}</p>
-                    <div className="row">
-                      <button
-                        type="button"
-                        data-testid="unchecked-preview-button"
-                        disabled={pending}
-                        onClick={() => run((s) => s.openPreview(projectId, v.taskId, v.version))}
-                      >
-                        {v.uncheckedConfirm.previewButtonText}
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary"
-                        data-testid="unchecked-confirm-save-button"
-                        disabled={pending || !a.save.enabled}
-                        onClick={() => run((s) => s.saveUncheckedTask(projectId, v.taskId, v.version))}
-                      >
-                        {v.uncheckedConfirm.confirmButtonText}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </section>
-            </>
-          ) : (
-            <>
-              {v.changes.length > 0 && (
-                <section data-testid="changes">
-                  <h3>{COPY.changesTitle}</h3>
+              </div>
+              {v.changes.length > 0 ? (
+                <div data-testid="changes" style={{ marginTop: '8px' }}>
                   <ul className="changes">
                     {v.changes.map((c) => (
                       <li key={c.path} data-kind={c.kind}>
@@ -392,70 +226,426 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
                       </li>
                     ))}
                   </ul>
-                </section>
+                </div>
+              ) : (
+                <p className="muted" style={{ marginTop: '8px' }}>没有任何文件被修改。</p>
+              )}
+            </section>
+
+            <section className="box facts" data-testid="facts">
+              <h2>{COPY.factsTitle}</h2>
+              <div>
+                {v.items
+                  .filter((i) => i.key !== 'preview')
+                  .map((i) => {
+                    const t = i.key === 'changes'
+                      ? { cls: 'tag', text: '改动' }
+                      : i.key === 'denied' && v.denied.length > 0
+                        ? { cls: 'tag warn', text: `被拦下 ${v.denied.length} 次` }
+                        : factTag(i.status);
+                    return (
+                      <div
+                        className="item"
+                        key={i.key}
+                        data-status={i.status === 'verified' ? 'ok' : i.status === 'failed' ? 'bad' : 'unchecked'}
+                        data-item={i.key}
+                      >
+                        <span className={t.cls}>{t.text}</span>
+                        <span className="grow">
+                          <strong>{i.label}</strong>：{i.text}
+                        </span>
+                      </div>
+                    );
+                  })}
+                {!hasAutoCheck && (
+                  <div className="item" data-item="no-checks" data-status="unchecked">
+                    <span className="tag">未检查</span>
+                    <span className="grow">{COPY.acceptNoChecksRow}</span>
+                  </div>
+                )}
+              </div>
+              {v.notes.length > 0 && (
+                <ul className="notes" data-testid="notes" style={{ marginTop: '8px' }}>
+                  {v.notes.map((n) => <li key={n} className="notice">{n}</li>)}
+                </ul>
+              )}
+              {v.acceptedRisks.length > 0 && (
+                <div className="wbox" data-testid="accepted-risks" style={{ marginTop: '10px', padding: '10px 12px' }}>
+                  <strong>{COPY.acceptRisksTitle}</strong>
+                  <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
+                    {v.acceptedRisks.map((r, idx) => (
+                      <li key={`${idx}-${r.title}`}>
+                        <strong>{r.title}</strong>
+                        {r.reason && <span className="muted"> — {r.reason}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="muted" style={{ marginTop: '8px' }}>{COPY.acceptFactVerifyNote}</p>
+            </section>
+
+            <section className="incomplete" data-testid="incomplete">
+              <div className="row sb">
+                <h2>{COPY.incompleteTitle}</h2>
+                <span className="muted">{COPY.incompleteNotice}</span>
+              </div>
+              {v.aiReport.kind === 'items' && <ul>{v.aiReport.items.map((i) => <li key={i}>{i}</li>)}</ul>}
+              {v.aiReport.kind === 'raw' && (<><p>{COPY.incompleteRaw}</p><blockquote>{v.aiReport.text}</blockquote></>)}
+              {v.aiReport.kind === 'none' && <p className="muted" style={{ marginTop: '6px' }}>{COPY.incompleteNone}</p>}
+            </section>
+
+            {task.permissions && (
+              <details className="box">
+                <summary style={{ cursor: 'pointer' }}>这次任务实际生效的权限：{task.permissions.modeName}</summary>
+                <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>{task.permissions.lines.map((l) => <li key={l}>{l}</li>)}</ul>
+              </details>
+            )}
+          </div>
+
+          {/* 右侧：验收状态 → 验收标准逐条确认 → 被拦下的操作 → 操作按钮 */}
+          <aside className="stack">
+            <section
+              className={`box${statusKind === 'failed' ? ' wbox' : ''}`}
+              data-testid="acceptance-status"
+              data-status={statusKind}
+              style={{ padding: '10px 12px' }}
+            >
+              <div className="row">
+                <span className={`tag${statusKind === 'passed' ? ' ok' : statusKind === 'failed' ? ' warn' : ''}`} data-testid="acceptance-status-label">
+                  {v.acceptanceStatus.label}
+                </span>
+                <span className="muted" data-testid="acceptance-status-reason">{v.acceptanceStatus.reason}</span>
+              </div>
+              <p className="muted" data-testid="verdict" style={{ marginTop: '6px' }}>{v.verdict}</p>
+            </section>
+
+            <section className="box hl" data-testid="criteria">
+              <h2>{COPY.criteriaTitle}</h2>
+              <div>
+                {v.criteria.map((c) => (
+                  <div className="crit-card" key={c.id} data-confirmed={c.confirmed} data-rejected={c.rejected}>
+                    <div className="row sb">
+                      <span className="grow">{c.text}</span>
+                      <div className="choice-pair">
+                        <button
+                          type="button"
+                          className={`secondary choice-btn${c.confirmed ? ' active-ok' : ''}`}
+                          data-testid={`confirm-${c.id}`}
+                          aria-pressed={c.confirmed}
+                          disabled={pending}
+                          onClick={() => run((s) => s.confirmCriterion(projectId, v.taskId, c.id, v.version))}
+                        >
+                          {COPY.criterionMatch}
+                        </button>
+                        <button
+                          type="button"
+                          className={`secondary choice-btn${c.rejected ? ' active-bad' : ''}`}
+                          data-testid={`reject-${c.id}`}
+                          aria-pressed={c.rejected}
+                          disabled={pending}
+                          onClick={() => run((s) => s.rejectCriterion(projectId, v.taskId, c.id, v.version, draftNotes[c.id] ?? c.note ?? ''))}
+                        >
+                          {COPY.criterionMismatch}
+                        </button>
+                      </div>
+                    </div>
+                    {c.rejected && (
+                      <div className="row" style={{ gap: '6px' }}>
+                        <input
+                          type="text"
+                          data-testid={`reject-note-${c.id}`}
+                          value={draftNotes[c.id] ?? c.note ?? ''}
+                          placeholder={COPY.rejectNotePlaceholder}
+                          onChange={(e) => setDraftNotes((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                          onBlur={() => {
+                            const nextVal = (draftNotes[c.id] ?? '').trim();
+                            if (nextVal !== (c.note ?? '')) {
+                              void run((s) => s.rejectCriterion(projectId, v.taskId, c.id, v.version, nextVal));
+                            }
+                          }}
+                          style={{ marginTop: 0, flex: 1 }}
+                        />
+                        {(draftNotes[c.id] ?? '').trim() !== (c.note ?? '') && (
+                          <button
+                            type="button"
+                            className="secondary choice-btn"
+                            data-testid={`save-note-${c.id}`}
+                            disabled={pending}
+                            onClick={() => run((s) => s.rejectCriterion(projectId, v.taskId, c.id, v.version, draftNotes[c.id] ?? ''))}
+                          >
+                            {COPY.rejectNoteSave}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {v.overall.needed && (
+                  <div className="crit-card" data-confirmed={v.overall.confirmed} data-rejected={v.overall.rejected}>
+                    <div className="row sb">
+                      <span className="grow">{v.overall.text}</span>
+                      <div className="choice-pair">
+                        <button
+                          type="button"
+                          className={`secondary choice-btn${v.overall.confirmed ? ' active-ok' : ''}`}
+                          data-testid="confirm-overall"
+                          aria-pressed={v.overall.confirmed}
+                          disabled={pending}
+                          onClick={() => run((s) => s.confirmOverall(projectId, v.taskId, v.version))}
+                        >
+                          {COPY.criterionMatch}
+                        </button>
+                        <button
+                          type="button"
+                          className={`secondary choice-btn${v.overall.rejected ? ' active-bad' : ''}`}
+                          data-testid="reject-overall"
+                          aria-pressed={v.overall.rejected}
+                          disabled={pending}
+                          onClick={() => run((s) => s.rejectCriterion(projectId, v.taskId, 'overall', v.version, draftNotes.overall ?? v.overall.note ?? ''))}
+                        >
+                          {COPY.criterionMismatch}
+                        </button>
+                      </div>
+                    </div>
+                    {v.overall.rejected && (
+                      <div className="row" style={{ gap: '6px' }}>
+                        <input
+                          type="text"
+                          data-testid="reject-note-overall"
+                          value={draftNotes.overall ?? v.overall.note ?? ''}
+                          placeholder={COPY.rejectNotePlaceholder}
+                          onChange={(e) => setDraftNotes((prev) => ({ ...prev, overall: e.target.value }))}
+                          onBlur={() => {
+                            const nextVal = (draftNotes.overall ?? '').trim();
+                            if (nextVal !== (v.overall.note ?? '')) {
+                              void run((s) => s.rejectCriterion(projectId, v.taskId, 'overall', v.version, nextVal));
+                            }
+                          }}
+                          style={{ marginTop: 0, flex: 1 }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {v.denied.length > 0 && (
+              <section className="box wbox" data-testid="denied">
+                <h2>{COPY.deniedTitle}</h2>
+                <div>
+                  {v.denied.map((d) => (
+                    <div className="item" key={d.id} data-acked={d.acked}>
+                      <div className="grow">
+                        <div>{d.text}</div>
+                        <div className="muted">{d.impact}</div>
+                      </div>
+                      {d.acked ? (
+                        <span className="tag ok">{COPY.acked}</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="secondary"
+                          data-testid={`ack-${d.id}`}
+                          disabled={pending}
+                          onClick={() => run((s) => s.ackDenied(projectId, v.taskId, d.id, v.version))}
+                        >
+                          {COPY.ackButton}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="stack" data-testid="actions" style={{ gap: '8px' }}>
+              {v.confirmTexts.save && <p className="notice" data-testid="save-note">{v.confirmTexts.save}</p>}
+
+              {v.acceptanceStatus.showSaveButton && (
+                <>
+                  <button
+                    type="button"
+                    className={v.uncheckedConfirm || a.recheck.highlight ? 'secondary' : ''}
+                    data-testid="save-button"
+                    disabled={disabled(a.save.enabled)}
+                    onClick={() => run((s) => s.saveTask(projectId, v.taskId, v.version))}
+                    style={{ width: '100%' }}
+                  >
+                    {COPY.acceptAndSaveButton}
+                  </button>
+                  {!a.save.enabled && a.save.reason && (
+                    <p className="muted" data-testid="save-reason">{a.save.reason}</p>
+                  )}
+                  {!a.save.enabled && a.save.files && (
+                    <ul className="muted" data-testid="save-files">{a.save.files.map((f) => <li key={f}>{f}</li>)}</ul>
+                  )}
+                </>
               )}
 
-              {conflict && deferred && <p className="muted" data-testid="deferred-note">{COPY.deferredNote}</p>}
+              {v.uncheckedConfirm && (
+                <div className="confirm-panel" role="alertdialog" aria-modal="false" data-testid="unchecked-confirm-panel">
+                  <p data-testid="unchecked-confirm-reason">{v.uncheckedConfirm.reason}</p>
+                  <div className="row" style={{ marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      data-testid="unchecked-preview-button"
+                      disabled={pending}
+                      onClick={() => run((s) => s.openPreview(projectId, v.taskId, v.version))}
+                    >
+                      {v.uncheckedConfirm.previewButtonText}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      data-testid="unchecked-confirm-save-button"
+                      disabled={pending || !a.save.enabled}
+                      onClick={() => run((s) => s.saveUncheckedTask(projectId, v.taskId, v.version))}
+                    >
+                      {v.uncheckedConfirm.confirmButtonText}
+                    </button>
+                  </div>
+                </div>
+              )}
 
-              <div className="row" data-testid="actions">
-                {conflict && <button className="secondary" data-testid="discard-button" disabled={disabled(a.discard.enabled)} onClick={() => setDialog('discard')}>{COPY.discardButton}</button>}
-                {conflict && <button className="secondary" data-testid="defer-button" onClick={() => setDeferred(true)}>{COPY.deferButton}</button>}
-                {['saved', 'saved_cleanup_pending', 'undo_failed'].includes(v.state) && <button className="secondary" data-testid="undo-button" disabled={disabled(a.undo.enabled)} onClick={() => setDialog('undo')}>{COPY.undoButton}</button>}
-                {(v.state === 'saved_cleanup_pending' || v.state === 'discard_cleanup_pending') && <button data-testid="retry-cleanup-button" disabled={disabled(a.retryCleanup.enabled)} onClick={() => run((s) => s.retryCleanup(projectId, v.taskId))}>{COPY.retryCleanupButton}</button>}
+              <button
+                type="button"
+                className={statusKind === 'failed' ? '' : 'secondary'}
+                data-testid="rework-button"
+                disabled={disabled(v.reworkAction.enabled)}
+                onClick={() => {
+                  /* 阶段 4 Commit 3 接入退回修改页 */
+                }}
+                style={{ width: '100%' }}
+              >
+                {COPY.reworkButton}
+              </button>
+
+              {a.recheck.highlight && (
+                <button
+                  type="button"
+                  data-testid="recheck-button"
+                  data-highlight="true"
+                  disabled={disabled(a.recheck.enabled)}
+                  onClick={() => run((s) => s.recheck(projectId, v.taskId))}
+                  style={{ width: '100%' }}
+                >
+                  {COPY.recheckButton}
+                </button>
+              )}
+
+              <div className="row">
+                {onBackToProject && (
+                  <button
+                    type="button"
+                    className="secondary grow"
+                    data-testid="defer-button"
+                    disabled={pending}
+                    onClick={onBackToProject}
+                  >
+                    {COPY.deferButton}
+                  </button>
+                )}
+                {!a.recheck.highlight && (
+                  <button
+                    type="button"
+                    className="secondary grow"
+                    data-testid="recheck-button"
+                    data-highlight="false"
+                    disabled={disabled(a.recheck.enabled)}
+                    onClick={() => run((s) => s.recheck(projectId, v.taskId))}
+                  >
+                    {COPY.recheckButton}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="secondary grow"
+                  data-testid="discard-button"
+                  disabled={disabled(a.discard.enabled)}
+                  onClick={() => setDialog('discard')}
+                >
+                  {COPY.discardButton}
+                </button>
               </div>
-              {['saved', 'saved_cleanup_pending', 'undo_failed'].includes(v.state) && !a.undo.enabled && a.undo.reason && <p className="muted" data-testid="undo-reason">{a.undo.reason}</p>}
-            </>
+              <p className="muted">{COPY.acceptNoPartialNote}</p>
+            </section>
+          </aside>
+        </div>
+      ) : (
+        <div className="stack">
+          <p className="headline" data-testid="verdict">{v.verdict}</p>
+
+          {v.items.length > 0 && (
+            <section className="box facts" data-testid="facts">
+              <h2>{COPY.factsTitle}</h2>
+              <div>
+                {v.items.map((i) => {
+                  const t = factTag(i.status);
+                  return (
+                    <div className="item" key={i.key} data-status={i.status === 'verified' ? 'ok' : i.status === 'failed' ? 'bad' : 'unchecked'} data-item={i.key}>
+                      <span className={t.cls}>{t.text}</span>
+                      <span className="grow"><strong>{i.label}</strong>：{i.text}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           )}
 
+          {v.changes.length > 0 && (
+            <section className="box" data-testid="changes">
+              <h2>{COPY.changesTitle}</h2>
+              <ul className="changes">
+                {v.changes.map((c) => (
+                  <li key={c.path} data-kind={c.kind}>
+                    <strong>{KIND_TEXT[c.kind] ?? '变化'}</strong>　{c.path}
+                    {c.additions !== null && c.deletions !== null && <span className="muted"> （+{c.additions} −{c.deletions}）</span>}
+                    {c.preview && <Preview p={c.preview} />}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {conflict && deferred && <p className="muted" data-testid="deferred-note">{COPY.deferredNote}</p>}
+
+          <div className="row" data-testid="actions">
+            {conflict && <button className="secondary" data-testid="discard-button" disabled={disabled(a.discard.enabled)} onClick={() => setDialog('discard')}>{COPY.discardButton}</button>}
+            {conflict && <button className="secondary" data-testid="defer-button" onClick={() => setDeferred(true)}>{COPY.deferButton}</button>}
+            {['saved', 'saved_cleanup_pending', 'undo_failed'].includes(v.state) && <button className="secondary" data-testid="undo-button" disabled={disabled(a.undo.enabled)} onClick={() => setDialog('undo')}>{COPY.undoButton}</button>}
+            {(v.state === 'saved_cleanup_pending' || v.state === 'discard_cleanup_pending') && <button data-testid="retry-cleanup-button" disabled={disabled(a.retryCleanup.enabled)} onClick={() => run((s) => s.retryCleanup(projectId, v.taskId))}>{COPY.retryCleanupButton}</button>}
+          </div>
+          {['saved', 'saved_cleanup_pending', 'undo_failed'].includes(v.state) && !a.undo.enabled && a.undo.reason && <p className="muted" data-testid="undo-reason">{a.undo.reason}</p>}
+
           <section className="incomplete" data-testid="incomplete">
-            <h3>{COPY.incompleteTitle}</h3>
+            <h2>{COPY.incompleteTitle}</h2>
             <p className="notice">{COPY.incompleteNotice}</p>
             {v.aiReport.kind === 'items' && <ul>{v.aiReport.items.map((i) => <li key={i}>{i}</li>)}</ul>}
             {v.aiReport.kind === 'raw' && (<><p>{COPY.incompleteRaw}</p><blockquote>{v.aiReport.text}</blockquote></>)}
             {v.aiReport.kind === 'none' && <p className="muted">{COPY.incompleteNone}</p>}
           </section>
+        </div>
+      )}
 
-          {task.permissions && (
-            <details>
-              <summary>这次任务实际生效的权限：{task.permissions.modeName}</summary>
-              <ul>{task.permissions.lines.map((l) => <li key={l}>{l}</li>)}</ul>
-            </details>
-          )}
-
-          {dialog && (
-            <div className="confirm-panel" role="alertdialog" aria-modal="true" data-testid="confirm-panel" data-kind={dialog}>
-              <p data-testid="confirm-text">
-                {dialog === 'discard'
-                  ? v.confirmTexts.discard
-                  : dialog === 'undo'
-                    ? v.confirmTexts.undo
-                    : '你还没有查看 AI 做出的成果，确定直接进入验收吗？'}
-              </p>
-              <div className="row">
-                <button
-                  className={dialog === 'discard' || dialog === 'undo' ? 'secondary' : ''}
-                  data-testid="confirm-yes"
-                  onClick={() =>
-                    run((s) => {
-                      if (dialog === 'discard') return s.discardTask(projectId, v.taskId);
-                      if (dialog === 'undo') return s.undoSave(projectId, v.taskId);
-                      return s.skipPreview(projectId, v.taskId, v.version);
-                    })
-                  }
-                >
-                  {dialog === 'discard' ? COPY.discardYes : dialog === 'undo' ? COPY.undoYes : '确定直接进入验收'}
-                </button>
-                <button
-                  className={dialog === 'discard' || dialog === 'undo' ? '' : 'secondary'}
-                  data-testid="confirm-no"
-                  onClick={() => setDialog(null)}
-                >
-                  {COPY.cancel}
-                </button>
-              </div>
-            </div>
-          )}
-        </>
+      {dialog && (
+        <div className="confirm-panel" role="alertdialog" aria-modal="true" data-testid="confirm-panel" data-kind={dialog}>
+          <p data-testid="confirm-text">
+            {dialog === 'discard' ? v.confirmTexts.discard : v.confirmTexts.undo}
+          </p>
+          <div className="row" style={{ marginTop: '8px' }}>
+            <button
+              className="secondary"
+              data-testid="confirm-yes"
+              onClick={() => run((s) => (dialog === 'discard' ? s.discardTask(projectId, v.taskId) : s.undoSave(projectId, v.taskId)))}
+            >
+              {dialog === 'discard' ? COPY.discardYes : COPY.undoYes}
+            </button>
+            <button data-testid="confirm-no" onClick={() => setDialog(null)}>{COPY.cancel}</button>
+          </div>
+        </div>
       )}
     </div>
   );

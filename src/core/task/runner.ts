@@ -465,10 +465,15 @@ export class TaskRunner extends EventEmitter {
     try {
       const t = await this.load(id);
       if (!['reviewing', 'save_failed_unmerged'].includes(t.state) || !t.worktree) throw new Error('任务不在验收阶段。');
-      t.criteria.forEach((c) => delete c.decision);
+      t.criteria.forEach((c) => {
+        delete c.decision;
+        delete c.note;
+      });
       t.previewed = false;
       t.previewSkipped = false;
       t.overallConfirmed = false;
+      delete t.overallDecision;
+      delete t.overallNote;
       t.deniedAcks = t.denied.map(() => false);
       await this.buildEvidence(t);
       await this.persist(t);
@@ -479,7 +484,7 @@ export class TaskRunner extends EventEmitter {
   }
 
   /** 用户对验收标准逐条确认/否决，或标记已试用。只改用户输入，不改自动检查结果。 */
-  async confirm(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean; previewSkipped?: boolean; deniedAck?: number; overall?: boolean }) {
+  async confirm(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; note?: string; previewed?: boolean; previewSkipped?: boolean; deniedAck?: number; overall?: boolean; overallDecision?: 'confirmed' | 'rejected' }) {
     if (!this.enter(id)) throw new Error(MESSAGES.busy); // 与保存/放弃/撤销/重新检查互斥，避免同时改同一份记录
     try {
       return await this.confirmInner(id, update);
@@ -488,18 +493,39 @@ export class TaskRunner extends EventEmitter {
     }
   }
 
-  private async confirmInner(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; previewed?: boolean; previewSkipped?: boolean; deniedAck?: number; overall?: boolean }) {
+  private async confirmInner(id: string, update: { criterion?: number; decision?: 'confirmed' | 'rejected'; note?: string; previewed?: boolean; previewSkipped?: boolean; deniedAck?: number; overall?: boolean; overallDecision?: 'confirmed' | 'rejected' }) {
     const t = await this.load(id);
     if (t.state !== 'reviewing' || !t.card) throw new Error('任务不在验收阶段。');
     if (t.card.items.some((i) => i.key === 'drivers')) throw new Error(MESSAGES.externalDriver);
-    if (update.overall !== undefined) {
+    if (update.overall !== undefined || update.overallDecision !== undefined) {
       if (t.criteria.length > 0) throw new Error('这个任务有验收标准，请逐条确认。');
-      t.overallConfirmed = update.overall;
+      const dec = update.overallDecision ?? (update.overall ? 'confirmed' : undefined);
+      if (dec === 'confirmed') {
+        t.overallConfirmed = true;
+        t.overallDecision = 'confirmed';
+        delete t.overallNote;
+      } else if (dec === 'rejected') {
+        t.overallConfirmed = false;
+        t.overallDecision = 'rejected';
+        const note = update.note?.trim();
+        if (note) t.overallNote = note;
+        else delete t.overallNote;
+      } else {
+        t.overallConfirmed = update.overall;
+        if (!t.overallConfirmed) delete t.overallDecision;
+      }
     }
     if (update.criterion !== undefined) {
       const c = t.criteria[update.criterion];
       if (!c || !update.decision) throw new Error('无效的验收标准。');
       c.decision = update.decision;
+      if (update.decision === 'confirmed') {
+        delete c.note;
+      } else {
+        const note = update.note?.trim();
+        if (note) c.note = note;
+        else delete c.note;
+      }
     }
     if (update.previewed !== undefined) {
       t.previewed = update.previewed;
@@ -557,10 +583,15 @@ export class TaskRunner extends EventEmitter {
     const t = await this.ensureReviewed(id);
     if (t.manualReview) throw new Error(MESSAGES.abnormal);
     if (t.card?.items.some((i) => i.key === 'drivers')) throw new Error(MESSAGES.externalDriver);
-    t.criteria.forEach((c) => delete c.decision);
+    t.criteria.forEach((c) => {
+      delete c.decision;
+      delete c.note;
+    });
     t.previewed = false;
     t.previewSkipped = false;
     t.overallConfirmed = false;
+    delete t.overallDecision;
+    delete t.overallNote;
     delete t.acceptedTree;
     delete t.checksVoid;
     delete t.uncheckedConfirm;

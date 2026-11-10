@@ -61,6 +61,21 @@ export function deniedText(d: DeniedOperation): string {
   }
 }
 
+/** 被拒绝操作对本次任务的影响（纯大白话，无内部名词或命令原文） */
+export function deniedImpactText(d: DeniedOperation): string {
+  switch (d.kind) {
+    case 'network':
+      return '这个任务没有开启联网权限。AI 会在不联网的情况下继续尝试，不需要你处理。';
+    case 'write_file':
+    case 'delete_file':
+      return '超出允许修改范围的写操作已拦下，你的其他文件保持原样，不需要你处理。';
+    case 'run_command':
+      return '超出本次授权范围的命令已自动拦下，不会影响你的项目，不需要你处理。';
+    default:
+      return '该操作超出本次授权范围，已自动拦下，不需要你处理。';
+  }
+}
+
 /**
  * 清理 AI 自述文字：隐去绝对路径与形如“npm run …”“rm -rf …”的命令片段（启发式，宁可多隐去）。
  * 这是展示前的最后一道，避免 AI 的话把命令或本机路径带进界面。

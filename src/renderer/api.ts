@@ -46,7 +46,7 @@ export type {
 } from '../core/app/task-view.js';
 export type { TaskClassification, TaskStage, TaskOutcome, WorkbenchGroup } from '../core/app/task-state-view.js';
 export type { OpenProjectSummary, CloseProjectResult, WorkbenchEntry, WorkbenchNextAction, WorkbenchView } from '../core/app/open-projects.js';
-export type { UserAcceptanceView, ViewItem, ViewChange, ActionState, SaveRecordView, UncheckedConfirmView } from '../core/acceptance/view.js';
+export type { UserAcceptanceView, ViewItem, ViewChange, ActionState, SaveRecordView, UncheckedConfirmView, AcceptanceStatusView, AcceptanceStatusKind, AcceptedRiskView } from '../core/acceptance/view.js';
 export type { ChangePreview, Hunk } from '../core/acceptance/snippets.js';
 export type { AcceptanceActionResult } from '../core/app/task-controller.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
@@ -71,6 +71,7 @@ interface StudioApi {
   openPreview(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   skipPreview(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   confirmCriterion(projectId: string, id: string, itemId: string, version: string): Promise<AcceptanceActionResult>;
+  rejectCriterion(projectId: string, id: string, itemId: string, version: string, reason: string): Promise<AcceptanceActionResult>;
   confirmOverall(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   ackDenied(projectId: string, id: string, itemId: string, version: string): Promise<AcceptanceActionResult>;
   recheck(projectId: string, id: string): Promise<AcceptanceActionResult>;

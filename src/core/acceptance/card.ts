@@ -41,6 +41,8 @@ export interface AcceptanceCard {
 export interface CriterionState {
   text: string;
   decision?: 'confirmed' | 'rejected';
+  /** 用户判为“不符合”时附带的一句话说明（选填） */
+  note?: string;
 }
 
 function exitItem(o: ExitOutcome): AcceptanceItem {

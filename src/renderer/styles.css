@@ -613,3 +613,43 @@ blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--col
   outline: 2px solid var(--color-warn);
   outline-offset: 2px;
 }
+
+.choice-pair {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.choice-btn {
+  padding: 4px 10px;
+  font-size: var(--text-muted);
+}
+.choice-btn.active-ok {
+  border-color: var(--color-ok);
+  color: var(--color-ok);
+  background: var(--color-stage-done-bg);
+}
+.choice-btn.active-bad {
+  border-color: var(--color-warn);
+  color: var(--color-warn-ink);
+  background: var(--color-warn-bg);
+}
+.crit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.crit-card:last-child { border-bottom: none; }
+.round-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.round-pill[data-active="true"] {
+  border-color: var(--color-primary);
+  background: var(--color-primary-tint);
+  color: var(--color-primary-hover);
+  font-weight: 700;
+}

@@ -8,7 +8,7 @@ import type { OpFail } from '../task/runner.js';
 import { STATE_TEXT } from '../app/task-view.js';
 import { extractIncomplete, type IncompleteReport } from './incomplete.js';
 import type { ChangePreview } from './snippets.js';
-import { deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from './texts.js';
+import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from './texts.js';
 
 export { acceptanceVersion };
 
@@ -60,24 +60,42 @@ export interface UncheckedConfirmView {
   confirmButtonText: string;
 }
 
+export type AcceptanceStatusKind = 'passed' | 'incomplete' | 'failed';
+
+export interface AcceptanceStatusView {
+  kind: AcceptanceStatusKind;
+  label: '验收通过' | '验收未完成' | '验收未通过';
+  reason: string;
+  showSaveButton: boolean;
+}
+
+export interface AcceptedRiskView {
+  title: string;
+  reason: string;
+}
+
 export interface UserAcceptanceView {
   taskId: string;
   goal: string;
   state: TaskState;
   stateText: string;
   verdict: string;
+  acceptanceStatus: AcceptanceStatusView;
   items: ViewItem[];
   changes: ViewChange[];
-  criteria: { id: string; text: string; confirmed: boolean }[];
+  criteria: { id: string; text: string; confirmed: boolean; rejected: boolean; note?: string }[];
   /** 没有验收标准时，用户对“我已看过改动，结果符合我的要求”的整体确认 */
-  overall: { needed: boolean; confirmed: boolean; text: string };
+  overall: { needed: boolean; confirmed: boolean; rejected: boolean; note?: string; text: string };
   /** 被拦下的操作：只能逐条确认知晓 */
-  denied: { id: string; text: string; acked: boolean }[];
+  denied: { id: string; text: string; impact: string; acked: boolean }[];
   notes: string[];
+  /** 阶段 5 预留：用户确认并驳回评审意见后保留下来的已知风险 */
+  acceptedRisks: AcceptedRiskView[];
   /** AI 自己报告没做成的事（只是 AI 的说法，已隐去命令与本机路径） */
   aiReport: IncompleteReport;
   unexpectedRequests: number;
   actions: { save: ActionState; discard: ActionState; recheck: ActionState; undo: ActionState; retryCleanup: ActionState };
+  reworkAction: ActionState;
   confirmTexts: { discard: string; undo: string; save: string | null };
   /** 项目状态异常：禁止一切写操作，只读 */
   readOnly: boolean;
@@ -285,6 +303,57 @@ function verdictFor(t: Task, blockers: BlockerCode[], saveFail: { message: strin
   }
 }
 
+/** 核心层计算验收状态：验收通过 / 验收未完成 / 验收未通过（v1.0 不做部分通过） */
+export function computeAcceptanceStatus(
+  t: Task,
+  opts: { save: ActionState; deniedAllAcked: boolean; anyUnchecked: boolean; verdict: string },
+): AcceptanceStatusView {
+  if (t.manualReview) {
+    return { kind: 'incomplete', label: '验收未完成', reason: MESSAGES.abnormal, showSaveButton: false };
+  }
+  const hasCriteria = t.criteria.length > 0;
+  const anyRejected = hasCriteria ? t.criteria.some((c) => c.decision === 'rejected') : t.overallDecision === 'rejected';
+  if (anyRejected) {
+    return {
+      kind: 'failed',
+      label: '验收未通过',
+      reason: '有验收标准被判为「不符合」，请退回修改或放弃；必须全部符合后才能保存。',
+      showSaveButton: false,
+    };
+  }
+  const remaining = hasCriteria ? t.criteria.filter((c) => c.decision !== 'confirmed').length : t.overallConfirmed === true ? 0 : 1;
+  if (remaining > 0) {
+    return {
+      kind: 'incomplete',
+      label: '验收未完成',
+      reason: hasCriteria ? `还有 ${remaining} 条验收标准没确认` : VIEW_TEXT.blockers.overall_unconfirmed,
+      showSaveButton: true,
+    };
+  }
+  if (!opts.deniedAllAcked) {
+    return {
+      kind: 'incomplete',
+      label: '验收未完成',
+      reason: VIEW_TEXT.blockers.denied_unacked,
+      showSaveButton: true,
+    };
+  }
+  if (t.state === 'reviewing' && opts.save.enabled) {
+    return {
+      kind: 'passed',
+      label: '验收通过',
+      reason: opts.anyUnchecked ? '每条验收标准已确认「符合」（注意：部分自动检查未运行）。' : '每条验收标准已确认「符合」，可以保存到项目。',
+      showSaveButton: true,
+    };
+  }
+  return {
+    kind: 'incomplete',
+    label: '验收未完成',
+    reason: opts.save.reason ?? opts.verdict,
+    showSaveButton: t.state === 'reviewing',
+  };
+}
+
 export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcceptanceView {
   const card = t.card;
   const denied = t.denied ?? [];
@@ -380,9 +449,24 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
   } else undo = off(VIEW_TEXT.noUndo);
 
   const retryCleanup: ActionState = lock ? off(lock) : state === 'saved_cleanup_pending' || state === 'discard_cleanup_pending' ? on() : off(VIEW_TEXT.noCleanup);
+  const hasDrivers = !!card?.items.some((i) => i.key === 'drivers');
+  const reworkAction: ActionState = lock
+    ? off(lock)
+    : !reviewing
+      ? off(VIEW_TEXT.noSave)
+      : hasDrivers
+        ? off(MESSAGES.externalDriver)
+        : !t.worktree?.path
+          ? off('任务副本不存在，不能退回修改。')
+          : on();
 
   const extra = hasExternalImpact(t);
   const verdict = verdictFor(t, blockers, saveFail, anyFailed, anyUnchecked);
+  const deniedAllAcked = denied.every((_, i) => acks[i] === true);
+  const acceptanceStatus = computeAcceptanceStatus(t, { save, deniedAllAcked, anyUnchecked, verdict });
+  const acceptedRisks: AcceptedRiskView[] = (t.acceptedRisks ?? [])
+    .filter((r) => typeof r?.title === 'string' && r.title.trim())
+    .map((r) => ({ title: scrubAiText(r.title), reason: scrubAiText(r.reason ?? '') }));
   const summary = [
     `任务编号：${t.id}`,
     `状态：${STATE_TEXT[t.state]}`,
@@ -415,15 +499,30 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     state,
     stateText: STATE_TEXT[state],
     verdict,
+    acceptanceStatus,
     items,
     changes,
-    criteria: t.criteria.map((c, i) => ({ id: `c${i}`, text: c.text, confirmed: c.decision === 'confirmed' })),
-    overall: { needed: needsOverall && !!card, confirmed: t.overallConfirmed === true, text: '我已看过改动，结果符合我的要求' },
-    denied: denied.map((d, i) => ({ id: `d${i}`, text: deniedText(d), acked: acks[i] === true })),
+    criteria: t.criteria.map((c, i) => ({
+      id: `c${i}`,
+      text: c.text,
+      confirmed: c.decision === 'confirmed',
+      rejected: c.decision === 'rejected',
+      ...(c.note ? { note: scrubAiText(c.note) } : {}),
+    })),
+    overall: {
+      needed: needsOverall && !!card,
+      confirmed: t.overallConfirmed === true,
+      rejected: t.overallDecision === 'rejected',
+      ...(t.overallNote ? { note: scrubAiText(t.overallNote) } : {}),
+      text: '我已看过改动，结果符合我的要求',
+    },
+    denied: denied.map((d, i) => ({ id: `d${i}`, text: deniedText(d), impact: deniedImpactText(d), acked: acks[i] === true })),
     notes,
+    acceptedRisks,
     aiReport,
     unexpectedRequests: unexpected,
     actions: { save, discard, recheck, undo, retryCleanup },
+    reworkAction,
     confirmTexts: {
       discard: `${VIEW_TEXT.discardConfirm}${MESSAGES.discardDone}${extra ? MESSAGES.discardExtra : ''}`,
       undo: `${VIEW_TEXT.undoConfirm}${extra ? MESSAGES.undoExtra : ''}`,

@@ -54,7 +54,7 @@ export function TaskPage({
   const acceptDone = !showStopped && stage === 'ended';
   const acceptCur = !showStopped && stage === 'reviewing';
 
-  const useBare = showRun || showPlan || showStopped;
+  const useBare = showRun || showPlan || showStopped || !error;
 
   return (
     <main className="main" data-testid="task-page" aria-label={task.goal}>
@@ -123,6 +123,7 @@ export function TaskPage({
             projectId={projectId}
             task={task}
             onChanged={onAcceptanceChanged}
+            onBackToProject={onBackToProject}
           />
         )}
       </div>

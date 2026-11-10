@@ -7,7 +7,7 @@ import type { FileChange } from '../git/git.js';
 import { describePermissions, type PermissionSummary } from './permission-text.js';
 import { extractIncomplete } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
-import { deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
+import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
 import { MESSAGES } from '../task/messages.js';
 import { classifyTaskState, hasQuotaExhaustedError, sliceLatestRun, type TaskClassification } from './task-state-view.js';
 
@@ -201,20 +201,6 @@ function describeToolAction(text: string, worktreeChanges: FileChange[] = []): s
   return '正在使用其他工具';
 }
 
-function deniedImpact(d: DeniedOperation): string {
-  switch (d.kind) {
-    case 'network':
-      return '这个任务没有开启联网权限。AI 会在不联网的情况下继续尝试，不需要你处理。';
-    case 'write_file':
-    case 'delete_file':
-      return '超出允许修改范围的写操作已拦下，你的其他文件保持原样，不需要你处理。';
-    case 'run_command':
-      return '超出本次授权范围的命令已自动拦下，不会影响你的项目，不需要你处理。';
-    default:
-      return '该操作超出本次授权范围，已自动拦下，不需要你处理。';
-  }
-}
-
 function buildBuildingView(task: Task, opts: { running: boolean; worktreeChanges?: FileChange[] }): BuildingView {
   const caps = task.plan?.capabilities;
   const fullTrust = caps?.constructionMode === 'full_trust';
@@ -266,7 +252,7 @@ function buildBuildingView(task: Task, opts: { running: boolean; worktreeChanges
 
   const problems: BuildingProblem[] = (task.denied ?? []).map((d) => ({
     text: deniedText(d),
-    impact: deniedImpact(d),
+    impact: deniedImpactText(d),
   }));
 
   if (problems.length > 0 && !entries.some((e) => e.kind === 'permission')) {

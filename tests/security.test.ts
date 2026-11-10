@@ -276,9 +276,10 @@ describe('安全基线（防回归）', () => {
     // 额外文件夹由主进程弹系统选择框取得，渲染进程不传路径。
     // 阶段 2 第一部分修订（A3，仅同步方法清单/参数形态）：每个任务、项目状态与验收方法最前面加 projectId: string，并登记 projects:listOpen / projects:close / workbench:get 三个方法，不得出现宽松类型。
     // 阶段 3 修订（仅按前例同步登记 continueTask，参数为 projectId: string, id: string，不放宽任何参数形态）
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
-    expect(entries).toHaveLength(33);
-    const SHAPES = ['', 'id: string', 'projectId: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string'];
+    // 阶段 4 修订（仅按前例同步登记 rejectCriterion，参数为 projectId: string, id: string, itemId: string, version: string, reason: string，不放宽任何参数形态）
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
+    expect(entries).toHaveLength(34);
+    const SHAPES = ['', 'id: string', 'projectId: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
       expect(e.params, `${e.name} 不得有路径类参数`).not.toMatch(/\b(?:path|paths|dir|dirs|folder|file|filename|cwd|url)\b\s*:/i);
@@ -290,7 +291,7 @@ describe('安全基线（防回归）', () => {
     // 每个 IPC 通道在主进程中都有处理函数，且主进程处理函数的参数形态同样固定
     const main = read('src/main/index.ts');
     for (const e of entries) expect(main, e.channel).toContain(`ipcMain.handle('${e.channel}'`);
-    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, projectId: unknown', '_e, consent: unknown', '_e, projectId: unknown, request: unknown', '_e, projectId: unknown, id: unknown', '_e, projectId: unknown, id: unknown, plan: unknown', '_e, projectId: unknown, id: unknown, key: unknown', '_e, projectId: unknown, id: unknown, ack: unknown', '_e, projectId: unknown, id: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown'];
+    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, projectId: unknown', '_e, consent: unknown', '_e, projectId: unknown, request: unknown', '_e, projectId: unknown, id: unknown', '_e, projectId: unknown, id: unknown, plan: unknown', '_e, projectId: unknown, id: unknown, key: unknown', '_e, projectId: unknown, id: unknown, ack: unknown', '_e, projectId: unknown, id: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown, reason: unknown'];
     for (const m of main.matchAll(/ipcMain\.handle\('[^']+',\s*(?:async\s*)?\(([^)]*)\)/g)) {
       expect(MAIN_SHAPES, m[1]).toContain(m[1]);
     }
@@ -470,6 +471,7 @@ describe('安全基线（防回归）', () => {
         openPreview: 'projectId: string, id: string, version: string',
         skipPreview: 'projectId: string, id: string, version: string',
         confirmCriterion: 'projectId: string, id: string, itemId: string, version: string',
+        rejectCriterion: 'projectId: string, id: string, itemId: string, version: string, reason: string',
         confirmOverall: 'projectId: string, id: string, version: string',
         ackDenied: 'projectId: string, id: string, itemId: string, version: string',
         recheck: 'projectId: string, id: string',
@@ -792,8 +794,8 @@ describe('安全基线（防回归）', () => {
     it('每个接收 projectId 的 IPC 处理函数都先校验 projectId 在已打开项目表中', () => {
       const handlerPattern = /ipcMain\.handle\('([^']+)',\s*\(([^)]*)\)\s*=>\s*([^\n]+)\);/g;
       const guarded = [...main.matchAll(handlerPattern)].filter((m) => /\bprojectId\b/.test(m[2]!));
-      // 1 个 projects:close + 1 个 project:status + 9 个 tasks:* + 12 个 acceptance:* = 23 个带 projectId 的处理函数
-      expect(guarded).toHaveLength(23);
+      // 1 个 projects:close + 1 个 project:status + 9 个 tasks:* + 13 个 acceptance:* = 24 个带 projectId 的处理函数
+      expect(guarded).toHaveLength(24);
       const validBody = /^(?:controllerFor\(projectId\)\.\w+\(|projectStatus\(projectId\)|openProjects\.close\(projectId\))/;
       for (const m of guarded) {
         expect(m[3], `handler ${m[1]} 必须首先通过 openProjects 校验 projectId`).toMatch(validBody);

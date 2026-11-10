@@ -245,6 +245,7 @@ ipcMain.handle('acceptance:get', (_e, projectId: unknown, id: unknown) => contro
 ipcMain.handle('acceptance:openPreview', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).openPreview(id, version));
 ipcMain.handle('acceptance:skipPreview', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).skipPreview(id, version));
 ipcMain.handle('acceptance:confirmCriterion', (_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown) => controllerFor(projectId).confirmCriterion(id, itemId, version));
+ipcMain.handle('acceptance:rejectCriterion', (_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown, reason: unknown) => controllerFor(projectId).rejectCriterion(id, itemId, version, reason));
 ipcMain.handle('acceptance:confirmOverall', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).confirmOverall(id, version));
 ipcMain.handle('acceptance:ackDenied', (_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown) => controllerFor(projectId).ackDenied(id, itemId, version));
 ipcMain.handle('acceptance:recheck', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).recheck(id));

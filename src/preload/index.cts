@@ -29,6 +29,7 @@ const api = {
   openPreview: (projectId: string, id: string, version: string) => ipcRenderer.invoke('acceptance:openPreview', projectId, id, version),
   skipPreview: (projectId: string, id: string, version: string) => ipcRenderer.invoke('acceptance:skipPreview', projectId, id, version),
   confirmCriterion: (projectId: string, id: string, itemId: string, version: string) => ipcRenderer.invoke('acceptance:confirmCriterion', projectId, id, itemId, version),
+  rejectCriterion: (projectId: string, id: string, itemId: string, version: string, reason: string) => ipcRenderer.invoke('acceptance:rejectCriterion', projectId, id, itemId, version, reason),
   confirmOverall: (projectId: string, id: string, version: string) => ipcRenderer.invoke('acceptance:confirmOverall', projectId, id, version),
   ackDenied: (projectId: string, id: string, itemId: string, version: string) => ipcRenderer.invoke('acceptance:ackDenied', projectId, id, itemId, version),
   recheck: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:recheck', projectId, id),

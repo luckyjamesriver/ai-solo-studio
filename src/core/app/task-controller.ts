@@ -422,6 +422,30 @@ export class TaskController {
     }));
   }
 
+  async rejectCriterion(id: unknown, criterionId: unknown, version: unknown, reason: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    const cid = this.checkArg(/^(?:c\d{1,2}|overall)$/, criterionId);
+    const v = this.checkVersion(version);
+    if (typeof reason !== 'string' || reason.length > 500) throw new Error(VIEW_TEXT.invalidArgument);
+    const t0 = await this.load(tid);
+    if (cid === 'overall') {
+      if (t0.criteria.length > 0) throw new Error(VIEW_TEXT.invalidArgument);
+    } else if (Number(cid.slice(1)) >= t0.criteria.length) {
+      throw new Error(VIEW_TEXT.invalidArgument);
+    }
+    const trimmed = reason.trim();
+    return this.act(tid, this.confirmWork(v, async (t) => {
+      if (cid === 'overall') {
+        if (t.criteria.length > 0) throw new Error(VIEW_TEXT.invalidArgument);
+        await this.r().confirm(t.id, { overallDecision: 'rejected', ...(trimmed ? { note: trimmed } : {}) });
+        return;
+      }
+      const index = Number(cid.slice(1));
+      if (index >= t.criteria.length) throw new Error(VIEW_TEXT.invalidArgument);
+      await this.r().confirm(t.id, { criterion: index, decision: 'rejected', ...(trimmed ? { note: trimmed } : {}) });
+    }));
+  }
+
   async confirmOverall(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
     const tid = this.checkArg(TASK_ID, id);
     const v = this.checkVersion(version);
