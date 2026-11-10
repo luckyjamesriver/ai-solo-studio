@@ -135,4 +135,6 @@
 - 验证运行（`e57afe1`，首次双平台全绿，含 4 个阶段提交、[`4ae7d53`](https://github.com/luckyjamesriver/ai-solo-studio/commit/4ae7d53) 竞态修复、全部 44 项 E2E、7 张阶段 5b 截图）：[https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346)
   - `test (ubuntu-latest)`：`success`（1m3s，[job 129973983878](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346/job/129973983878)）
   - `test (macos-latest)`：`success`（4m47s，[job 129973983264](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346/job/129973983264)）
-- 含 `5a94366` 竞态修复后的推送运行：待完成回填。
+- 含 `5a94366` 竞态修复与最新报告更新的最终验证运行（`648279f`）：[https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42862171183](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42862171183)
+  - `test (ubuntu-latest)`：`success`（1m7s，[job 130000501631](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42862171183/job/130000501631)）
+  - `test (macos-latest)`：`success`（6m46s，[job 130000499797](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42862171183/job/130000499797)，首次推送因托管 macOS runner 容量排队未获分配，重跑失败 job 后全绿通过）
