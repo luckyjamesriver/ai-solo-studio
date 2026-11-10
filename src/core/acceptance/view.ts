@@ -1,4 +1,10 @@
-import { acceptanceVersion, type Task, type TaskRound } from '../task/model.js';
+import {
+  acceptanceVersion,
+  type LastSaveSnapshot,
+  type SaveProgressStep,
+  type Task,
+  type TaskRound,
+} from '../task/model.js';
 import type { TaskState } from '../task/state.js';
 import { canFire } from '../task/state.js';
 import { MESSAGES, uncheckedReasonText } from '../task/messages.js';
@@ -11,7 +17,7 @@ import type { DeniedOperation, ExitOutcome } from '../executor/types.js';
 import type { FileChange } from '../git/git.js';
 import type { AcceptanceCard } from './card.js';
 import { extractIncomplete, type IncompleteReport } from './incomplete.js';
-import { buildRoundProof, buildTaskProof, type ProofChangeEntry, type ProofDeniedEntry, type ProofTab, type SingleCheckProof, type TaskProofView, type TestCaseProof } from './proof.js';
+import { buildRoundProof, buildTaskProof, buildTaskProofFromParts, type ProofChangeEntry, type ProofDeniedEntry, type ProofTab, type SingleCheckProof, type TaskProofView, type TestCaseProof } from './proof.js';
 import type { ChangePreview } from './snippets.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from './texts.js';
 
@@ -103,6 +109,60 @@ export interface ReworkContextView {
   hasMultipleExecutors: boolean;
 }
 
+export type SaveOutcomeKind =
+  | 'saved'
+  | 'unchecked_needs_confirm'
+  | 'checks_failed'
+  | 'conflict'
+  | 'project_changed'
+  | 'failed_restored'
+  | 'manual_review'
+  | 'project_locked'
+  | 'blocked';
+
+export type SaveOutcomeButtonAction =
+  | 'done'
+  | 'view_history'
+  | 'open_preview'
+  | 'save_unchecked'
+  | 'rework'
+  | 'open_proof'
+  | 'open_conflict'
+  | 'retry_save'
+  | 'reveal_project'
+  | 'copy_summary'
+  | 'open_blocking_task'
+  | 'recheck';
+
+export interface SaveOutcomeButton {
+  action: SaveOutcomeButtonAction;
+  label: string;
+  primary?: boolean;
+  proofTab?: ProofTab;
+  targetTaskId?: string;
+}
+
+export interface SaveFailedCheckSummary {
+  key: 'build' | 'test';
+  label: string;
+  summary: string;
+}
+
+export interface SaveOutcomeView {
+  reason: string;
+  kind: SaveOutcomeKind;
+  tag: string;
+  warn: boolean;
+  headline: string;
+  files?: string[];
+  failedChecks?: SaveFailedCheckSummary[];
+  saveSteps: SaveProgressStep[];
+  buttons: SaveOutcomeButton[];
+  extraNote?: string;
+  blockingTaskId?: string;
+  blockingTaskGoal?: string;
+}
+
 export interface UserAcceptanceView {
   taskId: string;
   goal: string;
@@ -142,6 +202,10 @@ export interface UserAcceptanceView {
   uncheckedConfirm: UncheckedConfirmView | null;
   /** 检查依据详情页数据（按当前轮次绑定，已做命令行/环境变量/密钥/~路径过滤） */
   proof: TaskProofView;
+  /** 最近一次保存尝试失败时的试检查依据（供 #10-save-result 查看失败项跳转到 #08-evidence） */
+  trialProof: TaskProofView | null;
+  /** 最近一次保存尝试的结果视图（#10-save-result：含四步进度与单结果状态与按钮） */
+  saveOutcome: SaveOutcomeView | null;
   /** 当前轮次编号与各轮独立记录（多轮可切换对照） */
   currentRound: number;
   rounds: RoundSnapshotView[];
@@ -623,6 +687,53 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     ...(ctx.previews ? { previews: ctx.previews } : {}),
     ...(ctx.repoPath ? { repoPath: ctx.repoPath } : {}),
   });
+  const trialProof =
+    t.trialChecks?.length && t.lastSave?.reason === 'checks_failed'
+      ? buildTaskProofFromParts({
+          round: currentRound,
+          checks: t.trialChecks,
+          denied,
+          deniedAcks: acks,
+          changes: card?.changes ?? [],
+          previews: ctx.previews,
+          constructionMode: t.plan?.capabilities.constructionMode,
+          fallbackTime: t.lastSave.at,
+          filterOpts: {
+            ...(ctx.repoPath ? { repoPath: ctx.repoPath } : {}),
+            ...(t.worktree?.path ? { worktreePath: t.worktree.path } : {}),
+          },
+        })
+      : null;
+
+  let effectiveLastSave: LastSaveSnapshot | null = t.lastSave ?? null;
+  if (effectiveLastSave?.reason === 'unchecked_needs_confirm' && !uncheckedConfirm) {
+    effectiveLastSave = null;
+  } else if (!effectiveLastSave && uncheckedConfirm && t.uncheckedConfirm) {
+    effectiveLastSave = {
+      reason: 'unchecked_needs_confirm',
+      at: t.uncheckedConfirm.at,
+      saveSteps: defaultSaveSteps(),
+      uncheckedKind: uncheckedConfirm.kind,
+      ...(uncheckedConfirm.unavailableReason ? { unavailableReason: uncheckedConfirm.unavailableReason } : {}),
+    };
+  } else if (effectiveLastSave?.reason === 'project_locked' && ctx.saveCheck?.reason !== 'project_locked') {
+    effectiveLastSave = null;
+  } else if (['undone', 'discarded', 'discard_cleanup_pending'].includes(state)) {
+    effectiveLastSave = null;
+  }
+  const saveOutcome =
+    t.manualReview && (!effectiveLastSave || effectiveLastSave.reason !== 'abnormal')
+      ? buildSaveOutcomeView({
+          reason: 'abnormal',
+          at: t.manualReview.at,
+          saveSteps: effectiveLastSave?.saveSteps ?? defaultSaveSteps(),
+          ...(t.manualReview.files ? { files: t.manualReview.files } : {}),
+        })
+      : ctx.saveCheck?.reason === 'project_locked' && (!effectiveLastSave || effectiveLastSave.reason === 'project_locked')
+        ? buildSaveOutcomeFromFail(ctx.saveCheck)
+        : effectiveLastSave
+          ? buildSaveOutcomeView(effectiveLastSave)
+          : null;
 
   const needsOverall = t.criteria.length === 0;
   const criteriaViews = t.criteria.map((c, i) => ({
@@ -703,6 +814,8 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
       : null,
     uncheckedConfirm,
     proof,
+    trialProof,
+    saveOutcome,
     currentRound,
     rounds,
     rework: {
@@ -718,4 +831,188 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
       skipped: !t.previewed && !!t.previewSkipped,
     },
   };
+}
+
+export function defaultSaveSteps(): SaveProgressStep[] {
+  return [
+    { key: 'check_changes', label: '检查项目在验收期间是否有变化', status: 'pending' },
+    { key: 'trial_merge', label: '合并两边的改动', status: 'pending' },
+    { key: 'trial_checks', label: '合并后重新运行检查', status: 'pending' },
+    { key: 'final_verify', label: '写入前再确认一次', status: 'pending' },
+  ];
+}
+
+/** 把保存 / 撤销核心快照转换成 #10-save-result 视图（所有文案、按钮和出现条件均由核心层下发）。 */
+export function buildSaveOutcomeView(
+  snap: LastSaveSnapshot,
+  opts: { isUndo?: boolean; failOverride?: OpFail } = {},
+): SaveOutcomeView {
+  const saveSteps = snap.saveSteps?.length ? snap.saveSteps : defaultSaveSteps();
+  switch (snap.reason) {
+    case 'saved':
+      return {
+        reason: 'saved',
+        kind: 'saved',
+        tag: '已保存',
+        warn: false,
+        headline: snap.cleanupPending
+          ? '已保存。可以在保存记录里撤销；临时文件还没清理干净，请点「重试清理」。'
+          : '已保存。可以在保存记录里撤销',
+        saveSteps,
+        buttons: [
+          { action: 'done', label: '完成', primary: true },
+          { action: 'view_history', label: '查看保存记录' },
+        ],
+      };
+    case 'unchecked_needs_confirm':
+      return {
+        reason: 'unchecked_needs_confirm',
+        kind: 'unchecked_needs_confirm',
+        tag: '未检查',
+        warn: false,
+        headline: snap.uncheckedKind
+          ? uncheckedReasonText(snap.uncheckedKind, snap.unavailableReason)
+          : MESSAGES.uncheckedNeedsConfirm,
+        saveSteps,
+        buttons: [
+          { action: 'open_preview', label: VIEW_TEXT.uncheckedOpenPreview, primary: true },
+          { action: 'save_unchecked', label: VIEW_TEXT.uncheckedSaveAnyway },
+        ],
+      };
+    case 'checks_failed': {
+      const checks = snap.failedChecks ?? ['test'];
+      const totalN = snap.totalFailedItems ?? Math.max(1, checks.length);
+      const failedChecks: SaveFailedCheckSummary[] = checks.map((k) => {
+        const cnt = k === 'test' ? snap.failedCheckCounts?.test : snap.failedCheckCounts?.build;
+        return {
+          key: k,
+          label: k === 'build' ? '构建检查' : '自动测试',
+          summary: k === 'build' ? '构建未通过' : cnt && cnt > 0 ? `${cnt} 项测试未通过` : '测试未通过',
+        };
+      });
+      return {
+        reason: 'checks_failed',
+        kind: 'checks_failed',
+        tag: '检查失败',
+        warn: true,
+        headline: `合并后有 ${totalN} 项检查没通过，没有保存，你的项目没有变化`,
+        failedChecks,
+        saveSteps,
+        buttons: [
+          { action: 'rework', label: '退回修改', primary: true },
+          ...failedChecks.map((fc) => ({ action: 'open_proof' as const, label: `查看${fc.label}依据`, proofTab: fc.key as ProofTab })),
+        ],
+      };
+    }
+    case 'conflict':
+      return {
+        reason: 'conflict',
+        kind: 'conflict',
+        tag: '冲突',
+        warn: true,
+        headline: '两个任务改了同一处，无法自动合并，没有保存',
+        saveSteps,
+        buttons: [{ action: 'open_conflict', label: '看看怎么处理', primary: true }],
+      };
+    case 'project_changed':
+      return {
+        reason: 'project_changed',
+        kind: 'project_changed',
+        tag: '项目有变化',
+        warn: true,
+        headline: '检查期间项目又有新的改动，没有保存',
+        saveSteps,
+        buttons: [{ action: 'retry_save', label: '重新保存', primary: true }],
+      };
+    case 'failed_restored':
+      return {
+        reason: 'failed_restored',
+        kind: 'failed_restored',
+        tag: '保存失败 · 已安全恢复',
+        warn: true,
+        headline: '写入时出错，已把项目恢复并核对过与保存前一致；成果仍在任务副本里',
+        saveSteps,
+        buttons: [{ action: 'retry_save', label: '重试', primary: true }],
+      };
+    case 'abnormal':
+      return {
+        reason: 'abnormal',
+        kind: 'manual_review',
+        tag: opts.isUndo ? '撤销失败 · 恢复未确认' : '保存失败 · 恢复未确认',
+        warn: true,
+        headline: '写入中途出错，无法确认项目是否完好。已停止一切写入。',
+        ...(snap.files?.length ? { files: snap.files } : {}),
+        extraNote: '处理完之前，这个项目的所有任务都不能保存或撤销',
+        saveSteps,
+        buttons: [
+          { action: 'reveal_project', label: '在访达中显示项目' },
+          { action: 'copy_summary', label: '复制诊断摘要' },
+        ],
+      };
+    case 'project_locked': {
+      const blockingGoal = snap.blockingTaskGoal ? scrubAiText(snap.blockingTaskGoal) : '另一个任务';
+      return {
+        reason: 'project_locked',
+        kind: 'project_locked',
+        tag: '项目已锁定',
+        warn: true,
+        headline: `${blockingGoal} 的保存出了问题还没处理，这个项目暂时不能保存`,
+        ...(snap.blockingTaskId ? { blockingTaskId: snap.blockingTaskId } : {}),
+        blockingTaskGoal: blockingGoal,
+        saveSteps,
+        buttons: snap.blockingTaskId
+          ? [{ action: 'open_blocking_task', label: '去处理', primary: true, targetTaskId: snap.blockingTaskId }]
+          : [],
+      };
+    }
+    default: {
+      const fail: OpFail = opts.failOverride ?? {
+        ok: false,
+        reason: (snap.reason as OpFail['reason']) || 'failed',
+        detail: '',
+        ...(snap.files ? { files: snap.files } : {}),
+      };
+      const mapped = mapFailure(fail);
+      const isUndoRefused = fail.reason === 'undo_refused';
+      const headline =
+        isUndoRefused && !mapped.message.includes('没有改动任何文件')
+          ? `${mapped.message}（没有改动任何文件）`
+          : mapped.message;
+      const buttons: SaveOutcomeButton[] =
+        fail.reason === 'acceptance_invalid'
+          ? [{ action: 'recheck', label: '重新检查', primary: true }]
+          : fail.reason === 'failed'
+            ? [{ action: 'retry_save', label: '重试', primary: true }]
+            : [];
+      return {
+        reason: fail.reason,
+        kind: 'blocked',
+        tag: isUndoRefused ? '无法撤销' : opts.isUndo ? '撤销未完成' : '没有保存',
+        warn: true,
+        headline,
+        ...(mapped.files?.length ? { files: mapped.files } : snap.files?.length ? { files: snap.files } : {}),
+        saveSteps,
+        buttons,
+      };
+    }
+  }
+}
+
+export function buildSaveOutcomeFromFail(fail: OpFail, opts: { isUndo?: boolean; saveSteps?: SaveProgressStep[] } = {}): SaveOutcomeView {
+  return buildSaveOutcomeView(
+    {
+      reason: fail.reason,
+      at: new Date().toISOString(),
+      saveSteps: opts.saveSteps ?? defaultSaveSteps(),
+      ...(fail.files ? { files: fail.files.map(safeRelPath).filter((x): x is string => !!x) } : {}),
+      ...(fail.failedChecks ? { failedChecks: fail.failedChecks } : {}),
+      ...(fail.failedCheckCounts ? { failedCheckCounts: fail.failedCheckCounts } : {}),
+      ...(fail.totalFailedItems !== undefined ? { totalFailedItems: fail.totalFailedItems } : {}),
+      ...(fail.uncheckedKind ? { uncheckedKind: fail.uncheckedKind } : {}),
+      ...(fail.unavailableReason ? { unavailableReason: fail.unavailableReason } : {}),
+      ...(fail.blockingTaskId ? { blockingTaskId: fail.blockingTaskId } : {}),
+      ...(fail.blockingTask ? { blockingTaskGoal: fail.blockingTask } : {}),
+    },
+    { isUndo: opts.isUndo, failOverride: fail },
+  );
 }

@@ -5,13 +5,24 @@ import * as G from '../git/git.js';
 import { GitError } from '../git/git.js';
 import { MESSAGES } from '../task/messages.js';
 import { buildPreviews, type ChangePreview } from '../acceptance/snippets.js';
-import { acceptanceVersion, isVersionFormat, mapFailure, okMessage, toUserView, VIEW_TEXT, type UserAcceptanceView, type ViewContext } from '../acceptance/view.js';
+import {
+  acceptanceVersion,
+  buildSaveOutcomeFromFail,
+  isVersionFormat,
+  mapFailure,
+  okMessage,
+  toUserView,
+  VIEW_TEXT,
+  type SaveOutcomeView,
+  type UserAcceptanceView,
+  type ViewContext,
+} from '../acceptance/view.js';
 import { TaskRunner } from '../task/runner.js';
 import { detectScripts } from '../checks/scripts.js';
 import { resolveCapabilities } from '../capabilities/model.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
 import type { Executor } from '../executor/types.js';
-import type { Task } from '../task/model.js';
+import type { SaveProgressEvent, Task } from '../task/model.js';
 import type { Thinker } from '../thinking/types.js';
 import {
   buildSameAiNotice,
@@ -72,6 +83,8 @@ export interface ControllerOptions {
   getAiAvailability?: () => Promise<{ codexAvailable: boolean; claudeAvailable: boolean }>;
   /** 按思考者标识（codex / claude）构建 Thinker */
   makeThinkerByProvider?: (provider: AiProviderId, model?: string) => Thinker;
+  /** 保存前检查进度推送事件回调（主进程向渲染层推送实时步骤状态） */
+  onSaveProgress?: (ev: SaveProgressEvent) => void;
 }
 
 const EDITABLE = ['draft', 'clarifying', 'planned', 'approved'];
@@ -94,7 +107,12 @@ export class TaskController {
 
   /** 懒创建：第一次真正用到任务功能时才取得执行体 */
   private r(): TaskRunner {
-    this.runner ??= new TaskRunner({ repo: this.o.repo, executor: this.o.makeExecutor(), ...(this.o.storeOptions ? { storeOptions: this.o.storeOptions } : {}) });
+    if (!this.runner) {
+      this.runner = new TaskRunner({ repo: this.o.repo, executor: this.o.makeExecutor(), ...(this.o.storeOptions ? { storeOptions: this.o.storeOptions } : {}) });
+      this.runner.on('save_progress', (ev: SaveProgressEvent) => {
+        this.o.onSaveProgress?.(ev);
+      });
+    }
     return this.runner;
   }
 
@@ -464,20 +482,34 @@ export class TaskController {
     return this.acceptanceView(await this.load(id));
   }
 
-  private async result(id: string, r: { ok: boolean; message: string; files?: string[] | undefined }): Promise<AcceptanceActionResult> {
+  private async result(
+    id: string,
+    r: { ok: boolean; message: string; files?: string[] | undefined; saveOutcome?: SaveOutcomeView | undefined },
+  ): Promise<AcceptanceActionResult> {
     const t = await this.load(id);
-    return { ok: r.ok, message: r.message, ...(r.files?.length ? { files: r.files } : {}), view: await this.acceptanceView(t) };
+    const view = await this.acceptanceView(t);
+    const saveOutcome = view.saveOutcome ?? r.saveOutcome ?? undefined;
+    return {
+      ok: r.ok,
+      message: r.message,
+      ...(r.files?.length ? { files: r.files } : {}),
+      ...(saveOutcome ? { saveOutcome } : {}),
+      view,
+    };
   }
 
   /**
    * 执行一个会改动任务的操作：同步登记（重复点击 → busy）→ 异常写诊断并返回固定文案 → 返回刷新后的视图。
    * 异常状态（需要人工查看）的任务一律不接受写操作。
    */
-  private async act(id: string, work: (t: Task) => Promise<{ ok: boolean; message: string; files?: string[] | undefined }>): Promise<AcceptanceActionResult> {
+  private async act(
+    id: string,
+    work: (t: Task) => Promise<{ ok: boolean; message: string; files?: string[] | undefined; saveOutcome?: SaveOutcomeView | undefined }>,
+  ): Promise<AcceptanceActionResult> {
     await this.ready();
     if (this.ops.has(id) || this.r().isBusy(id)) return this.result(id, { ok: false, message: MESSAGES.busy });
     this.ops.add(id);
-    let outcome: { ok: boolean; message: string; files?: string[] | undefined };
+    let outcome: { ok: boolean; message: string; files?: string[] | undefined; saveOutcome?: SaveOutcomeView | undefined };
     try {
       const t = await this.load(id);
       if (t.manualReview) outcome = { ok: false, message: MESSAGES.abnormal };
@@ -617,9 +649,13 @@ export class TaskController {
     await this.load(tid);
     return this.act(tid, async (t) => {
       // 用户看到并确认的就是这一版：版本不一致（例如另一处已重新检查）一律不保存
-      if (v !== acceptanceVersion(t)) return { ok: false, message: MESSAGES.acceptanceInvalid };
+      if (v !== acceptanceVersion(t)) {
+        const fail = { ok: false as const, reason: 'acceptance_invalid' as const, detail: MESSAGES.acceptanceInvalid };
+        return { ok: false, message: MESSAGES.acceptanceInvalid, saveOutcome: buildSaveOutcomeFromFail(fail) };
+      }
       const r = await this.r().save(t.id, confirmUnchecked ? { confirmUnchecked: true } : undefined);
-      return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
+      if (r.ok) return { ok: true, message: okMessage(r.task) };
+      return { ok: false, ...mapFailure(r), saveOutcome: buildSaveOutcomeFromFail(r) };
     });
   }
 
@@ -920,10 +956,11 @@ export class TaskController {
 
 const TASK_ID = /^[a-z0-9-]{1,64}$/;
 
-/** 验收阶段各操作的返回：ok、固定文案、需要先处理的文件（相对路径）、刷新后的视图 */
+/** 验收阶段各操作的返回：ok、固定文案、需要先处理的文件（相对路径）、保存结果视图、刷新后的视图 */
 export interface AcceptanceActionResult {
   ok: boolean;
   message: string;
   files?: string[];
+  saveOutcome?: SaveOutcomeView;
   view: UserAcceptanceView;
 }

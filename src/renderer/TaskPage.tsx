@@ -19,6 +19,8 @@ interface TaskPageProps {
   onTaskReplaced?: (t: TaskView) => void;
   onAcceptanceChanged: () => void;
   onOpenAiSettings?: () => void;
+  onOpenHistory?: () => void;
+  onOpenTask?: (taskId: string) => void;
 }
 
 /**
@@ -38,6 +40,8 @@ export function TaskPage({
   onTaskReplaced,
   onAcceptanceChanged,
   onOpenAiSettings,
+  onOpenHistory,
+  onOpenTask,
 }: TaskPageProps) {
   const [ackStopToken, setAckStopToken] = useState<string | null>(null);
   useEffect(() => {
@@ -141,6 +145,8 @@ export function TaskPage({
             task={task}
             onChanged={onAcceptanceChanged}
             onBackToProject={onBackToProject}
+            {...(onOpenHistory ? { onOpenHistory } : {})}
+            {...(onOpenTask ? { onOpenTask } : {})}
           />
         )}
       </div>

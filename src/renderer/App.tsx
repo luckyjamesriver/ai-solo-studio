@@ -473,6 +473,8 @@ export function App() {
               refreshEnv();
               refreshAiSettings();
             }}
+            onOpenHistory={() => selectProject(screen.projectId, 'history')}
+            onOpenTask={(tid) => openTaskPage(screen.projectId, tid)}
           />
         )}
 

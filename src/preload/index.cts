@@ -1,5 +1,5 @@
 // 预加载脚本：只暴露白名单 API。sandbox 模式下必须是 CommonJS。
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 const api = {
   detectEnvironment: () => ipcRenderer.invoke('env:detect'),
@@ -62,6 +62,13 @@ const api = {
   retryCleanup: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:retryCleanup', projectId, id),
   // 项目状态异常时在访达中显示项目；无参数，位置由主进程决定
   revealProject: () => ipcRenderer.invoke('project:reveal'),
+  onSaveProgress: (listener: (ev: SaveProgressEvent) => void) => {
+    const handler = (_e: IpcRendererEvent, ev: SaveProgressEvent) => listener(ev);
+    ipcRenderer.on('acceptance:saveProgress', handler);
+    return () => {
+      ipcRenderer.removeListener('acceptance:saveProgress', handler);
+    };
+  },
 };
 
 /** 计划表单：只有文字、模式与布尔值 */
@@ -83,6 +90,13 @@ interface ProjectBriefInput {
   whatItIs: string;
   principles: string;
   targetUsers: string;
+}
+
+interface SaveProgressEvent {
+  projectId?: string;
+  taskId: string;
+  saveSteps: { key: string; label: string; status: string; detail?: string }[];
+  finished: boolean;
 }
 
 contextBridge.exposeInMainWorld('studio', api);

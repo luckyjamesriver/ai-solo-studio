@@ -1117,4 +1117,19 @@ describe('安全基线（防回归）', () => {
       expect(ai).not.toMatch(/DEV_PERSONAL_ENV/);
     });
   });
+
+  describe('阶段 6：保存进度、冲突、历史与撤销界面安全边界（只增不减）', () => {
+    it('onSaveProgress 事件只经受控频道推送脱敏四步状态，渲染层由核心层视图下发按钮与文案', () => {
+      const preload = read('src/preload/index.cts');
+      expect(preload).toMatch(/ipcRenderer\.on\('acceptance:saveProgress', handler\)/);
+      expect(preload).toContain('ipcRenderer.removeListener(\'acceptance:saveProgress\', handler)');
+      const mainSrc = read('src/main/index.ts');
+      expect(mainSrc).toContain("win.webContents.send('acceptance:saveProgress'");
+
+      const panel = read('src/renderer/SaveResultPanel.tsx');
+      // 渲染层不得写死结果判断逻辑或跳过受限文字检查（仍严格遵守 B4-2 不得出现禁用字面量）
+      expect(panel).not.toMatch(/仍然保存|强制保存|全部确认|让 ?AI ?修改/);
+      expect(panel).not.toMatch(/\b(?:rawOutput|currentChecks|evidence|command|stderr|stdout)\b/i);
+    });
+  });
 });

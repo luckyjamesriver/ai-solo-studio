@@ -2,7 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckProofPage } from './CheckProofPage.js';
 import { DiffPreview } from './DiffPreview.js';
 import { ReworkPage } from './ReworkPage.js';
-import { studio, type AcceptanceActionResult, type ProofTab, type RoundSnapshotView, type TaskView, type UserAcceptanceView } from './api.js';
+import { SaveResultPanel } from './SaveResultPanel.js';
+import {
+  studio,
+  type AcceptanceActionResult,
+  type ProofTab,
+  type RoundSnapshotView,
+  type SaveOutcomeButton,
+  type SaveOutcomeView,
+  type SaveProgressStep,
+  type TaskView,
+  type UserAcceptanceView,
+} from './api.js';
 import { COPY } from './copy.js';
 
 const KIND_TEXT: Record<string, string> = { added: '新增', modified: '修改', deleted: '删除', renamed: '改名', other: '变化' };
@@ -125,11 +136,15 @@ export function Acceptance({
   task,
   onChanged,
   onBackToProject,
+  onOpenHistory,
+  onOpenTask,
 }: {
   projectId: string;
   task: TaskView;
   onChanged: () => void;
   onBackToProject?: () => void;
+  onOpenHistory?: () => void;
+  onOpenTask?: (taskId: string) => void;
 }) {
   const [view, setView] = useState<UserAcceptanceView | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string; files?: string[] } | null>(null);
@@ -139,11 +154,25 @@ export function Acceptance({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
   const [proofTab, setProofTab] = useState<ProofTab | null>(null);
+  const [proofFromTrial, setProofFromTrial] = useState(false);
   const [showRework, setShowRework] = useState(false);
   const [selectedRound, setSelectedRound] = useState<number | null>(null);
+  const [liveSaveSteps, setLiveSaveSteps] = useState<SaveProgressStep[] | null>(null);
+  const [ephemeralOutcome, setEphemeralOutcome] = useState<SaveOutcomeView | null>(null);
   const prevCurrentRound = useRef<number | null>(null);
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    const api = window.studio;
+    if (!api || typeof api.onSaveProgress !== 'function') return;
+    return api.onSaveProgress((ev) => {
+      if (ev.taskId !== task.id) return;
+      if (ev.projectId && ev.projectId !== projectId) return;
+      setLiveSaveSteps(ev.saveSteps);
+      if (!ev.finished) setEphemeralOutcome(null);
+    });
+  }, [projectId, task.id]);
 
   const load = useCallback(() => {
     studio()
@@ -179,11 +208,16 @@ export function Acceptance({
     if (inFlight.current) return;
     inFlight.current = true;
     setMessage(null);
+    setEphemeralOutcome(null);
+    setLiveSaveSteps(null);
+    setProofFromTrial(false);
     setPending(true);
     setDialog(null);
     try {
       const r = await call(studio());
       setView(r.view);
+      setLiveSaveSteps(null);
+      setEphemeralOutcome(!r.view.saveOutcome && r.saveOutcome ? r.saveOutcome : null);
       const notes: Record<string, string> = {};
       for (const c of r.view.criteria) if (c.note !== undefined) notes[c.id] = c.note;
       if (r.view.overall.note !== undefined) notes.overall = r.view.overall.note;
@@ -195,6 +229,7 @@ export function Acceptance({
       );
       onChanged();
     } catch (e) {
+      setLiveSaveSteps(null);
       setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       inFlight.current = false;
@@ -206,6 +241,50 @@ export function Acceptance({
   if (!view) return <p className="muted">{COPY.noProgress}</p>;
 
   const v = view;
+  const activeSaveOutcome = liveSaveSteps ? null : (ephemeralOutcome ?? v.saveOutcome ?? null);
+  const handleSaveOutcomeAction = (btn: SaveOutcomeButton) => {
+    switch (btn.action) {
+      case 'done':
+        onBackToProject?.();
+        return;
+      case 'view_history':
+        onOpenHistory?.();
+        return;
+      case 'open_preview':
+        void run((s) => s.openPreview(projectId, v.taskId, v.version));
+        return;
+      case 'save_unchecked':
+        void run((s) => s.saveUncheckedTask(projectId, v.taskId, v.version));
+        return;
+      case 'rework':
+        setShowRework(true);
+        return;
+      case 'open_proof':
+        if (btn.proofTab) {
+          setProofFromTrial(!!v.trialProof);
+          setProofTab(btn.proofTab);
+        }
+        return;
+      case 'open_conflict':
+        load();
+        return;
+      case 'retry_save':
+        void run((s) => s.saveTask(projectId, v.taskId, v.version));
+        return;
+      case 'reveal_project':
+        void studio().revealProject();
+        return;
+      case 'copy_summary':
+        void copyText(v.diagnosticSummary).then((ok) => setCopied(ok));
+        return;
+      case 'open_blocking_task':
+        if (btn.targetTaskId) onOpenTask?.(btn.targetTaskId);
+        return;
+      case 'recheck':
+        void run((s) => s.recheck(projectId, v.taskId));
+        return;
+    }
+  };
   const activeRound: RoundSnapshotView | undefined =
     v.rounds.find((r) => r.round === (selectedRound ?? v.currentRound)) ?? v.rounds[v.rounds.length - 1];
   const viewingHistorical = !!activeRound && !activeRound.isCurrent;
@@ -219,7 +298,17 @@ export function Acceptance({
   const displayProof = activeRound?.proof ?? v.proof;
 
   if (proofTab) {
-    return <CheckProofPage proof={displayProof} initialTab={proofTab} onBack={() => setProofTab(null)} />;
+    const proofTarget = proofFromTrial && v.trialProof ? v.trialProof : displayProof;
+    return (
+      <CheckProofPage
+        proof={proofTarget}
+        initialTab={proofTab}
+        onBack={() => {
+          setProofTab(null);
+          setProofFromTrial(false);
+        }}
+      />
+    );
   }
 
   const a = v.actions;
@@ -304,15 +393,26 @@ export function Acceptance({
       {v.unexpectedRequests > 0 && <p role="alert" className="error" data-testid="unexpected">{COPY.unexpected}</p>}
 
       {v.readOnly ? (
-        <div className="readonly" data-testid="readonly-panel">
-          <p data-testid="verdict">{v.verdict}</p>
-          <p>{COPY.readOnlyHint}</p>
-          <div className="row">
-            <button className="secondary" data-testid="reveal-project" onClick={() => void studio().revealProject()}>{COPY.revealProject}</button>
-            <button className="secondary" data-testid="copy-summary" onClick={async () => setCopied(await copyText(v.diagnosticSummary))}>{COPY.copySummary}</button>
+        <div className="stack">
+          {activeSaveOutcome && (
+            <SaveResultPanel
+              liveSteps={null}
+              outcome={activeSaveOutcome}
+              busy={pending}
+              hideButtons={true}
+              onAction={handleSaveOutcomeAction}
+            />
+          )}
+          <div className="readonly" data-testid="readonly-panel">
+            <p data-testid="verdict">{v.verdict}</p>
+            <p>{COPY.readOnlyHint}</p>
+            <div className="row">
+              <button className="secondary" data-testid="reveal-project" onClick={() => void studio().revealProject()}>{COPY.revealProject}</button>
+              <button className="secondary" data-testid="copy-summary" onClick={async () => setCopied(await copyText(v.diagnosticSummary))}>{COPY.copySummary}</button>
+            </div>
+            {copied && <p className="muted" role="status" data-testid="copy-done">{COPY.copied}</p>}
+            <pre className="snippet" data-testid="summary-text">{v.diagnosticSummary}</pre>
           </div>
-          {copied && <p className="muted" role="status" data-testid="copy-done">{COPY.copied}</p>}
-          <pre className="snippet" data-testid="summary-text">{v.diagnosticSummary}</pre>
         </div>
       ) : reviewing ? (
         <div className="g2">
@@ -613,7 +713,14 @@ export function Acceptance({
                     <>
                       <button
                         type="button"
-                        className={v.uncheckedConfirm || a.recheck.highlight ? 'secondary' : ''}
+                        className={
+                          v.uncheckedConfirm ||
+                          a.recheck.highlight ||
+                          !!liveSaveSteps ||
+                          !!activeSaveOutcome?.buttons.some((b) => b.primary)
+                            ? 'secondary'
+                            : ''
+                        }
                         data-testid="save-button"
                         disabled={disabled(a.save.enabled)}
                         onClick={() => run((s) => s.saveTask(projectId, v.taskId, v.version))}
@@ -621,43 +728,28 @@ export function Acceptance({
                       >
                         {COPY.acceptAndSaveButton}
                       </button>
-                      {!a.save.enabled && a.save.reason && (
+                      {!a.save.enabled && a.save.reason && !activeSaveOutcome && (
                         <p className="muted" data-testid="save-reason">{a.save.reason}</p>
                       )}
-                      {!a.save.enabled && a.save.files && (
+                      {!a.save.enabled && a.save.files && !activeSaveOutcome && (
                         <ul className="muted" data-testid="save-files">{a.save.files.map((f) => <li key={f}>{f}</li>)}</ul>
                       )}
                     </>
                   )}
 
-                  {v.uncheckedConfirm && (
-                    <div className="confirm-panel" role="alertdialog" aria-modal="false" data-testid="unchecked-confirm-panel">
-                      <p data-testid="unchecked-confirm-reason">{v.uncheckedConfirm.reason}</p>
-                      <div className="row" style={{ marginTop: '8px' }}>
-                        <button
-                          type="button"
-                          data-testid="unchecked-preview-button"
-                          disabled={pending}
-                          onClick={() => run((s) => s.openPreview(projectId, v.taskId, v.version))}
-                        >
-                          {v.uncheckedConfirm.previewButtonText}
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary"
-                          data-testid="unchecked-confirm-save-button"
-                          disabled={pending || !a.save.enabled}
-                          onClick={() => run((s) => s.saveUncheckedTask(projectId, v.taskId, v.version))}
-                        >
-                          {v.uncheckedConfirm.confirmButtonText}
-                        </button>
-                      </div>
-                    </div>
+                  {(liveSaveSteps || activeSaveOutcome) && (
+                    <SaveResultPanel
+                      liveSteps={liveSaveSteps}
+                      outcome={activeSaveOutcome}
+                      busy={pending}
+                      copied={copied}
+                      onAction={handleSaveOutcomeAction}
+                    />
                   )}
 
                   <button
                     type="button"
-                    className={statusKind === 'failed' ? '' : 'secondary'}
+                    className={statusKind === 'failed' && !activeSaveOutcome?.buttons.some((b) => b.primary) ? '' : 'secondary'}
                     data-testid="rework-button"
                     disabled={disabled(v.reworkAction.enabled)}
                     onClick={() => setShowRework(true)}
@@ -722,6 +814,16 @@ export function Acceptance({
       ) : (
         <div className="stack">
           <p className="headline" data-testid="verdict">{v.verdict}</p>
+
+          {!viewingHistorical && activeSaveOutcome && (
+            <SaveResultPanel
+              liveSteps={null}
+              outcome={activeSaveOutcome}
+              busy={pending}
+              copied={copied}
+              onAction={handleSaveOutcomeAction}
+            />
+          )}
 
           {displayItems.length > 0 && (
             <section className="box facts" data-testid="facts">

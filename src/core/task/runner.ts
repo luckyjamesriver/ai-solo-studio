@@ -7,7 +7,18 @@ import { saveBlockers } from './save-rules.js';
 import { TaskStore, type SaveOptions } from './store.js';
 import { RecordStore, StaleRunError, type OpenOptions } from '../persistence/index.js';
 import { resolveCapabilities, type Capabilities } from '../capabilities/model.js';
-import { acceptanceVersion, type OpLog, type Plan, type StoredCheckProof, type Task, type TaskRound, type TimelineEntry } from './model.js';
+import {
+  acceptanceVersion,
+  type LastSaveSnapshot,
+  type OpLog,
+  type Plan,
+  type SaveProgressEvent,
+  type SaveProgressStep,
+  type StoredCheckProof,
+  type Task,
+  type TaskRound,
+  type TimelineEntry,
+} from './model.js';
 import type { Decision, DeniedOperation, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
 import {
@@ -23,7 +34,8 @@ import {
   type UncheckedKind,
 } from '../checks/scripts.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
-import { deniedText } from '../acceptance/texts.js';
+import { filterProofOutput, parseTestCases } from '../acceptance/proof.js';
+import { deniedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
 import { recordProcess, verifyNoLiveExecutor, type ProcessProbe } from './process-check.js';
 
@@ -62,10 +74,14 @@ export interface OpFail {
   files?: string[];
   /** checks_failed 时未通过的检查项 */
   failedChecks?: CheckName[];
+  /** checks_failed 时各检查失败数量与总失败数 */
+  failedCheckCounts?: { build?: number; test?: number };
+  totalFailedItems?: number;
   /** unchecked_needs_confirm 时未检查的类型与具体原因 */
   uncheckedKind?: UncheckedKind;
   unavailableReason?: UnavailableReason;
-  /** project_locked 时正处于 manualReview 的阻塞任务名称 */
+  /** project_locked 时正处于 manualReview 的阻塞任务编号与名称 */
+  blockingTaskId?: string;
   blockingTask?: string;
   /** undo_refused 时挡住当前撤销的后续保存列表 */
   blockingSaves?: BlockingSave[];
@@ -443,22 +459,8 @@ export class TaskRunner extends EventEmitter {
         });
         this.log(t, 'check', `${name}: ${c.status}`);
         checks.push(c);
-        const ranAt = new Date().toISOString();
-        if (c.status === 'not_available') {
-          checkProofs.push({ name, status: 'not_available', env: checkEnv, unavailableReason: c.reason });
-        } else {
-          checkProofs.push({
-            name,
-            status: c.status,
-            ranAt,
-            durationMs: c.durationMs,
-            env: checkEnv,
-            rawOutput: c.output,
-            exitKind: c.outcome.kind,
-            ...(c.outcome.kind === 'exited' ? { exitCode: c.outcome.code } : {}),
-          });
-        }
       }
+      checkProofs = toStoredCheckProofs(checks, checkEnv, new Date().toISOString());
     }
     let tree = tree1;
     if (checks.length) {
@@ -515,6 +517,8 @@ export class TaskRunner extends EventEmitter {
       t.overallConfirmed = false;
       delete t.overallDecision;
       delete t.overallNote;
+      delete t.lastSave;
+      delete t.trialChecks;
       t.deniedAcks = t.denied.map(() => false);
       await this.buildEvidence(t);
       await this.persist(t);
@@ -706,6 +710,8 @@ export class TaskRunner extends EventEmitter {
     delete t.acceptedTree;
     delete t.checksVoid;
     delete t.uncheckedConfirm;
+    delete t.lastSave;
+    delete t.trialChecks;
     delete t.card;
     delete t.exit;
     delete t.currentChecks;
@@ -774,12 +780,49 @@ export class TaskRunner extends EventEmitter {
     return null;
   }
 
+  private emitSaveProgress(taskId: string, saveSteps: SaveProgressStep[], finished: boolean): void {
+    this.emit('save_progress', {
+      taskId,
+      saveSteps: saveSteps.map((s) => ({ ...s })),
+      finished,
+    } satisfies SaveProgressEvent);
+  }
+
+  private async describeProjectMovement(
+    repo: string,
+    baseHead: string,
+    currentHead: string,
+    excludeTaskId: string,
+  ): Promise<string> {
+    if (baseHead === currentHead) return '没有新的改动';
+    const commits = await G.firstParentCommitsAfter(repo, baseHead).catch(() => null);
+    if (!commits || commits.length === 0) return '有：项目里后来的改动';
+    const latest = commits[0]!;
+    const tasks = await this.store.list();
+    const owner = tasks.find((x) => x.id !== excludeTaskId && x.saveRecord?.mergeCommit === latest.sha);
+    if (owner) {
+      const name = scrubAiText(owner.plan?.goal ?? owner.request);
+      return commits.length === 1 ? `有：「${name}」刚保存过` : `有：「${name}」等 ${commits.length} 次改动`;
+    }
+    const saveMsg = latest.message.match(/^studio: 保存「(.+)」$/);
+    if (saveMsg) {
+      const name = scrubAiText(saveMsg[1]!);
+      return commits.length === 1 ? `有：「${name}」刚保存过` : `有：「${name}」等 ${commits.length} 次改动`;
+    }
+    const undoMsg = latest.message.match(/^studio: 撤销「(.+)」$/);
+    if (undoMsg) {
+      return `有：刚刚撤销了「${scrubAiText(undoMsg[1]!)}」`;
+    }
+    return commits.length === 1 ? '有：项目里后来的改动' : `有：项目里后来的 ${commits.length} 次改动`;
+  }
+
   private projectLockFail(blocker: Task): OpFail {
     const goal = blocker.plan?.goal ?? blocker.request;
     return {
       ok: false,
       reason: 'project_locked',
       detail: `项目中有任务「${goal}」处于异常状态（恢复未确认），请先处理那个任务后再保存或撤销。`,
+      blockingTaskId: blocker.id,
       blockingTask: goal,
     };
   }
@@ -835,43 +878,96 @@ export class TaskRunner extends EventEmitter {
     const t = await this.load(id);
     const repo = this.opts.repo;
     const prevPendingPreHead = t.uncheckedConfirm && t.uncheckedConfirm.version === acceptanceVersion(t) ? t.uncheckedConfirm.preHead : undefined;
-    const failEarly = async (fail: OpFail): Promise<OpFail> => {
+    const saveSteps = initialSaveSteps();
+    const recordSnapshot = (
+      reason: LastSaveSnapshot['reason'],
+      extra: Omit<LastSaveSnapshot, 'reason' | 'at' | 'saveSteps'> = {},
+    ): LastSaveSnapshot => {
+      const snap: LastSaveSnapshot = {
+        reason,
+        at: new Date().toISOString(),
+        saveSteps: saveSteps.map((s) => ({ ...s })),
+        ...extra,
+      };
+      t.lastSave = snap;
+      return snap;
+    };
+    const skipRemaining = (fromIdx: number) => {
+      for (let i = fromIdx; i < saveSteps.length; i++) {
+        saveSteps[i] = { ...saveSteps[i]!, status: 'skipped' };
+      }
+    };
+    const failEarly = async (fail: OpFail, stepDetail?: string, persistSnap = true): Promise<OpFail> => {
       await this.clearUncheckedConfirm(t);
+      if (stepDetail) {
+        saveSteps[0] = { ...saveSteps[0]!, status: 'failed', detail: stepDetail };
+        skipRemaining(1);
+        this.emitSaveProgress(t.id, saveSteps, true);
+      }
+      if (persistSnap && ['reviewing', 'save_failed_unmerged'].includes(t.state)) {
+        recordSnapshot(fail.reason, {
+          ...(fail.files ? { files: fail.files.map(safeRelPath).filter((x): x is string => !!x) } : {}),
+          ...(fail.failedChecks ? { failedChecks: fail.failedChecks } : {}),
+          ...(fail.failedCheckCounts ? { failedCheckCounts: fail.failedCheckCounts } : {}),
+          ...(fail.totalFailedItems !== undefined ? { totalFailedItems: fail.totalFailedItems } : {}),
+          ...(fail.uncheckedKind ? { uncheckedKind: fail.uncheckedKind } : {}),
+          ...(fail.unavailableReason ? { unavailableReason: fail.unavailableReason } : {}),
+          ...(fail.blockingTaskId ? { blockingTaskId: fail.blockingTaskId } : {}),
+          ...(fail.blockingTask ? { blockingTaskGoal: fail.blockingTask } : {}),
+        });
+        await this.persist(t);
+      }
       return fail;
     };
-    if (t.manualReview) return failEarly({ ok: false, reason: 'abnormal', detail: MESSAGES.abnormal });
-    if (this.runs.has(id) || this.starting.has(id)) return failEarly({ ok: false, reason: 'not_ready', detail: '任务还在执行，请先停止。' });
-    if (!['reviewing', 'save_failed_unmerged'].includes(t.state)) return failEarly({ ok: false, reason: 'not_ready', detail: MESSAGES.notReady });
-    const lock = await this.findProjectLock(id);
-    if (lock) return failEarly(this.projectLockFail(lock));
+    if (t.manualReview) return failEarly({ ok: false, reason: 'abnormal', detail: MESSAGES.abnormal }, undefined, false);
+    if (this.runs.has(id) || this.starting.has(id)) return failEarly({ ok: false, reason: 'not_ready', detail: '任务还在执行，请先停止。' }, undefined, false);
+    if (!['reviewing', 'save_failed_unmerged'].includes(t.state)) return failEarly({ ok: false, reason: 'not_ready', detail: MESSAGES.notReady }, undefined, false);
     const blockers = saveBlockers(t);
     const wt = t.worktree;
     const binding = t.binding;
     if (blockers.length || !wt || !binding || !t.acceptedTree) {
-      return failEarly({ ok: false, reason: 'not_ready', detail: blockers.length ? blockers.join('') : MESSAGES.notReady });
+      return failEarly({ ok: false, reason: 'not_ready', detail: blockers.length ? blockers.join('') : MESSAGES.notReady }, undefined, false);
+    }
+
+    saveSteps[0] = { ...saveSteps[0]!, status: 'running', detail: '正在核对项目状态…' };
+    this.emitSaveProgress(t.id, saveSteps, false);
+
+    const lock = await this.findProjectLock(id);
+    if (lock) {
+      const f = this.projectLockFail(lock);
+      return failEarly(f, `「${f.blockingTask}」的保存出了问题还没处理`);
     }
 
     // 外部驱动检测：任务副本与主项目都要过；命中即停，副本保留，不关闭驱动后继续
     for (const dir of [wt.path, repo]) {
       const d = await G.detectExternalDrivers(dir);
-      if (!d.supported) return failEarly({ ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver, files: d.drivers });
+      if (!d.supported) return failEarly({ ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver, files: d.drivers }, '项目使用了暂不支持的文件类型');
     }
-    if ((await fs.realpath(repo)) !== binding.repoPath) return failEarly({ ok: false, reason: 'repo_changed', detail: MESSAGES.repoChanged });
-    if ((await G.currentBranch(repo)) !== binding.branch) return failEarly({ ok: false, reason: 'branch_changed', detail: MESSAGES.branchChanged });
+    if ((await fs.realpath(repo)) !== binding.repoPath) return failEarly({ ok: false, reason: 'repo_changed', detail: MESSAGES.repoChanged }, '项目位置与开工时不一致');
+    if ((await G.currentBranch(repo)) !== binding.branch) return failEarly({ ok: false, reason: 'branch_changed', detail: MESSAGES.branchChanged }, '项目所在分支与开工时不同');
     const dirty = await G.dirtyFiles(repo);
-    if (dirty.length) return failEarly({ ok: false, reason: 'dirty_main', detail: MESSAGES.dirtyMain, files: dirty });
+    if (dirty.length) return failEarly({ ok: false, reason: 'dirty_main', detail: MESSAGES.dirtyMain, files: dirty }, `有未保存的改动（${dirty.length} 个文件）`);
 
     // 验收内容冻结：重新计算副本内容，必须与验收时的 acceptedTree 完全一致
     const tree = await G.computeTree(repo, wt.path);
     if (tree !== t.acceptedTree) {
       this.log(t, 'error', MESSAGES.acceptanceInvalid, 'host');
       delete t.uncheckedConfirm;
+      saveSteps[0] = { ...saveSteps[0]!, status: 'failed', detail: '验收后任务副本内容有变动，请重新检查' };
+      skipRemaining(1);
+      this.emitSaveProgress(t.id, saveSteps, true);
+      recordSnapshot('acceptance_invalid');
       await this.persist(t);
       return { ok: false, reason: 'acceptance_invalid', detail: MESSAGES.acceptanceInvalid };
     }
 
     const goal = t.plan?.goal ?? t.request;
     const preHead = await G.headSha(repo);
+    const movementDetail = await this.describeProjectMovement(repo, binding.baseHead, preHead, t.id);
+    saveSteps[0] = { ...saveSteps[0]!, status: 'done', detail: movementDetail };
+    saveSteps[1] = { ...saveSteps[1]!, status: 'running', detail: '正在临时副本中尝试合并…' };
+    this.emitSaveProgress(t.id, saveSteps, false);
+
     this.beginOp(t, 'save', { preHead });
     await this.persist(t);
 
@@ -912,18 +1008,32 @@ export class TaskRunner extends EventEmitter {
         const inConflict = await G.mergeInProgress(trialPath).catch(() => false);
         await G.git(trialPath, ['merge', '--abort']).catch(() => undefined);
         this.opStep(t, '试合并', false, inConflict ? 'conflict' : stderr.trim().slice(0, 500));
+        const postDirty = await G.dirtyFiles(repo).catch(() => ['?']);
         const intact = (await G.headSha(repo).catch(() => '')) === preHead
-          && (await G.dirtyFiles(repo).catch(() => ['?'])).length === 0
+          && postDirty.length === 0
           && !(await G.mergeInProgress(repo).catch(() => true));
         this.opStep(t, '合并失败后核验主项目', intact);
         delete t.uncheckedConfirm;
         await cleanupTrial();
         if (!intact) {
-          t.manualReview = { reason: '试合并失败核验时发现主项目与保存前不一致。', at: new Date().toISOString() };
+          const affected = postDirty.filter((x) => x !== '?').map(safeRelPath).filter((x): x is string => !!x);
+          saveSteps[1] = { ...saveSteps[1]!, status: 'failed', detail: '合并出错且主项目状态未能确认' };
+          skipRemaining(2);
+          this.emitSaveProgress(t.id, saveSteps, true);
+          t.manualReview = {
+            reason: '试合并失败核验时发现主项目与保存前不一致。',
+            at: new Date().toISOString(),
+            ...(affected.length ? { files: affected } : {}),
+          };
+          recordSnapshot('abnormal', { ...(affected.length ? { files: affected } : {}) });
           this.endOp(t, 'interrupted');
           await this.persist(t);
-          return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
+          return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal, ...(affected.length ? { files: affected } : {}) };
         }
+        saveSteps[1] = { ...saveSteps[1]!, status: 'failed', detail: inConflict ? '改了同一处，无法自动合并' : '试合并未成功，主项目未改动' };
+        skipRemaining(2);
+        this.emitSaveProgress(t.id, saveSteps, true);
+        recordSnapshot(inConflict ? 'conflict' : 'failed');
         this.endOp(t, 'interrupted');
         if (inConflict) {
           await this.fire(t, 'save_conflict');
@@ -933,6 +1043,14 @@ export class TaskRunner extends EventEmitter {
         return { ok: false, reason: 'failed', detail: stderr.trim() || '试合并失败，本次没有保存。' };
       }
 
+      saveSteps[1] = {
+        ...saveSteps[1]!,
+        status: 'done',
+        detail: preHead === binding.baseHead ? '已完成合并（项目期间无其他改动）' : '改的是不同文件，已自动合并',
+      };
+      saveSteps[2] = { ...saveSteps[2]!, status: 'running', detail: '正在合并后的结果上运行自动检查…' };
+      this.emitSaveProgress(t.id, saveSteps, false);
+
       // b. 在临时 worktree 里运行项目的自动检查（复用 checks/scripts.ts 的识别结果）
       let checksSummary = { passed: 0, failed: 0 };
       let checkedAt: string | undefined;
@@ -941,11 +1059,23 @@ export class TaskRunner extends EventEmitter {
         checked = checkOutcome.checked;
         checksSummary = checkOutcome.summary;
         checkedAt = checkOutcome.checkedAt;
+        const checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
+        const ranTime = checkedAt ?? new Date().toISOString();
+        const trialSummary = summarizeTrialChecks(checkOutcome.results, { repoPath: repo, worktreePath: trialPath });
         if (checkOutcome.failed.length > 0) {
           const failedNames = checkOutcome.failed.map((c) => c.name);
           delete t.uncheckedConfirm;
+          t.trialChecks = toStoredCheckProofs(checkOutcome.results, checkEnv, ranTime);
           this.opStep(t, '试检查', false, failedNames.join(','));
           await cleanupTrial();
+          saveSteps[2] = { ...saveSteps[2]!, status: 'failed', detail: `有 ${trialSummary.totalFailedItems} 项检查没通过` };
+          skipRemaining(3);
+          this.emitSaveProgress(t.id, saveSteps, true);
+          recordSnapshot('checks_failed', {
+            failedChecks: failedNames,
+            failedCheckCounts: trialSummary.failedCheckCounts,
+            totalFailedItems: trialSummary.totalFailedItems,
+          });
           this.endOp(t, 'interrupted');
           await this.persist(t);
           const labels = failedNames.map((n) => (n === 'build' ? '构建' : '测试'));
@@ -954,6 +1084,8 @@ export class TaskRunner extends EventEmitter {
             reason: 'checks_failed',
             detail: `合并后自动检查未通过（${labels.join('、')}），本次没有保存，你的项目保持原样。`,
             failedChecks: failedNames,
+            failedCheckCounts: trialSummary.failedCheckCounts,
+            totalFailedItems: trialSummary.totalFailedItems,
           };
         }
         // 未检查（none 或 unavailable）：未传 confirmUnchecked 时不写入主项目，清理临时副本并返回待确认
@@ -963,6 +1095,17 @@ export class TaskRunner extends EventEmitter {
           if (!opts.confirmUnchecked) {
             this.opStep(t, '试检查', false, `needs_confirm:${kind}${checkOutcome.unavailableReason ? `:${checkOutcome.unavailableReason}` : ''}`);
             await cleanupTrial();
+            saveSteps[2] = {
+              ...saveSteps[2]!,
+              status: 'skipped',
+              detail: kind === 'none' ? '未检查（项目没有配置检查脚本）' : '未检查（自动检查未能运行）',
+            };
+            skipRemaining(3);
+            this.emitSaveProgress(t.id, saveSteps, true);
+            recordSnapshot('unchecked_needs_confirm', {
+              uncheckedKind: kind,
+              ...(checkOutcome.unavailableReason ? { unavailableReason: checkOutcome.unavailableReason } : {}),
+            });
             this.endOp(t, 'interrupted');
             t.uncheckedConfirm = {
               version: acceptanceVersion(t),
@@ -985,6 +1128,15 @@ export class TaskRunner extends EventEmitter {
           unavailableReason = checkOutcome.unavailableReason;
           uncheckedConfirmedAt = new Date().toISOString();
         }
+        delete t.trialChecks;
+        saveSteps[2] = {
+          ...saveSteps[2]!,
+          status: checked ? 'done' : 'skipped',
+          detail: checked ? trialSummary.passedText : '未检查（你已确认仍然保存）',
+        };
+        saveSteps[3] = { ...saveSteps[3]!, status: 'running', detail: '写入前再确认项目没有新的改动…' };
+        this.emitSaveProgress(t.id, saveSteps, false);
+
         this.opStep(t, '试检查', true, checked ? `passed=${checksSummary.passed}` : `unchecked_confirmed:${uncheckedKind}`);
         await this.opPhase(t, 'trial_checked', {
           checked,
@@ -1003,6 +1155,10 @@ export class TaskRunner extends EventEmitter {
         delete t.uncheckedConfirm;
         this.opStep(t, '试检查', false, msg.slice(0, 500));
         await cleanupTrial();
+        saveSteps[2] = { ...saveSteps[2]!, status: 'failed', detail: '合并后检查出错，本次没有保存' };
+        skipRemaining(3);
+        this.emitSaveProgress(t.id, saveSteps, true);
+        recordSnapshot('failed');
         this.endOp(t, 'interrupted');
         await this.persist(t);
         return { ok: false, reason: 'failed', detail: msg || '合并后检查出错，本次没有保存。' };
@@ -1023,6 +1179,9 @@ export class TaskRunner extends EventEmitter {
         delete t.uncheckedConfirm;
         this.opStep(t, '写入前核对项目未变', false, diffs.join(','));
         await cleanupTrial();
+        saveSteps[3] = { ...saveSteps[3]!, status: 'failed', detail: '检查期间项目又有新的改动，没有保存' };
+        this.emitSaveProgress(t.id, saveSteps, true);
+        recordSnapshot('project_changed');
         this.endOp(t, 'interrupted');
         await this.persist(t);
         return { ok: false, reason: 'project_changed', detail: MESSAGES.projectChanged };
@@ -1044,17 +1203,28 @@ export class TaskRunner extends EventEmitter {
         delete t.uncheckedConfirm;
         this.opStep(t, '合并失败后核验主项目', intact, stderr.trim().slice(0, 500));
         await cleanupTrial();
+        const affected = postDirty.filter((x) => x !== '?').map(safeRelPath).filter((x): x is string => !!x);
         if (!intact) {
-          t.manualReview = { reason: '合并失败后，主项目的版本或文件与合并前不一致。', at: new Date().toISOString() };
+          saveSteps[3] = { ...saveSteps[3]!, status: 'failed', detail: '写入中途出错，无法确认项目是否完好' };
+          this.emitSaveProgress(t.id, saveSteps, true);
+          t.manualReview = {
+            reason: '合并失败后，主项目的版本或文件与合并前不一致。',
+            at: new Date().toISOString(),
+            ...(affected.length ? { files: affected } : {}),
+          };
+          recordSnapshot('abnormal', { ...(affected.length ? { files: affected } : {}) });
           this.endOp(t, 'interrupted');
           await this.persist(t);
           return {
             ok: false,
             reason: 'abnormal',
             detail: MESSAGES.abnormal,
-            ...(postDirty.length && postDirty[0] !== '?' ? { files: postDirty } : {}),
+            ...(affected.length ? { files: affected } : {}),
           };
         }
+        saveSteps[3] = { ...saveSteps[3]!, status: 'failed', detail: '写入时出错，已安全恢复并核对与保存前一致' };
+        this.emitSaveProgress(t.id, saveSteps, true);
+        recordSnapshot('failed_restored');
         this.endOp(t, 'interrupted');
         await this.persist(t);
         return { ok: false, reason: 'failed_restored', detail: MESSAGES.failedRestored };
@@ -1062,6 +1232,11 @@ export class TaskRunner extends EventEmitter {
 
       const mergeCommit = await G.headSha(repo);
       delete t.uncheckedConfirm;
+      delete t.trialChecks;
+      saveSteps[3] = { ...saveSteps[3]!, status: 'done', detail: '期间没有新的改动，已写入主项目' };
+      this.emitSaveProgress(t.id, saveSteps, true);
+      recordSnapshot('saved');
+
       t.saveRecord = {
         preMergeHead: preHead,
         taskCommit,
@@ -1106,6 +1281,9 @@ export class TaskRunner extends EventEmitter {
       cleanup = await G.removeWorktree(this.opts.repo, t.worktree!);
     }
     this.recordCleanup(t, cleanup);
+    if (t.lastSave?.reason === 'saved' && !cleanup.ok) {
+      t.lastSave.cleanupPending = true;
+    }
     this.endOp(t, 'finished');
     await this.fire(t, cleanup.ok ? 'save' : 'save_cleanup_pending');
     return { ok: true, task: t, message: cleanup.ok ? MESSAGES.saved : `${MESSAGES.saved}${MESSAGES.saveCleanupPending}`, cleanup, checked };
@@ -1212,12 +1390,22 @@ export class TaskRunner extends EventEmitter {
         await this.fire(t, 'undo');
         return { ok: true, task: t, message: MESSAGES.undone };
       } catch (e) {
-        const intact = (await G.headSha(repo).catch(() => '')) === rec.mergeCommit && (await G.dirtyFiles(repo).catch(() => ['?'])).length === 0;
+        const postDirty = await G.dirtyFiles(repo).catch(() => ['?']);
+        const intact = (await G.headSha(repo).catch(() => '')) === rec.mergeCommit && postDirty.length === 0;
+        const affected = postDirty.filter((x) => x !== '?').map(safeRelPath).filter((x): x is string => !!x);
         this.opStep(t, '撤销失败', false, e instanceof G.GitError ? e.stderr.trim().slice(0, 500) : String(e));
         this.endOp(t, 'interrupted');
-        if (!intact) t.manualReview = { reason: '撤销失败后，主项目的版本或文件与撤销前不一致。', at: new Date().toISOString() };
+        if (!intact) {
+          t.manualReview = {
+            reason: '撤销失败后，主项目的版本或文件与撤销前不一致。',
+            at: new Date().toISOString(),
+            ...(affected.length ? { files: affected } : {}),
+          };
+        }
         await this.fire(t, 'undo_failed');
-        return intact ? { ok: false, reason: 'failed', detail: '撤销没有成功，项目保持原样。你可以稍后重试。' } : { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
+        return intact
+          ? { ok: false, reason: 'failed', detail: '撤销没有成功，项目保持原样。你可以稍后重试。' }
+          : { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal, ...(affected.length ? { files: affected } : {}) };
       }
     } finally {
       this.leave(id);
@@ -1559,6 +1747,74 @@ export function buildPrompt(t: Task): string {
     list('要做', p.inScope),
     list('不要做', p.outOfScope),
     list('验收标准', p.criteria),
-    '\n只在当前目录内修改文件。不要提交 Git、不要推送、不要修改当前目录以外的任何文件。不要读取或列出当前目录以外的任何文件或目录。',
+    `\n只在当前目录内修改文件。不要提交 Git、不要推送、不要修改当前目录以外的任何文件。不要读取或列出当前目录以外的任何文件或目录。`,
   ].join('\n');
+}
+
+function initialSaveSteps(): SaveProgressStep[] {
+  return [
+    { key: 'check_changes', label: '检查项目在验收期间是否有变化', status: 'pending' },
+    { key: 'trial_merge', label: '合并两边的改动', status: 'pending' },
+    { key: 'trial_checks', label: '合并后重新运行检查', status: 'pending' },
+    { key: 'final_verify', label: '写入前再确认一次', status: 'pending' },
+  ];
+}
+
+function toStoredCheckProofs(checks: CheckResult[], env: 'sandbox' | 'local', ranAt: string): StoredCheckProof[] {
+  return checks.map((c): StoredCheckProof =>
+    c.status === 'not_available'
+      ? { name: c.name, status: 'not_available', env, unavailableReason: c.reason }
+      : {
+          name: c.name,
+          status: c.status,
+          ranAt,
+          durationMs: c.durationMs,
+          env,
+          rawOutput: c.output,
+          exitKind: c.outcome.kind,
+          ...(c.outcome.kind === 'exited' ? { exitCode: c.outcome.code } : {}),
+        },
+  );
+}
+
+function summarizeTrialChecks(
+  results: CheckResult[],
+  filterOpts: { repoPath: string; worktreePath: string },
+): {
+  passedText: string;
+  failedCheckCounts: { build?: number; test?: number };
+  totalFailedItems: number;
+} {
+  const buildRes = results.find((r) => r.name === 'build');
+  const testRes = results.find((r) => r.name === 'test');
+  let testPassedCount = 0;
+  let testFailedCount = 0;
+  let hasExplicitTestCount = false;
+  if (testRes && testRes.status !== 'not_available') {
+    const filtered = filterProofOutput(testRes.output, filterOpts);
+    const parsed = parseTestCases(filtered, testRes.status);
+    testPassedCount = parsed.passedCount;
+    testFailedCount = testRes.status === 'failed' ? Math.max(1, parsed.failedCount) : parsed.failedCount;
+    hasExplicitTestCount =
+      parsed.parsedNames ||
+      /\b\d+\s+(?:passed|failed|passing|failing)\b|^(?:pass|fail)\s+\d+/im.test(filtered);
+  }
+  const buildFailCount = buildRes?.status === 'failed' ? 1 : 0;
+  const totalFailedItems = buildFailCount + (testRes?.status === 'failed' ? testFailedCount : 0);
+  const failedCheckCounts: { build?: number; test?: number } = {
+    ...(buildFailCount > 0 ? { build: buildFailCount } : {}),
+    ...(testRes?.status === 'failed' && testFailedCount > 0 ? { test: testFailedCount } : {}),
+  };
+
+  const buildOk = buildRes?.status === 'passed';
+  const testOk = testRes?.status === 'passed';
+  let passedText = '检查通过';
+  if (buildOk && testOk) {
+    passedText = hasExplicitTestCount ? `构建与 ${testPassedCount} 项测试通过` : '构建与测试通过';
+  } else if (buildOk) {
+    passedText = '构建通过';
+  } else if (testOk) {
+    passedText = hasExplicitTestCount ? `${testPassedCount} 项测试通过` : '自动测试通过';
+  }
+  return { passedText, failedCheckCounts, totalFailedItems };
 }

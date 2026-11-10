@@ -215,6 +215,15 @@ async function createController(dir: string): Promise<TaskController> {
         if (err) throw new Error(err);
       }
     },
+    onSaveProgress: (ev) => {
+      const entry = openProjects.findByPath(dir);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('acceptance:saveProgress', {
+          ...ev,
+          ...(entry ? { projectId: entry.id } : {}),
+        });
+      }
+    },
   });
 }
 

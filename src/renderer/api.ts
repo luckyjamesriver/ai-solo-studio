@@ -54,6 +54,11 @@ export type {
   ViewChange,
   ActionState,
   SaveRecordView,
+  SaveOutcomeView,
+  SaveOutcomeKind,
+  SaveOutcomeButton,
+  SaveOutcomeButtonAction,
+  SaveFailedCheckSummary,
   UncheckedConfirmView,
   AcceptanceStatusView,
   AcceptanceStatusKind,
@@ -65,6 +70,7 @@ export type {
   ProofDeniedEntry,
   ProofChangeEntry,
 } from '../core/acceptance/view.js';
+export type { SaveProgressEvent, SaveProgressStep, SaveStepKey, SaveStepStatus } from '../core/task/model.js';
 export type { ChangePreview, Hunk } from '../core/acceptance/snippets.js';
 export type { AcceptanceActionResult } from '../core/app/task-controller.js';
 export type { ClaudeKeySaveResult, ClaudeKeyStatus, ClaudeKeyValidationCategory } from '../core/app/claude-key.js';
@@ -102,6 +108,7 @@ import type { ClaudeKeySaveResult, ClaudeKeyStatus } from '../core/app/claude-ke
 import type { GlobalAiSettingsView, ProjectRolesView } from '../core/app/ai-settings.js';
 import type { ProjectBriefInput as BriefIn, ProjectBriefView as BriefView } from '../core/thinking/flow/index.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
+import type { SaveProgressEvent } from '../core/task/model.js';
 import type { DiscussionView } from '../core/app/discussion-service.js';
 import type { AcceptanceActionResult } from '../core/app/task-controller.js';
 import type { CloseProjectResult, OpenProjectSummary, WorkbenchView } from '../core/app/open-projects.js';
@@ -147,6 +154,7 @@ interface StudioApi {
   undoSave(projectId: string, id: string): Promise<AcceptanceActionResult>;
   retryCleanup(projectId: string, id: string): Promise<AcceptanceActionResult>;
   revealProject(): Promise<void>;
+  onSaveProgress(listener: (ev: SaveProgressEvent) => void): () => void;
   detectEnvironment(): Promise<HealthReport>;
   chooseProject(): Promise<OpenResult>;
   recentProjects(): Promise<RecentProject[]>;

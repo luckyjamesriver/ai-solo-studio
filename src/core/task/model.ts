@@ -80,6 +80,38 @@ export interface ChecksSummary {
   failed: number;
 }
 
+export type SaveStepKey = 'check_changes' | 'trial_merge' | 'trial_checks' | 'final_verify';
+export type SaveStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+
+export interface SaveProgressStep {
+  key: SaveStepKey;
+  label: string;
+  status: SaveStepStatus;
+  detail?: string;
+}
+
+export interface SaveProgressEvent {
+  projectId?: string;
+  taskId: string;
+  saveSteps: SaveProgressStep[];
+  finished: boolean;
+}
+
+export interface LastSaveSnapshot {
+  reason: string;
+  at: string;
+  saveSteps: SaveProgressStep[];
+  files?: string[];
+  failedChecks?: ('build' | 'test')[];
+  failedCheckCounts?: { build?: number; test?: number };
+  totalFailedItems?: number;
+  uncheckedKind?: UncheckedKind;
+  unavailableReason?: UnavailableReason;
+  blockingTaskId?: string;
+  blockingTaskGoal?: string;
+  cleanupPending?: boolean;
+}
+
 export interface UncheckedConfirmPending {
   /** 返回 unchecked_needs_confirm 时的验收版本（acceptedTree + acceptanceRev），版本变化即失效 */
   version: string;
@@ -243,8 +275,12 @@ export interface Task {
   uncheckedConfirm?: UncheckedConfirmPending;
   /** 最近一次保存/放弃/撤销/清理的阶段日志 */
   op?: OpLog;
+  /** 最近一次保存尝试的四步真实进度与结果快照（供 #10-save-result 展示） */
+  lastSave?: LastSaveSnapshot;
+  /** 保存前试检查中失败的检查原始凭证（供从检查失败页跳转到 #08-evidence 查看） */
+  trialChecks?: StoredCheckProof[];
   /** 启动核对或操作后无法判定的状态：需要人工查看（不自动动手） */
-  manualReview?: { reason: string; at: string };
+  manualReview?: { reason: string; at: string; files?: string[] };
   /** 最近一次执行的执行体进程记录（启动核对时据此判断它是否仍在运行） */
   execProc?: { pid: number; at: string; name?: string };
   /** 验收证据的版本序号：每次生成验收证据（含重新检查）加一；确认类请求必须带上当时的版本，旧版本一律拒绝 */
