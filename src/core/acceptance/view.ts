@@ -162,6 +162,12 @@ export function mapFailure(f: OpFail): { message: string; files?: string[] } {
     case 'external_driver': return withFiles(MESSAGES.externalDriver);
     case 'acceptance_invalid': return withFiles(MESSAGES.acceptanceInvalid);
     case 'conflict': return withFiles(MESSAGES.conflict);
+    case 'checks_failed': {
+      const names = (f.failedChecks ?? []).map((k) => CHECK_NAME[k]).filter(Boolean);
+      return withFiles(names.length ? `合并后自动检查未通过（${names.join('、')}），本次没有保存，你的项目保持原样。` : MESSAGES.checksFailed);
+    }
+    case 'project_changed': return withFiles(MESSAGES.projectChanged);
+    case 'failed_restored': return withFiles(MESSAGES.failedRestored);
     case 'abnormal': return withFiles(MESSAGES.abnormal);
     case 'undo_refused': return withFiles(MESSAGES.undoRefused);
     case 'cleanup_pending': return withFiles(f.detail === MESSAGES.saveCleanupPending || f.detail === MESSAGES.discardCleanupPending || f.detail === MESSAGES.cleanupBusy ? f.detail : VIEW_TEXT.cleanupNeeded);

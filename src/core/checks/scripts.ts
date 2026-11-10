@@ -131,3 +131,46 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
   const output = (r.stdout + (r.stderr ? '\n' + r.stderr : '')).slice(-20_000);
   return { name, status: passed ? 'passed' : 'failed', outcome, output, durationMs: r.durationMs };
 }
+
+export interface ChecksSummary {
+  passed: number;
+  failed: number;
+}
+
+export interface ProjectChecksOutcome {
+  results: CheckResult[];
+  /** 至少声明了一项脚本且全部实际运行并通过（没有任何脚本被跳过为 not_available），才为 true */
+  checked: boolean;
+  summary: ChecksSummary;
+  failed: CheckResult[];
+  checkedAt?: string;
+}
+
+/**
+ * 复用 detectScripts 的识别结果，在指定目录（如保存试合并的临时 worktree）运行项目声明的自动检查。
+ * 没有可用脚本或任一项无法在受限环境运行时，checked 为 false，绝不把未检查标成通过。
+ */
+export async function runProjectChecks(
+  dir: string,
+  runner: SandboxCommandRunner | undefined,
+  opts: RunCheckOptions = {},
+): Promise<ProjectChecksOutcome> {
+  const detected = await detectScripts(dir);
+  const names = (['build', 'test'] as const).filter((n) => typeof detected[n] === 'string');
+  const results: CheckResult[] = [];
+  for (const name of names) {
+    results.push(await runCheck(dir, name, runner, opts));
+  }
+  const passed = results.filter((c) => c.status === 'passed').length;
+  const failed = results.filter((c) => c.status === 'failed');
+  const notAvailable = results.filter((c) => c.status === 'not_available').length;
+  const anyRan = results.some((c) => c.status !== 'not_available');
+  const checked = results.length > 0 && failed.length === 0 && notAvailable === 0;
+  return {
+    results,
+    checked,
+    summary: { passed, failed: failed.length },
+    failed,
+    ...(anyRan ? { checkedAt: new Date().toISOString() } : {}),
+  };
+}

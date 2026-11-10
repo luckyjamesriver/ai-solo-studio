@@ -10,7 +10,7 @@ import { resolveCapabilities, type Capabilities } from '../capabilities/model.js
 import type { OpLog, Plan, Task, TimelineEntry } from './model.js';
 import type { Decision, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
-import { runCheck, scriptsDigest, type CheckResult, type SandboxCommandRunner } from '../checks/scripts.js';
+import { runCheck, runProjectChecks, scriptsDigest, type CheckName, type CheckResult, type ProjectChecksOutcome, type SandboxCommandRunner } from '../checks/scripts.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
 import { recordProcess, verifyNoLiveExecutor, type ProcessProbe } from './process-check.js';
@@ -25,6 +25,9 @@ export type OpFailReason =
   | 'external_driver'
   | 'acceptance_invalid'
   | 'conflict'
+  | 'checks_failed'
+  | 'project_changed'
+  | 'failed_restored'
   | 'abnormal'
   | 'undo_refused'
   | 'cleanup_pending'
@@ -36,8 +39,10 @@ export interface OpFail {
   reason: OpFailReason;
   detail: string;
   files?: string[];
+  /** checks_failed 时未通过的检查项 */
+  failedChecks?: CheckName[];
 }
-export type SaveResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult } | OpFail;
+export type SaveResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult; checked: boolean } | OpFail;
 export type DiscardResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult } | OpFail;
 export type UndoResult = { ok: true; task: Task; message: string } | OpFail;
 export type RetryCleanupResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult } | OpFail;
@@ -51,8 +56,8 @@ export interface ReconcileEntry {
 export type ReconcileFinding =
   | { kind: 'idle' }
   | { kind: 'cleanup_gone' }
-  | { kind: 'save_merged'; merged: string }
-  | { kind: 'save_not_merged' }
+  | { kind: 'save_merged'; merged: string; phase?: OpLog['phase'] }
+  | { kind: 'save_not_merged'; phase?: OpLog['phase'] }
   | { kind: 'discard_resume' }
   | { kind: 'undo_not_happened' }
   | { kind: 'undo_done'; head: string }
@@ -540,7 +545,19 @@ export class TaskRunner extends EventEmitter {
     for (const s of c.steps) this.opStep(t, `清理：${s.step}`, s.ok, s.error);
   }
 
-  /** 保存（B4-plan 第 3 节）。检查顺序：前提 → 外部驱动 → 绑定的仓库与分支 → 主项目干净 → 验收内容未变 → 任务提交 → 合并。 */
+  private async runTrialChecks(t: Task, trialPath: string): Promise<ProjectChecksOutcome> {
+    if (this.opts.runChecks === false) {
+      return { results: [], checked: false, summary: { passed: 0, failed: 0 }, failed: [] };
+    }
+    return runProjectChecks(trialPath, this.opts.sandboxRunner ?? this.opts.executor.sandboxRunner, {
+      authorizedDigest: t.checkAuth?.digest,
+      ...(t.plan?.capabilities ? { capabilities: t.plan.capabilities } : {}),
+      taskId: t.id,
+      fullTrustRecords: this.store,
+    });
+  }
+
+  /** 保存（B4-plan 第 3 节 + 阶段 1 安全保存）：先在临时 worktree 试合并与试检查，再写入主项目。 */
   async save(id: string): Promise<SaveResult> {
     if (!this.enter(id)) return this.busyFail();
     try {
@@ -553,6 +570,7 @@ export class TaskRunner extends EventEmitter {
   private async doSave(id: string): Promise<SaveResult> {
     const t = await this.load(id);
     const repo = this.opts.repo;
+    if (t.manualReview) return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
     if (this.runs.has(id) || this.starting.has(id)) return { ok: false, reason: 'not_ready', detail: '任务还在执行，请先停止。' };
     if (!['reviewing', 'save_failed_unmerged'].includes(t.state)) return { ok: false, reason: 'not_ready', detail: MESSAGES.notReady };
     const blockers = saveBlockers(t);
@@ -591,40 +609,159 @@ export class TaskRunner extends EventEmitter {
     await this.opPhase(t, 'task_committed', { taskCommit });
 
     await G.ensureIdentity(repo);
+
+    const trialPath = G.trialWorktreePath(repo, t.id);
+    let trialActive = true;
+    const cleanupTrial = async (): Promise<void> => {
+      if (!trialActive) return;
+      trialActive = false;
+      const r = await G.removeTrialWorktree(repo, trialPath).catch((err) => ({ ok: false as const, error: String(err) }));
+      this.opStep(t, '清理临时副本', r.ok, r.ok ? undefined : r.error);
+    };
+
+    await this.opPhase(t, 'trial_merging', { trialWorktreePath: trialPath });
+    let checked = false;
     try {
-      await G.git(repo, ['merge', '--no-ff', '-m', `studio: 保存「${goal}」`, taskCommit]);
-    } catch (e) {
-      const stderr = e instanceof G.GitError ? e.stderr : String(e);
-      const inConflict = await G.mergeInProgress(repo).catch(() => false);
-      await G.git(repo, ['merge', '--abort']).catch(() => undefined);
-      // 核验：主项目 HEAD 与工作区必须与合并前一致
-      const intact = (await G.headSha(repo).catch(() => '')) === preHead && (await G.dirtyFiles(repo).catch(() => ['?'])).length === 0 && !(await G.mergeInProgress(repo).catch(() => true));
-      this.opStep(t, '合并失败后核验主项目', intact, stderr.trim().slice(0, 500));
-      if (!intact) {
-        t.manualReview = { reason: '合并失败后，主项目的版本或文件与合并前不一致。', at: new Date().toISOString() };
+      await G.createTrialWorktree(repo, trialPath, preHead);
+      this.opStep(t, '创建临时副本', true, trialPath);
+
+      // a. 在临时 worktree 里用 --no-ff 合并 taskCommit，得到 trialCommit（主项目完全不被触碰）
+      let trialCommit = '';
+      try {
+        await G.git(trialPath, ['merge', '--no-ff', '-m', `studio: 保存「${goal}」`, taskCommit]);
+        trialCommit = await G.headSha(trialPath);
+        this.opStep(t, '试合并', true, trialCommit);
+        await this.opPhase(t, 'trial_merged', { trialCommit });
+      } catch (e) {
+        const stderr = e instanceof G.GitError ? e.stderr : String(e);
+        const inConflict = await G.mergeInProgress(trialPath).catch(() => false);
+        await G.git(trialPath, ['merge', '--abort']).catch(() => undefined);
+        this.opStep(t, '试合并', false, inConflict ? 'conflict' : stderr.trim().slice(0, 500));
+        const intact = (await G.headSha(repo).catch(() => '')) === preHead
+          && (await G.dirtyFiles(repo).catch(() => ['?'])).length === 0
+          && !(await G.mergeInProgress(repo).catch(() => true));
+        this.opStep(t, '合并失败后核验主项目', intact);
+        await cleanupTrial();
+        if (!intact) {
+          t.manualReview = { reason: '试合并失败核验时发现主项目与保存前不一致。', at: new Date().toISOString() };
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
+        }
+        this.endOp(t, 'interrupted');
+        if (inConflict) {
+          await this.fire(t, 'save_conflict');
+          return { ok: false, reason: 'conflict', detail: MESSAGES.conflict };
+        }
+        await this.persist(t);
+        return { ok: false, reason: 'failed', detail: stderr.trim() || '试合并失败，本次没有保存。' };
+      }
+
+      // b. 在临时 worktree 里运行项目的自动检查（复用 checks/scripts.ts 的识别结果）
+      let checksSummary = { passed: 0, failed: 0 };
+      let checkedAt: string | undefined;
+      try {
+        const checkOutcome = await this.runTrialChecks(t, trialPath);
+        checked = checkOutcome.checked;
+        checksSummary = checkOutcome.summary;
+        checkedAt = checkOutcome.checkedAt;
+        if (checkOutcome.failed.length > 0) {
+          const failedNames = checkOutcome.failed.map((c) => c.name);
+          this.opStep(t, '试检查', false, failedNames.join(','));
+          await cleanupTrial();
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          const labels = failedNames.map((n) => (n === 'build' ? '构建' : '测试'));
+          return {
+            ok: false,
+            reason: 'checks_failed',
+            detail: `合并后自动检查未通过（${labels.join('、')}），本次没有保存，你的项目保持原样。`,
+            failedChecks: failedNames,
+          };
+        }
+        this.opStep(t, '试检查', true, checked ? `passed=${checksSummary.passed}` : '未检查');
+        await this.opPhase(t, 'trial_checked', {
+          checked,
+          checksSummary,
+          ...(checkedAt ? { checkedAt } : {}),
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.opStep(t, '试检查', false, msg.slice(0, 500));
+        await cleanupTrial();
         this.endOp(t, 'interrupted');
         await this.persist(t);
-        return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
+        return { ok: false, reason: 'failed', detail: msg || '合并后检查出错，本次没有保存。' };
       }
-      this.endOp(t, 'interrupted');
-      if (inConflict) {
-        await this.fire(t, 'save_conflict');
-        return { ok: false, reason: 'conflict', detail: MESSAGES.conflict };
+
+      // c. 写入前再核对：主项目 HEAD 仍等于 preHead、工作区干净、分支未变
+      const currentHead = await G.headSha(repo).catch(() => '');
+      const currentDirty = await G.dirtyFiles(repo).catch(() => ['?']);
+      const currentBr = await G.currentBranch(repo).catch(() => '');
+      const currentInMerge = await G.mergeInProgress(repo).catch(() => true);
+      if (currentHead !== preHead || currentDirty.length > 0 || currentBr !== binding.branch || currentInMerge) {
+        const diffs: string[] = [];
+        if (currentHead !== preHead) diffs.push('head_changed');
+        if (currentDirty.length > 0) diffs.push('dirty');
+        if (currentBr !== binding.branch) diffs.push('branch_changed');
+        if (currentInMerge) diffs.push('merge_in_progress');
+        this.opStep(t, '写入前核对项目未变', false, diffs.join(','));
+        await cleanupTrial();
+        this.endOp(t, 'interrupted');
+        await this.persist(t);
+        return { ok: false, reason: 'project_changed', detail: MESSAGES.projectChanged };
       }
-      await this.persist(t);
-      return { ok: false, reason: 'failed', detail: stderr.trim() || '合并失败，本次没有保存。' };
+      this.opStep(t, '写入前核对项目未变', true);
+      await this.opPhase(t, 'writing');
+
+      // d. 写入：主项目执行 git merge --ff-only trialCommit
+      try {
+        await G.git(repo, ['merge', '--ff-only', trialCommit]);
+      } catch (e) {
+        const stderr = e instanceof G.GitError ? e.stderr : String(e);
+        await G.git(repo, ['merge', '--abort']).catch(() => undefined);
+        const postDirty = await G.dirtyFiles(repo).catch(() => ['?']);
+        const intact = (await G.headSha(repo).catch(() => '')) === preHead
+          && postDirty.length === 0
+          && (await G.currentBranch(repo).catch(() => '')) === binding.branch
+          && !(await G.mergeInProgress(repo).catch(() => true));
+        this.opStep(t, '合并失败后核验主项目', intact, stderr.trim().slice(0, 500));
+        await cleanupTrial();
+        if (!intact) {
+          t.manualReview = { reason: '合并失败后，主项目的版本或文件与合并前不一致。', at: new Date().toISOString() };
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return {
+            ok: false,
+            reason: 'abnormal',
+            detail: MESSAGES.abnormal,
+            ...(postDirty.length && postDirty[0] !== '?' ? { files: postDirty } : {}),
+          };
+        }
+        this.endOp(t, 'interrupted');
+        await this.persist(t);
+        return { ok: false, reason: 'failed_restored', detail: MESSAGES.failedRestored };
+      }
+
+      const mergeCommit = await G.headSha(repo);
+      t.saveRecord = { preMergeHead: preHead, taskCommit, mergeCommit, branch: binding.branch, savedAt: new Date().toISOString() };
+      this.opStep(t, '合并到项目', true, mergeCommit);
+      await this.opPhase(t, 'merged', { mergeCommit }); // 合并完成立刻落盘，之后即使中断也能据此核对
+
+      // e. 无论结果如何都清理临时 worktree；清理失败只记录，不影响保存成功判断
+      await cleanupTrial();
+    } finally {
+      if (trialActive) {
+        await cleanupTrial();
+        await this.persist(t).catch(() => undefined);
+      }
     }
 
-    const mergeCommit = await G.headSha(repo);
-    t.saveRecord = { preMergeHead: preHead, taskCommit, mergeCommit, branch: binding.branch, savedAt: new Date().toISOString() };
-    this.opStep(t, '合并到项目', true, mergeCommit);
-    await this.opPhase(t, 'merged', { mergeCommit }); // 合并完成立刻落盘，之后即使中断也能据此核对
-
-    return this.finishSave(t);
+    return this.finishSave(t, false, checked);
   }
 
   /** 保存的收尾：清理副本与分支，再迁移到 saved / saved_cleanup_pending。保存与启动核对共用。 */
-  private async finishSave(t: Task, fromReconcile = false): Promise<SaveResult> {
+  private async finishSave(t: Task, fromReconcile = false, checked = false): Promise<SaveResult> {
     let cleanup: G.CleanupResult;
     if (fromReconcile) {
       // 启动核对中的收尾：先核实任务归属与执行体进程，核实不过就不删除
@@ -636,7 +773,7 @@ export class TaskRunner extends EventEmitter {
     this.recordCleanup(t, cleanup);
     this.endOp(t, 'finished');
     await this.fire(t, cleanup.ok ? 'save' : 'save_cleanup_pending');
-    return { ok: true, task: t, message: cleanup.ok ? MESSAGES.saved : `${MESSAGES.saved}${MESSAGES.saveCleanupPending}`, cleanup };
+    return { ok: true, task: t, message: cleanup.ok ? MESSAGES.saved : `${MESSAGES.saved}${MESSAGES.saveCleanupPending}`, cleanup, checked };
   }
 
   /** 放弃：删除副本与任务分支，主项目不受影响。清理失败不吞错，进入 discard_cleanup_pending。 */
@@ -749,8 +886,8 @@ export class TaskRunner extends EventEmitter {
       const head = await G.headSha(repo);
       const inMerge = await G.mergeInProgress(repo);
       const merged = op.taskCommit ? await G.findMergeCommit(repo, pre, op.taskCommit) : null;
-      if (merged && !inMerge) return { kind: 'save_merged', merged };
-      if (!inMerge && head === pre && (await G.dirtyFiles(repo)).length === 0) return { kind: 'save_not_merged' };
+      if (merged && !inMerge) return { kind: 'save_merged', merged, phase: op.phase };
+      if (!inMerge && head === pre && (await G.dirtyFiles(repo)).length === 0) return { kind: 'save_not_merged', phase: op.phase };
       return { kind: 'manual', reason: '保存中断后，项目的版本或文件状态无法判定。' };
     }
     if (op.kind === 'discard') {
@@ -841,21 +978,45 @@ export class TaskRunner extends EventEmitter {
           await this.persist(t);
           out.push({ taskId: id, action: `需要人工查看：${f.reason}` });
         } else if (f.kind === 'save_merged') {
-          // 合并已经落在分支上：补记合并结果，并完成收尾
+          // 合并已经落在分支上：清理残留临时副本，补记合并结果，并完成收尾
           const op = t.op!;
-          t.saveRecord = { preMergeHead: op.preHead!, taskCommit: op.taskCommit!, mergeCommit: f.merged, branch: t.binding?.branch ?? (await G.currentBranch(repo)), savedAt: new Date().toISOString() };
+          if (op.trialWorktreePath) {
+            const tc = await G.removeTrialWorktree(repo, op.trialWorktreePath).catch((err) => ({ ok: false as const, error: String(err) }));
+            this.opStep(t, '清理临时副本', tc.ok, tc.error);
+          }
+          t.saveRecord ??= {
+            preMergeHead: op.preHead!,
+            taskCommit: op.taskCommit!,
+            mergeCommit: f.merged,
+            branch: t.binding?.branch ?? (await G.currentBranch(repo)),
+            savedAt: new Date().toISOString(),
+          };
           this.opStep(t, '启动核对：合并已在分支上', true, f.merged);
           op.mergeCommit = f.merged;
-          this.markReconciled(t, '上次保存在收尾前中断，核对后确认内容已经保存到项目。');
+          this.markReconciled(t, '上次保存在写入项目后中断，核对后确认内容已经保存到项目。');
           await this.opPhase(t, 'merged');
-          const r = await this.finishSave(t, true);
+          const r = await this.finishSave(t, true, op.checked ?? false);
           out.push({ taskId: id, action: r.ok && r.task.state === 'saved' ? '已修正为 saved' : '已修正为 saved_cleanup_pending' });
         } else if (f.kind === 'save_not_merged') {
-          this.opStep(t, '启动核对：合并没有发生，项目保持原样', true);
+          const op = t.op!;
+          if (op.trialWorktreePath) {
+            const tc = await G.removeTrialWorktree(repo, op.trialWorktreePath).catch((err) => ({ ok: false as const, error: String(err) }));
+            this.opStep(t, '清理临时副本', tc.ok, tc.error);
+          }
+          const stageMap: Partial<Record<OpLog['phase'], string>> = {
+            started: '准备保存阶段',
+            task_committed: '生成任务提交后',
+            trial_merging: '试合并阶段',
+            trial_merged: '试检查阶段',
+            trial_checked: '写入前核对阶段',
+            writing: '写入主项目前',
+          };
+          const stage = (f.phase && stageMap[f.phase]) || '合并前';
+          this.opStep(t, `启动核对：在${stage}中断，合并没有发生，项目保持原样`, true);
           this.endOp(t, 'interrupted');
-          this.markReconciled(t, '上次保存在合并前中断，项目保持原样，可以重新保存。');
+          this.markReconciled(t, `上次保存在${stage}中断，项目保持原样，可以重新保存。`);
           await this.persist(t);
-          out.push({ taskId: id, action: '保存在合并前中断，项目保持原样；可以重新保存' });
+          out.push({ taskId: id, action: `保存在${stage}中断，项目保持原样；可以重新保存` });
         } else if (f.kind === 'discard_resume') {
           // 放弃的意图已明确：继续清理（只针对本任务的副本与分支，且必须先核实）
           const r = await this.reconcileCleanup(t);

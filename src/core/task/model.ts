@@ -37,11 +37,30 @@ export interface TaskBinding {
 export interface OpLog {
   kind: 'save' | 'discard' | 'undo' | 'cleanup';
   startedAt: string;
-  /** started → task_committed → merged → finished（保存）；started → finished（其他） */
-  phase: 'started' | 'task_committed' | 'merged' | 'finished' | 'interrupted';
+  /** started → task_committed → trial_merging → trial_merged → trial_checked → writing → merged → finished（保存）；started → finished（其他） */
+  phase:
+    | 'started'
+    | 'task_committed'
+    | 'trial_merging'
+    | 'trial_merged'
+    | 'trial_checked'
+    | 'writing'
+    | 'merged'
+    | 'finished'
+    | 'interrupted';
   /** 操作开始时主项目 HEAD（保存：合并前；撤销：撤销前） */
   preHead?: string;
   taskCommit?: string;
+  /** 保存试合并用的临时 worktree 路径（中断后启动核对据此清理残留） */
+  trialWorktreePath?: string;
+  /** 试合并产生的提交 */
+  trialCommit?: string;
+  /** 试检查是否运行并全部通过 */
+  checked?: boolean;
+  /** 试检查通过/失败数量 */
+  checksSummary?: { passed: number; failed: number };
+  /** 试检查时间 */
+  checkedAt?: string;
   mergeCommit?: string;
   /** 撤销产生的新提交 */
   undoCommit?: string;

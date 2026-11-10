@@ -428,6 +428,51 @@ export async function worktreeGone(repo: string, wt: Worktree): Promise<boolean>
   return dirGone && branchGone;
 }
 
+/** 生成保存试合并用的临时 worktree 路径（位于 <repo>/.studio/trials/<taskId>-<随机>）。 */
+export function trialWorktreePath(repo: string, taskId: string): string {
+  taskBranch(taskId); // 复用合法任务 ID 校验，防止路径穿越
+  return path.join(repo, '.studio', 'trials', `${taskId}-${crypto.randomBytes(4).toString('hex')}`);
+}
+
+/**
+ * 基于给定提交创建分离头指针（--detach）的临时 worktree，专用于保存前的试合并与试检查。
+ * 主项目的 HEAD、分支、索引与工作区均不会被触碰。
+ */
+export async function createTrialWorktree(repo: string, trialPath: string, baseSha: string): Promise<string> {
+  const trialsRoot = path.resolve(repo, '.studio', 'trials');
+  const resolved = path.resolve(trialPath);
+  if (path.dirname(resolved) !== trialsRoot) throw new Error('非法的临时副本路径。');
+  await makeDir(trialsRoot);
+  await ensureStudioIgnored(repo);
+  await git(repo, ['worktree', 'add', '--detach', resolved, baseSha]);
+  return resolved;
+}
+
+/**
+ * 清理保存试合并用的临时 worktree。只允许删除 <repo>/.studio/trials/ 下的直接子目录；
+ * 失败时如实返回错误，不吞错也不影响主流程的结果判断。
+ */
+export async function removeTrialWorktree(repo: string, trialPath: string): Promise<{ ok: boolean; error?: string }> {
+  const trialsRoot = path.resolve(repo, '.studio', 'trials');
+  const resolved = path.resolve(trialPath);
+  if (path.dirname(resolved) !== trialsRoot) {
+    return { ok: false, error: `目录 ${trialPath} 不是临时副本目录，已拒绝清理。` };
+  }
+  const errors: string[] = [];
+  try {
+    const exists = await fs.stat(resolved).then(() => true, () => false);
+    if (exists) await git(repo, ['worktree', 'remove', '--force', resolved]);
+  } catch (e) {
+    errors.push(e instanceof GitError ? `${e.message}：${e.stderr.trim()}` : String(e));
+  }
+  try {
+    await git(repo, ['worktree', 'prune']);
+  } catch (e) {
+    errors.push(e instanceof GitError ? `${e.message}：${e.stderr.trim()}` : String(e));
+  }
+  return errors.length ? { ok: false, error: errors.join('；') } : { ok: true };
+}
+
 export interface SavePoint {
   sha: string;
   message: string;
