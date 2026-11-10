@@ -212,6 +212,32 @@ export class TaskController {
     return this.view((await this.r().store.get(t.id)) ?? t);
   }
 
+  /**
+   * 停止/中断/出错后在同一任务副本上继续执行（不等待执行结束，立刻返回 running 态视图）：
+   * 仅在 reviewing/stopped/timed_out/exec_failed 且非 manualReview 时放行；保留原有 worktree 与已做修改。
+   */
+  async continueTask(id: unknown): Promise<TaskView> {
+    const tid = this.checkArg(TASK_ID, id);
+    await this.ready();
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (this.active.has(t.id) || this.ops.has(t.id) || this.r().isBusy(t.id)) throw new Error(MESSAGES.busy);
+    const isStoppedOrFailed =
+      ['stopped', 'timed_out', 'exec_failed'].includes(t.state) ||
+      (t.state === 'reviewing' && !!t.exit && (t.exit.kind !== 'exited' || t.exit.code !== 0));
+    if (!isStoppedOrFailed) throw new Error('只有已停止、中断或出错的任务才能继续执行。');
+    if (!t.worktree) throw new Error('任务副本不存在，请去验收页查看或放弃。');
+    if (t.card?.items.some((i) => i.key === 'drivers')) throw new Error(MESSAGES.externalDriver);
+    this.startErrors.delete(t.id);
+    const { task: prepared, prompt } = await this.r().prepareContinue(t.id, '接着上次停下的地方继续');
+    this.active.add(t.id);
+    void this.r()
+      .start(t.id, prompt)
+      .catch((e: Error) => this.startErrors.set(t.id, this.persistenceMessage(e) ?? e.message))
+      .finally(() => this.active.delete(t.id));
+    return this.view(prepared);
+  }
+
   // ───────────────────────── 验收、保存、放弃、撤销（B4-2） ─────────────────────────
   // 渲染进程只传：任务编号、条目编号（c0 / d0）、验收版本、（无参数的操作）。返回给它的只有 UserAcceptanceView 与固定文案。
 
@@ -451,6 +477,7 @@ export class TaskController {
     const tid = this.checkArg(TASK_ID, id);
     await this.load(tid);
     return this.act(tid, async (t) => {
+      if (['stopped', 'timed_out', 'exec_failed'].includes(t.state)) await this.r().ensureReviewed(t.id);
       const r = await this.r().discard(t.id);
       return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
     });

@@ -361,6 +361,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
   gap: var(--space-grid);
   align-items: start;
 }
+.g2 > * { min-width: 0; }
 
 .stack {
   display: flex;
@@ -386,6 +387,8 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .criterion-row {

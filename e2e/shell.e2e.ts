@@ -17,6 +17,7 @@ const root = path.resolve(import.meta.dirname, '..');
 const electronBin = createRequire(import.meta.url)('electron') as string;
 const shotDir = process.env.E2E_SCREENSHOT_DIR;
 const stage2ShotDir = process.env.E2E_STAGE2_SHOT_DIR;
+const stage3ShotDir = process.env.E2E_STAGE3_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -66,6 +67,12 @@ const shot = async (page: Page, name: string) => {
 const stage2Shot = async (page: Page, name: string) => {
   if (!stage2ShotDir) return;
   const target = path.join(stage2ShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
+const stage3Shot = async (page: Page, name: string) => {
+  if (!stage3ShotDir) return;
+  const target = path.join(stage3ShotDir, `${name}.png`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
@@ -291,6 +298,9 @@ describe('施工模式界面', () => {
     await shot(a.page, '6-施工中视图');
 
     await a.page.getByTestId('stop-button').click();
+    await a.page.getByTestId('stopped-page').waitFor({ timeout: 30_000 });
+    expect(await a.page.getByTestId('stopped-reason-tag').innerText()).toBe('你停止的');
+    await a.page.getByTestId('go-acceptance-button').click();
     await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
     const result = await a.page.getByTestId('result').innerText();
     expect(result).toContain('应用自己验证过的事实');
@@ -357,6 +367,8 @@ describe('施工模式界面', () => {
     expect(await a.page.getByTestId('run-view').locator('button').allInnerTexts()).toEqual(['停止']); // 仍然只有停止
     expect(taskFiles(proj)[0]?.fullTrustConfirmedAt).toBeTruthy();
     await a.page.getByTestId('stop-button').click();
+    await a.page.getByTestId('stopped-page').waitFor({ timeout: 30_000 });
+    await a.page.getByTestId('go-acceptance-button').click();
     await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
     expect(await a.page.getByTestId('result').getByTestId('fulltrust-badge').innerText()).toBe('完全信任'); // 结果里标记仍在
     await a.page.getByTestId('breadcrumb-project').click();
@@ -445,7 +457,7 @@ describe('施工模式界面', () => {
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
     expect(r.forgedProject).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmOverall', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'getWorkbench', 'initProject', 'listOpenProjects', 'listTasks', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'saveUncheckedTask', 'skipPreview', 'startTask', 'stopTask', 'undoSave']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmOverall', 'continueTask', 'createTask', 'detectEnvironment', 'discardTask', 'getAcceptanceView', 'getDisclosure', 'getTask', 'getWorkbench', 'initProject', 'listOpenProjects', 'listTasks', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'removeExtraDir', 'retryCleanup', 'revealProject', 'savePlan', 'saveTask', 'saveUncheckedTask', 'skipPreview', 'startTask', 'stopTask', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
@@ -612,7 +624,13 @@ describe('验收、保存、放弃、撤销（B4-2，待维护者运行）', () 
 
   it('检查失败时保存置灰；执行体失败也不能保存', async () => {
     const proj = gitProject('fail-site', { 'index.html': '<h1>old</h1>\n' });
-    const a = await toReview(proj, [...WRITE, { do: 'exit', code: 2 }]);
+    const a = await openProjectWithFake(proj, [...WRITE, { do: 'exit', code: 2 }]);
+    await newTask(a.page, '改标题');
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('stopped-page').waitFor({ timeout: 30_000 });
+    await a.page.getByTestId('go-acceptance-button').click();
+    await inState(a.page, 'reviewing');
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
     expect(await a.page.getByTestId('verdict').innerText()).toContain('还不能保存');
     await confirmStep1(a.page);
     await a.page.getByTestId('confirm-overall').click();
@@ -1306,5 +1324,153 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
       { timeout: 60_000 },
     );
     expect(await b.page.locator('ul.env li[data-id="node"]').innerText()).toContain('请安装 Node 99');
+  });
+});
+
+describe('阶段 3：施工计划确认、施工中、停止与中断后页（04-plan、05-build、06-stopped）', () => {
+  it('计划确认页：两栏版式、额外目录风险如实说明（无“改为只读”）、approved 改验收标准退回 planned 并提示', async () => {
+    const data = mk('data-s3-plan');
+    const extraDir = mk('extra-assets');
+    const proj = gitProject('s3-plan-site', {
+      'index.html': '<h1>首页</h1>\n',
+      'package.json': JSON.stringify({
+        name: 's3-plan-site',
+        scripts: { build: 'node -e "process.exit(0)"', test: 'node -e "process.exit(0)"' },
+      }),
+    });
+
+    const a = await openProjectWithFake(proj, WRITE, data);
+    await newTask(a.page, '把首页标题改成欢迎使用并补充测试');
+    await a.page.getByTestId('plan-card').waitFor();
+
+    const planText0 = await a.page.getByTestId('plan-card').innerText();
+    expect(planText0).not.toContain('改为只读');
+    expect(planText0).not.toContain('更换');
+    expect(planText0).not.toContain('导出');
+    expect(await a.page.locator('[data-testid="plan-card"] button:not(.secondary):not(.link)').count()).toBe(1);
+    expect(await a.page.getByTestId('stage-plan').getAttribute('data-status')).toBe('cur');
+    await stage3Shot(a.page, '01-plan-standard');
+
+    // 添加额外目录：只提供「移除」，如实说明标准模式对其余普通文件本就可读
+    await stubDialog(a.app, extraDir);
+    await a.page.getByTestId('add-dir').click();
+    await a.page.waitForFunction((p) => document.querySelector('[data-testid="extra-dir-list"]')?.textContent?.includes(p), extraDir);
+    const planTextExtra = await a.page.getByTestId('plan-card').innerText();
+    expect(planTextExtra).toContain('可读写');
+    expect(planTextExtra).toContain('AI 可以读取你电脑上的其他文件（凭证类文件除外）');
+    expect(planTextExtra).not.toContain('改为只读');
+    await stage3Shot(a.page, '02-plan-extra-dir');
+
+    // 移除后，再测试在 approved 状态修改验收标准 -> 退回 planned 并出现重新确认提示
+    await a.page.getByTestId('extra-dir-list').getByRole('button', { name: '移除' }).click();
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="extra-dir-list"]')?.textContent?.includes('没有额外的文件夹'));
+    const taskId = taskFiles(proj)[0]!.id as string;
+    await a.app.close();
+
+    await editTask(proj, taskId, (t) => {
+      t.state = 'approved';
+      t.fullTrustConfirmedAt = '2026-11-10T10:00:00.000Z';
+    });
+
+    const b = await launch(data);
+    await b.page.getByRole('button', { name: '暂不同意，先看看' }).click().catch(() => undefined);
+    await stubDialog(b.app, proj);
+    await b.page.getByTestId('nav-open-project').click();
+    await b.page.getByTestId('project').waitFor();
+    await b.page.getByRole('button', { name: /把首页标题/ }).click();
+    await b.page.getByTestId('plan-card').waitFor();
+
+    await b.page.getByTestId('add-criterion').click();
+    await b.page.getByTestId('criterion-input-0').fill('深色模式下对比度清晰');
+    await b.page.getByTestId('save-criteria-button').click();
+    await b.page.getByTestId('criteria-reconfirm-notice').waitFor();
+    expect(await b.page.getByTestId('criteria-reconfirm-notice').innerText()).toBe('改了验收标准，需要重新确认后才能开工');
+    expect(taskFiles(proj)[0]?.state).toBe('planned');
+    await stage3Shot(b.page, '03-plan-reapprove');
+  });
+
+  it('施工中与停止后页：执行日志默认收起且大白话、停止进停止页并显示 Git 实际改动与三选项、继续执行保留上轮改动', async () => {
+    const proj = gitProject('s3-run-stop-site', { 'index.html': '<h1>v0</h1>\n' });
+    const a = await openProjectWithFake(proj, [
+      { do: 'say', text: '准备修改首页样式' },
+      { do: 'write', path: 'index.html', content: '<h1>round1</h1>\n' },
+      { do: 'hang' },
+    ]);
+    await newTask(a.page, '调整首页标题并补充新模块');
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('run-view').waitFor();
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="progress"]')?.textContent?.includes('准备修改首页样式'), undefined, {
+      timeout: 30_000,
+    });
+    // 给 Git worktree Diff 与日志渲染一点稳定时间
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="progress"]')?.textContent?.includes('index.html'), undefined, {
+      timeout: 30_000,
+    });
+
+    expect(await a.page.getByTestId('exec-log').getAttribute('open')).toBeNull();
+    expect(await a.page.getByTestId('stop-hint').innerText()).toContain('停止后，已做的修改保留在副本里');
+    expect(await a.page.locator('[data-testid="run-view"] button').count()).toBe(1);
+    await stage3Shot(a.page, '04-building');
+
+    // 展开大白话执行日志后应可看到时间戳记录，随后收起
+    await a.page.locator('[data-testid="exec-log"] summary').click();
+    expect(await a.page.getByTestId('exec-log').getAttribute('open')).toBe('');
+    expect(await a.page.getByTestId('exec-log').innerText()).toMatch(/\d{2}:\d{2}/);
+    await a.page.locator('[data-testid="exec-log"] summary').click();
+
+    // 停止 → 进入停止后页 #06-stopped
+    await a.page.getByTestId('stop-button').click();
+    await a.page.getByTestId('stopped-page').waitFor({ timeout: 30_000 });
+    expect(await a.page.getByTestId('stopped-reason-tag').innerText()).toBe('你停止的');
+    expect(await a.page.getByTestId('stopped-done').innerText()).toBe('任务副本相对开工时改动了 1 个文件');
+    expect(await a.page.getByTestId('stopped-undone').innerText()).toContain('AI 没有走完全部步骤');
+    expect(await a.page.getByTestId('stopped-project').innerText()).toBe('没有任何变化');
+    expect(await a.page.getByTestId('stage-build').getAttribute('data-status')).toBe('cur');
+    expect(await a.page.locator('[data-testid="stopped-page"] button:not(.secondary):not(.link)').count()).toBe(1);
+    await stage3Shot(a.page, '06-stopped');
+
+    // 点击「继续执行」复用同一个副本继续第二轮
+    await useFakeExecutor(a.app, [
+      { do: 'say', text: '继续补充第二部分修改' },
+      { do: 'write', path: 'round2.txt', content: 'round2\n' },
+    ]);
+    await a.page.getByTestId('continue-button').click();
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
+    const resultText = await a.page.getByTestId('result').innerText();
+    expect(resultText).toContain('index.html');
+    expect(resultText).toContain('round2.txt');
+  });
+
+  it('施工中实时拦截展示「目前的问题」；AI 出错停下进入中断页', async () => {
+    const pBlock = gitProject('s3-block-site', { 'index.html': '<h1>v0</h1>\n' });
+    const a = await openProjectWithFake(pBlock, [
+      { do: 'say', text: '尝试安装扩展依赖' },
+      { do: 'block', request: { kind: 'network', target: 'https://registry.npmjs.org', summary: '尝试联网下载依赖包' } },
+      { do: 'hang' },
+    ]);
+    await newTask(a.page, '安装扩展组件');
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('build-problems').waitFor({ timeout: 30_000 });
+    expect(await a.page.getByTestId('build-problems').innerText()).toContain('目前的问题（1）');
+    expect(await a.page.locator('[data-testid="run-view"] button').count()).toBe(1);
+    await stage3Shot(a.page, '05-building-blocked');
+    await a.page.getByTestId('stop-button').click();
+    await a.page.getByTestId('stopped-page').waitFor({ timeout: 30_000 });
+    await a.app.close();
+
+    const pFail = gitProject('s3-fail-site', { 'index.html': '<h1>v0</h1>\n' });
+    const b = await openProjectWithFake(pFail, [
+      { do: 'say', text: '开始改写配置' },
+      { do: 'write', path: 'partial.txt', content: 'half\n' },
+      { do: 'exit', code: 2 },
+    ]);
+    await newTask(b.page, '修改构建配置');
+    await b.page.getByTestId('start-button').click();
+    await b.page.getByTestId('stopped-page').waitFor({ timeout: 30_000 });
+    expect(await b.page.getByTestId('stopped-reason-tag').innerText()).toBe('AI 执行出错');
+    expect(await b.page.getByTestId('stopped-done').innerText()).toBe('任务副本相对开工时改动了 1 个文件');
+    await stage3Shot(b.page, '07-failed-interrupted');
+    await b.page.getByTestId('go-acceptance-button').click();
+    await b.page.getByTestId('result').waitFor({ timeout: 30_000 });
   });
 });

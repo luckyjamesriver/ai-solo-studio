@@ -17,6 +17,7 @@ import { FakeExecutor } from '../src/core/executor/adapters/fake.js';
 import { RecordStore } from '../src/core/persistence/index.js';
 import { PlanCard } from '../src/renderer/PlanCard.js';
 import { RunView } from '../src/renderer/RunView.js';
+import { StoppedPage } from '../src/renderer/StoppedPage.js';
 import type { Task } from '../src/core/task/model.js';
 
 const tmpDirs: string[] = [];
@@ -302,6 +303,162 @@ describe('阶段 3 · 第二节：施工中页（#05-build）与大白话折叠�
     expect(liveView.building.execLog.some((l) => l.text.includes('index.html（+2 −1 行）') || l.text.includes('index.html'))).toBe(true);
 
     await ctl.stop(t.id);
+  });
+});
+
+describe('阶段 3 · 第三节：停止 / 中断后页（#06-stopped）与继续执行', () => {
+  it('停止页「已经做完」的文件数来自真实 Git（忽略 AI 自夸数字），支持 stopped/timed_out/exec_failed 与额外目录提示', async () => {
+    const repo = initRepo({ 'index.html': '<h1>v0</h1>\n' });
+    const prompts: string[] = [];
+    let round = 0;
+    const ctl = new TaskController({
+      repo,
+      makeExecutor: () =>
+        new FakeExecutor((prompt) => {
+          prompts.push(prompt);
+          round++;
+          if (round === 1) {
+            return [
+              { do: 'say', text: '我修改了 99 个文件并完成了全部重构。' },
+              { do: 'write', path: 'index.html', content: '<h1>round-1</h1>\n' },
+              { do: 'write', path: 'part1.txt', content: 'first\n' },
+              { do: 'hang' },
+            ];
+          }
+          return [
+            { do: 'write', path: 'part2.txt', content: 'second\n' },
+          ];
+        }, { emitPermissions: true }),
+      pickDirectory: async () => null,
+      prefs: new TaskPrefs(mk('prefs')),
+    });
+
+    const t = await ctl.create('分两轮实现功能');
+    await ctl.savePlan(t.id, { goal: '分两轮实现功能', criteria: [], mode: 'standard', network: false });
+    await ctl.start(t.id, false);
+    for (let i = 0; i < 80; i++) {
+      const v = await ctl.get(t.id);
+      if (v.state === 'running' && v.progress.some((p) => p.includes('99 个文件'))) break;
+      await new Promise((r) => setTimeout(r, 30));
+    }
+
+    await ctl.stop(t.id);
+    let stoppedView = await ctl.get(t.id);
+    for (let i = 0; i < 80; i++) {
+      stoppedView = await ctl.get(t.id);
+      if (stoppedView.state === 'reviewing' && stoppedView.stoppedInfo) break;
+      await new Promise((r) => setTimeout(r, 30));
+    }
+
+    // 真实 git diff 是 2 个文件（index.html + part1.txt），而不是 AI 自称的 99 个
+    expect(stoppedView.stoppedInfo).not.toBeNull();
+    expect(stoppedView.stoppedInfo!.reasonLabel).toBe('你停止的');
+    expect(stoppedView.stoppedInfo!.doneText).toBe('任务副本相对开工时改动了 2 个文件');
+    expect(stoppedView.stoppedInfo!.undoneText).toBe('AI 没有走完全部步骤。具体缺了什么，请在验收时对照验收标准查看');
+    expect(stoppedView.stoppedInfo!.projectText).toBe('没有任何变化');
+    expect(stoppedView.stoppedInfo!.canContinue).toBe(true);
+
+    // 渲染 StoppedPage 验证按钮层级（仅「去验收已有成果」是主按钮）
+    const stoppedHtml = renderToStaticMarkup(
+      React.createElement(StoppedPage, {
+        projectId: 'p1',
+        task: stoppedView,
+        info: stoppedView.stoppedInfo!,
+        onGoAcceptance: () => {},
+        onContinued: () => {},
+        onDiscarded: () => {},
+      }),
+    );
+    const priBtns = [...stoppedHtml.matchAll(/<button[^>]*>/g)].filter((m) => !/class="[^"]*(?:secondary|link)/.test(m[0]));
+    expect(priBtns).toHaveLength(1);
+    expect(priBtns[0]![0]).toContain('data-testid="go-acceptance-button"');
+    expect(stoppedHtml).toContain('data-testid="continue-button"');
+    expect(stoppedHtml).toContain('data-testid="stopped-discard-button"');
+
+    // 点击「继续执行」：沿用同一工作副本，保留第 1 轮修改，并附上「接着上次停下的地方继续」
+    const { TaskStore } = await import('../src/core/task/store.js');
+    const ts = new TaskStore(repo);
+    const worktreeBefore = (await ts.get(t.id))!.worktree!;
+
+    const contView = await ctl.continueTask(t.id);
+    expect(contView.running).toBe(true);
+    let afterCont = await ctl.get(t.id);
+    for (let i = 0; i < 80; i++) {
+      afterCont = await ctl.get(t.id);
+      if (!afterCont.running && afterCont.state === 'reviewing') break;
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    const rawAfter = (await ts.get(t.id))!;
+    expect(rawAfter.worktree?.path).toBe(worktreeBefore.path);
+    expect(rawAfter.worktree?.branch).toBe(worktreeBefore.branch);
+    expect(prompts.at(-1)).toContain('接着上次停下的地方继续');
+    // 第 1 轮和第 2 轮文件同时保留在同一副本中
+    expect(fs.readFileSync(path.join(worktreeBefore.path, 'index.html'), 'utf8')).toBe('<h1>round-1</h1>\n');
+    expect(fs.readFileSync(path.join(worktreeBefore.path, 'part1.txt'), 'utf8')).toBe('first\n');
+    expect(fs.readFileSync(path.join(worktreeBefore.path, 'part2.txt'), 'utf8')).toBe('second\n');
+    expect(afterCont.stoppedInfo).toBeNull();
+  });
+
+  it('停止页原因判定：只在执行者明确报告额度用尽时写「额度用完」，普通出错不靠猜，授权额外文件夹时附上不可还原提示', () => {
+    const extraDir = path.join(mk('out'), 'shared-docs');
+    fs.mkdirSync(extraDir, { recursive: true });
+    const mkTask = (over: Partial<Task>): Task => ({
+      id: 't-stop',
+      request: 'x',
+      state: 'reviewing',
+      plan: {
+        goal: 'x',
+        inScope: [],
+        outOfScope: [],
+        criteria: [],
+        risks: [],
+        irreversible: [],
+        capabilities: resolveCapabilities({ extraWritableDirs: [extraDir] }),
+      },
+      criteria: [],
+      denied: [],
+      deniedAcks: [],
+      previewed: false,
+      timeline: [],
+      createdAt: '2026-11-10T00:00:00.000Z',
+      updatedAt: '2026-11-10T00:00:00.000Z',
+      ...over,
+    });
+
+    // 普通非 0 退出（就算 AI 自称额度不够，只要适配器/宿主没报告额度报错就不靠猜）
+    const genericErr = buildTaskView(
+      mkTask({
+        exit: { kind: 'exited', code: 2 },
+        timeline: [{ at: '2026-11-10T00:00:01.000Z', kind: 'message', text: '可能 quota 满了' }],
+      }),
+      { scripts: [], running: false },
+    );
+    expect(genericErr.stoppedInfo?.reasonLabel).toBe('AI 执行出错');
+    expect(genericErr.stoppedInfo?.projectText).toBe('没有任何变化；shared-docs 中的改动已经发生，无法自动还原');
+
+    // 执行者明确报告额度用尽
+    const quotaErr = buildTaskView(
+      mkTask({
+        exit: { kind: 'exited', code: 1 },
+        timeline: [
+          {
+            at: '2026-11-10T00:00:01.000Z',
+            kind: 'message',
+            source: 'host',
+            text: '执行没有完成（状态：failed）：You hit your usage limit.',
+          },
+        ],
+      }),
+      { scripts: [], running: false },
+    );
+    expect(quotaErr.stoppedInfo?.reasonLabel).toBe('额度用完');
+
+    // 超时与 exec_failed 状态本身（card 未生成前）也能进入 StoppedPage
+    const timedOut = buildTaskView(mkTask({ state: 'timed_out', exit: { kind: 'timed_out' } }), { scripts: [], running: false });
+    expect(timedOut.stoppedInfo?.reasonLabel).toBe('超时');
+
+    const rawFailed = buildTaskView(mkTask({ state: 'exec_failed', exit: { kind: 'exited', code: 1 } }), { scripts: [], running: false });
+    expect(rawFailed.stoppedInfo?.reasonLabel).toBe('AI 执行出错');
   });
 });
 

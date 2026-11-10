@@ -543,8 +543,20 @@ export class TaskRunner extends EventEmitter {
     return t;
   }
 
-  async requestFix(id: string, instruction: string): Promise<Task> {
+  /** 若任务停在 stopped / timed_out / exec_failed / exec_succeeded（尚未进入 reviewing），先补齐验收态以便继续或放弃。 */
+  async ensureReviewed(id: string): Promise<Task> {
     const t = await this.load(id);
+    if (canFire(t.state, 'review')) return this.review(t);
+    return t;
+  }
+
+  /**
+   * 准备继续执行或退回修改：保留原 task.worktree 与已做修改，清空上次验收确认/退出结果并将状态由 reviewing → approved。
+   */
+  async prepareContinue(id: string, instruction: string): Promise<{ task: Task; prompt: string }> {
+    const t = await this.ensureReviewed(id);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (t.card?.items.some((i) => i.key === 'drivers')) throw new Error(MESSAGES.externalDriver);
     t.criteria.forEach((c) => delete c.decision);
     t.previewed = false;
     t.previewSkipped = false;
@@ -556,9 +568,14 @@ export class TaskRunner extends EventEmitter {
     delete t.exit;
     t.denied = [];
     t.deniedAcks = [];
-    this.log(t, 'message', `你要求修改：${instruction}`);
+    this.log(t, 'message', `你要求修改：${instruction}`, 'host');
     await this.fire(t, 'request_fix'); // fire 会持久化，必须在清空之后
-    return this.start(id, `${buildPrompt(t)}\n\n上一次结果需要修改：${instruction}`);
+    return { task: t, prompt: `${buildPrompt(t)}\n\n上一次结果需要修改：${instruction}` };
+  }
+
+  async requestFix(id: string, instruction: string): Promise<Task> {
+    const { prompt } = await this.prepareContinue(id, instruction);
+    return this.start(id, prompt);
   }
 
   // ───────────────────────── 保存 / 放弃 / 撤销 / 清理（B4） ─────────────────────────

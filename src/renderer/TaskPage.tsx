@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
 import { Acceptance } from './Acceptance.js';
 import { PlanCard } from './PlanCard.js';
 import { RunView } from './RunView.js';
+import { StoppedPage } from './StoppedPage.js';
 import type { TaskView } from './api.js';
 
 interface TaskPageProps {
@@ -18,7 +20,7 @@ interface TaskPageProps {
 /**
  * 任务页外框（UI v2.1 第 2 节，B6）：
  * 面包屑（项目 › 任务）+ 任务名 + 3 步阶段条（1 计划 → 2 施工 → 3 验收；阶段 5 时再把「计划」改为「讨论」）。
- * 现有的 PlanCard / RunView / Acceptance 原样放进外框，不改内部逻辑。
+ * 在停下/中断/出错态优先展示 StoppedPage（#06-stopped），点击「去验收已有成果」后才进入 Acceptance。
  */
 export function TaskPage({
   projectId,
@@ -31,13 +33,28 @@ export function TaskPage({
   onTaskChanged,
   onAcceptanceChanged,
 }: TaskPageProps) {
+  const [ackStopToken, setAckStopToken] = useState<string | null>(null);
+  useEffect(() => {
+    setAckStopToken(null);
+  }, [task.id]);
+
+  const showRun = task.running || task.state === 'running';
+  useEffect(() => {
+    if (showRun) setAckStopToken(null);
+  }, [showRun]);
+  const showPlan = !showRun && ['draft', 'planned', 'approved'].includes(task.state) && task.layer.runStatus !== '已锁定';
+  const stoppedInfo = !showRun && !showPlan ? task.stoppedInfo : null;
+  const showStopped = !!stoppedInfo && ackStopToken !== stoppedInfo.token;
+
   const stage = task.layer.stage;
-  const planDone = stage === 'building' || stage === 'reviewing' || stage === 'ended';
-  const planCur = stage === 'planning' || stage === 'discussing';
-  const buildDone = stage === 'reviewing' || stage === 'ended';
-  const buildCur = stage === 'building';
-  const acceptDone = stage === 'ended';
-  const acceptCur = stage === 'reviewing';
+  const planDone = showStopped || stage === 'building' || stage === 'reviewing' || stage === 'ended';
+  const planCur = !showStopped && (stage === 'planning' || stage === 'discussing');
+  const buildDone = !showStopped && (stage === 'reviewing' || stage === 'ended');
+  const buildCur = showStopped || stage === 'building';
+  const acceptDone = !showStopped && stage === 'ended';
+  const acceptCur = !showStopped && stage === 'reviewing';
+
+  const useBare = showRun || showPlan || showStopped;
 
   return (
     <main className="main" data-testid="task-page" aria-label={task.goal}>
@@ -79,16 +96,26 @@ export function TaskPage({
 
       {error && <p role="alert" className="error" data-testid="task-error">{error}</p>}
 
-      <div className={`taskpane${task.running || task.state === 'running' || (['draft', 'planned', 'approved'].includes(task.state) && task.layer.runStatus !== '已锁定') ? ' taskpane-bare' : ''}`} data-testid="task-pane">
-        {task.running || task.state === 'running' ? (
+      <div className={`taskpane${useBare ? ' taskpane-bare' : ''}`} data-testid="task-pane">
+        {showRun ? (
           <RunView task={task} onStop={onStop} />
-        ) : ['draft', 'planned', 'approved'].includes(task.state) && task.layer.runStatus !== '已锁定' ? (
+        ) : showPlan ? (
           <PlanCard
             key={task.id}
             projectId={projectId}
             task={task}
             preferredMode={preferredMode}
             onChanged={onTaskChanged}
+          />
+        ) : showStopped && stoppedInfo ? (
+          <StoppedPage
+            key={stoppedInfo.token}
+            projectId={projectId}
+            task={task}
+            info={stoppedInfo}
+            onGoAcceptance={() => setAckStopToken(stoppedInfo.token)}
+            onContinued={onTaskChanged}
+            onDiscarded={onAcceptanceChanged}
           />
         ) : (
           <Acceptance

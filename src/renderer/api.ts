@@ -42,6 +42,7 @@ export type {
   BuildingStep,
   BuildingProblem,
   ExecLogEntry,
+  StoppedInfo,
 } from '../core/app/task-view.js';
 export type { TaskClassification, TaskStage, TaskOutcome, WorkbenchGroup } from '../core/app/task-state-view.js';
 export type { OpenProjectSummary, CloseProjectResult, WorkbenchEntry, WorkbenchNextAction, WorkbenchView } from '../core/app/open-projects.js';
@@ -65,6 +66,7 @@ interface StudioApi {
   removeExtraDir(projectId: string, id: string, key: string): Promise<TaskView>;
   startTask(projectId: string, id: string, ack: boolean): Promise<TaskView>;
   stopTask(projectId: string, id: string): Promise<TaskView>;
+  continueTask(projectId: string, id: string): Promise<TaskView>;
   getAcceptanceView(projectId: string, id: string): Promise<UserAcceptanceView>;
   openPreview(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   skipPreview(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;

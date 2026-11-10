@@ -275,8 +275,9 @@ describe('安全基线（防回归）', () => {
     // 只允许 编号 / 布尔 / 需求文字 / 计划表单（文字、模式、布尔）/ 选项键；任何参数都不得叫 path/dir/folder/file，
     // 额外文件夹由主进程弹系统选择框取得，渲染进程不传路径。
     // 阶段 2 第一部分修订（A3，仅同步方法清单/参数形态）：每个任务、项目状态与验收方法最前面加 projectId: string，并登记 projects:listOpen / projects:close / workbench:get 三个方法，不得出现宽松类型。
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
-    expect(entries).toHaveLength(32);
+    // 阶段 3 修订（仅按前例同步登记 continueTask，参数为 projectId: string, id: string，不放宽任何参数形态）
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
+    expect(entries).toHaveLength(33);
     const SHAPES = ['', 'id: string', 'projectId: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
@@ -464,6 +465,7 @@ describe('安全基线（防回归）', () => {
         listOpenProjects: '',
         closeProject: 'projectId: string',
         getWorkbench: '',
+        continueTask: 'projectId: string, id: string',
         getAcceptanceView: 'projectId: string, id: string',
         openPreview: 'projectId: string, id: string, version: string',
         skipPreview: 'projectId: string, id: string, version: string',
@@ -790,8 +792,8 @@ describe('安全基线（防回归）', () => {
     it('每个接收 projectId 的 IPC 处理函数都先校验 projectId 在已打开项目表中', () => {
       const handlerPattern = /ipcMain\.handle\('([^']+)',\s*\(([^)]*)\)\s*=>\s*([^\n]+)\);/g;
       const guarded = [...main.matchAll(handlerPattern)].filter((m) => /\bprojectId\b/.test(m[2]!));
-      // 1 个 projects:close + 1 个 project:status + 8 个 tasks:* + 12 个 acceptance:* = 22 个带 projectId 的处理函数
-      expect(guarded).toHaveLength(22);
+      // 1 个 projects:close + 1 个 project:status + 9 个 tasks:* + 12 个 acceptance:* = 23 个带 projectId 的处理函数
+      expect(guarded).toHaveLength(23);
       const validBody = /^(?:controllerFor\(projectId\)\.\w+\(|projectStatus\(projectId\)|openProjects\.close\(projectId\))/;
       for (const m of guarded) {
         expect(m[3], `handler ${m[1]} 必须首先通过 openProjects 校验 projectId`).toMatch(validBody);
@@ -848,6 +850,57 @@ describe('安全基线（防回归）', () => {
         fs.rmSync(repo, { recursive: true, force: true });
         fs.rmSync(data, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe('阶段 3：继续执行与施工安全边界（只增不减）', () => {
+    it('continueTask 严格校验任务编号与状态，拒绝 manualReview / 非停止态 / 伪造参数', async () => {
+      const os = await import('node:os');
+      const { TaskController } = await import('../src/core/app/task-controller.js');
+      const { TaskPrefs } = await import('../src/core/app/prefs.js');
+      const { FakeExecutor } = await import('../src/core/executor/adapters/fake.js');
+      const { execFileSync } = await import('node:child_process');
+      const { TaskStore } = await import('../src/core/task/store.js');
+
+      const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-sec-s3-')));
+      const data = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-sec-s3d-')));
+      try {
+        execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+        fs.writeFileSync(path.join(repo, 'index.html'), '<h1>v0</h1>\n');
+        execFileSync('git', ['add', '-A'], { cwd: repo });
+        execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+
+        const ctl = new TaskController({
+          repo,
+          makeExecutor: () => new FakeExecutor([]),
+          pickDirectory: async () => null,
+          prefs: new TaskPrefs(data),
+        });
+        await expect(ctl.continueTask('../evil')).rejects.toThrow(/无效的参数/);
+
+        const draft = await ctl.create('正常草稿');
+        await expect(ctl.continueTask(draft.id)).rejects.toThrow(/只有已停止、中断或出错的任务才能继续执行/);
+
+        const locked = await ctl.create('锁定任务');
+        const ts = new TaskStore(repo);
+        const raw = (await ts.get(locked.id))!;
+        raw.manualReview = { reason: '恢复未确认', at: new Date().toISOString() };
+        await ts.save(raw);
+        await expect(ctl.continueTask(locked.id)).rejects.toThrow(/项目状态异常/);
+      } finally {
+        const { RecordStore } = await import('../src/core/persistence/index.js');
+        await RecordStore.closeAll().catch(() => undefined);
+        fs.rmSync(repo, { recursive: true, force: true });
+        fs.rmSync(data, { recursive: true, force: true });
+      }
+    });
+
+    it('PlanCard 不提供“改为只读”或未接入的“更换 / 导出”入口', () => {
+      const planCode = stripComments(read('src/renderer/PlanCard.tsx'));
+      const copyCode = stripComments(read('src/renderer/copy.ts'));
+      expect(planCode).not.toContain('改为只读');
+      expect(copyCode).not.toContain('改为只读');
+      expect(planCode).not.toContain('导出给外部工具');
     });
   });
 });

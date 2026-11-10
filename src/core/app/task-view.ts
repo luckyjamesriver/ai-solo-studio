@@ -8,6 +8,8 @@ import { describePermissions, type PermissionSummary } from './permission-text.j
 import { extractIncomplete } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
 import { deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
+import { MESSAGES } from '../task/messages.js';
+import { classifyServiceError } from '../thinking/errors.js';
 import { classifyTaskState, type TaskClassification } from './task-state-view.js';
 
 /**
@@ -41,6 +43,17 @@ export interface BuildingView {
   needsIntervention: string;
   projectSafetyLine: string;
   execLog: ExecLogEntry[];
+}
+export interface StoppedInfo {
+  token: string;
+  reasonLabel: '你停止的' | '超时' | '额度用完' | 'AI 执行出错';
+  reasonDetail: string;
+  isAbnormal: boolean;
+  doneText: string;
+  undoneText: string;
+  projectText: string;
+  canContinue: boolean;
+  discardConfirmText: string;
 }
 export interface CheckPlanView {
   name: 'build' | 'test';
@@ -83,6 +96,8 @@ export interface TaskView {
   progress: string[];
   /** 施工中视图专用结构（#05-build：步骤、被拦下的问题、项目安全性说明、折叠大白话日志） */
   building: BuildingView;
+  /** 停止 / 中断后页专用结构（#06-stopped）；非停止/中断/失败态为 null */
+  stoppedInfo: StoppedInfo | null;
   /** 没能开工的原因（权限核验失败、完全信任未确认等） */
   startFailure: string | null;
   running: boolean;
@@ -281,6 +296,71 @@ function buildBuildingView(task: Task, opts: { running: boolean; worktreeChanges
   };
 }
 
+/** 仅当最近一次执行日志里出现适配器明确的额度用尽报错时才返回 true（不靠猜）。 */
+export function hasQuotaExhaustedError(task: Pick<Task, 'timeline'>): boolean {
+  const entries = sliceLatestRun(task.timeline);
+  return entries.some(
+    (e) => ((e.kind === 'message' && isHost(e)) || e.kind === 'error') && classifyServiceError(e.text) === 'quota_exhausted',
+  );
+}
+
+function buildStoppedInfo(task: Task, opts: { running: boolean; worktreeChanges?: FileChange[] }): StoppedInfo | null {
+  if (task.manualReview || opts.running) return null;
+  const isStoppedOrFailed =
+    ['stopped', 'timed_out', 'exec_failed'].includes(task.state) ||
+    (task.state === 'reviewing' && !!task.exit && (task.exit.kind !== 'exited' || task.exit.code !== 0));
+  if (!isStoppedOrFailed) return null;
+
+  const caps = task.plan?.capabilities;
+  const extraDirs = caps?.extraWritableDirs ?? [];
+  const extraNames = extraDirs.map((d) => path.basename(d) || d);
+  const fullTrust = caps?.constructionMode === 'full_trust';
+
+  let reasonLabel: StoppedInfo['reasonLabel'];
+  let reasonDetail: string;
+  let isAbnormal: boolean;
+  if (hasQuotaExhaustedError(task)) {
+    reasonLabel = '额度用完';
+    reasonDetail = '执行者报告额度用完，本次执行已停下';
+    isAbnormal = true;
+  } else if (task.state === 'stopped' || task.exit?.kind === 'stopped') {
+    reasonLabel = '你停止的';
+    reasonDetail = '你停止了本次执行';
+    isAbnormal = false;
+  } else if (task.state === 'timed_out' || task.exit?.kind === 'timed_out') {
+    reasonLabel = '超时';
+    reasonDetail = '执行超时停下';
+    isAbnormal = true;
+  } else {
+    reasonLabel = 'AI 执行出错';
+    reasonDetail = 'AI 执行出错停止了';
+    isAbnormal = true;
+  }
+
+  const changedCount = opts.worktreeChanges ? opts.worktreeChanges.length : (task.card?.changes.length ?? 0);
+  const doneText = changedCount > 0 ? `任务副本相对开工时改动了 ${changedCount} 个文件` : '任务副本相对开工时还没有改动文件';
+  const undoneText = 'AI 没有走完全部步骤。具体缺了什么，请在验收时对照验收标准查看';
+  const projectText =
+    extraNames.length > 0 ? `没有任何变化；${extraNames.join('、')} 中的改动已经发生，无法自动还原` : '没有任何变化';
+
+  const hasDriverBlock = !!task.card?.items.some((i) => i.key === 'drivers');
+  const canContinue = !task.manualReview && !!task.worktree && !hasDriverBlock;
+  const discardConfirmText =
+    extraDirs.length > 0 || fullTrust ? `${MESSAGES.discardDone}${MESSAGES.discardExtra}` : MESSAGES.discardDone;
+
+  return {
+    token: `${task.id}:${task.acceptanceRev ?? 0}:${task.state}:${task.exit?.kind ?? ''}`,
+    reasonLabel,
+    reasonDetail,
+    isAbnormal,
+    doneText,
+    undoneText,
+    projectText,
+    canContinue,
+    discardConfirmText,
+  };
+}
+
 export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[]; running: boolean; worktreeChanges?: FileChange[] }): TaskView {
   const caps = task.plan?.capabilities;
   const aiMessages = task.timeline.filter((e) => e.kind === 'message' && !isHost(e)).map((e) => e.text);
@@ -361,6 +441,7 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     permissions: describePermissions(task.effectivePermissions),
     progress: compact,
     building: buildBuildingView(task, opts),
+    stoppedInfo: buildStoppedInfo(task, opts),
     startFailure,
     running: opts.running,
     reconciled: task.reconciled ? `已核对：${task.reconciled.note}` : null,
