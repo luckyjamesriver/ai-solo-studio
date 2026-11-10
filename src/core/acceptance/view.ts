@@ -37,6 +37,16 @@ export interface ActionState {
   /** 界面突出显示这个按钮 */
   highlight?: boolean;
 }
+export interface SaveRecordView {
+  checked: boolean;
+  /** 保存记录界面的检查结论：只显示“检查通过”或“未检查”，不显示命令 */
+  checksText: '检查通过' | '未检查';
+  passedCount: number;
+  failedCount: number;
+  checkedAt?: string;
+  savedAt: string;
+}
+
 export interface UserAcceptanceView {
   taskId: string;
   goal: string;
@@ -66,6 +76,8 @@ export interface UserAcceptanceView {
   diagnosticSummary: string;
   /** 验收版本：确认、保存等请求必须带上它，不一致一律拒绝 */
   version: string;
+  /** 保存记录里的检查信息（不含任何命令或底层哈希） */
+  saveRecord: SaveRecordView | null;
   /** 成果预览信息（步骤 ①） */
   preview: {
     kind: 'web' | 'finder' | null;
@@ -212,8 +224,12 @@ const on = (extra: Partial<ActionState> = {}): ActionState => ({ enabled: true, 
 function verdictFor(t: Task, blockers: BlockerCode[], saveFail: { message: string } | null, anyFailed: boolean, anyUnchecked: boolean): string {
   if (t.manualReview) return MESSAGES.abnormal;
   switch (t.state) {
-    case 'saved': return MESSAGES.saved;
-    case 'saved_cleanup_pending': return `${MESSAGES.saved}${MESSAGES.saveCleanupPending}`;
+    case 'saved':
+      return t.saveRecord?.checked === true ? `${MESSAGES.saved}检查通过。` : `${MESSAGES.saved}未检查。`;
+    case 'saved_cleanup_pending': {
+      const checkLabel = t.saveRecord?.checked === true ? '检查通过' : '未检查';
+      return `${MESSAGES.saved}${MESSAGES.saveCleanupPending}（${checkLabel}）`;
+    }
     case 'discarded': return MESSAGES.discardDone;
     case 'discard_cleanup_pending': return MESSAGES.discardCleanupPending;
     case 'undone': return MESSAGES.undone;
@@ -362,6 +378,16 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     reconciled: t.reconciled ? `已核对：${t.reconciled.note}` : null,
     diagnosticSummary: summary,
     version: acceptanceVersion(t),
+    saveRecord: t.saveRecord
+      ? {
+          checked: t.saveRecord.checked === true,
+          checksText: t.saveRecord.checked === true ? '检查通过' : '未检查',
+          passedCount: t.saveRecord.checksSummary?.passed ?? 0,
+          failedCount: t.saveRecord.checksSummary?.failed ?? 0,
+          ...(t.saveRecord.checkedAt ? { checkedAt: t.saveRecord.checkedAt } : {}),
+          savedAt: t.saveRecord.savedAt,
+        }
+      : null,
     preview: {
       kind: ctx.previewKind !== undefined ? ctx.previewKind : (t.worktree?.path ? 'finder' : null),
       buttonText: ctx.previewButtonText ?? ((ctx.previewKind ?? (t.worktree?.path ? 'finder' : null)) === 'web' ? '在浏览器中打开预览' : '在访达中显示'),

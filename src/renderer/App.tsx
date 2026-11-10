@@ -164,7 +164,12 @@ export function App() {
             )}
             <h3>保存点</h3>
             <ol className="saves">
-              {project.savePoints.map((s) => <li key={s.sha}>{s.message} <span className="muted">{new Date(s.date).toLocaleString()}</span></li>)}
+              {project.savePoints.map((s) => (
+                <li key={s.sha}>
+                  {s.message} <span className="muted">{new Date(s.date).toLocaleString()}</span>
+                  {s.checksText && <span className="muted" data-testid="savepoint-check"> · {s.checksText}</span>}
+                </li>
+              ))}
             </ol>
             <Tasks key={project.path} />
             <button className="secondary" onClick={() => { setProject(null); refreshEnv(); }}>换一个项目</button>

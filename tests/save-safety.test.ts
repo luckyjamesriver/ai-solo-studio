@@ -4,7 +4,8 @@ import path from 'node:path';
 import { TaskRunner } from '../src/core/task/runner.js';
 import { FakeExecutor, type FakeStep } from '../src/core/executor/adapters/fake.js';
 import { MESSAGES } from '../src/core/task/messages.js';
-import { mapFailure } from '../src/core/acceptance/view.js';
+import { mapFailure, toUserView } from '../src/core/acceptance/view.js';
+import { buildTaskView } from '../src/core/app/task-view.js';
 import type { SandboxCommandRunner } from '../src/core/checks/scripts.js';
 import * as G from '../src/core/git/git.js';
 import { makeRepo, testSandboxRunner } from './helpers.js';
@@ -384,10 +385,75 @@ describe('阶段 1 · 保存安全：先试合并、试检查，再写入主项�
     expect(await trialsEntries(repo)).toEqual([]);
     const after = (await fresh.store.get(id))!;
     expect(after.state).toBe('saved');
-    expect(after.saveRecord).toMatchObject({ preMergeHead: preHead, taskCommit, mergeCommit: trialCommit });
+    expect(after.saveRecord).toMatchObject({
+      preMergeHead: preHead,
+      taskCommit,
+      mergeCommit: trialCommit,
+      trialCommit,
+      checked: true,
+      checksSummary: { passed: 1, failed: 0 },
+    });
+    expect(after.saveRecord?.checkedAt).toBeTruthy();
     expect(after.op?.phase).toBe('finished');
     expect(await fresh.reconcileTasks()).toEqual([]); // 幂等
     expect((await fresh.undo(id)).ok).toBe(true);
     expect(await fs.readFile(path.join(repo, 'index.html'), 'utf8')).toBe('<h1>old</h1>\n');
+  });
+});
+
+describe('阶段 1 · 保存记录检查信息与界面文案', () => {
+  it('有检查且通过：saveRecord 记录 checked=true、checksSummary、checkedAt、trialCommit，界面显示「检查通过」且不含命令', async () => {
+    const files = {
+      'package.json': JSON.stringify({ scripts: { build: 'node -e "process.exit(0)"', test: 'node -e "process.exit(0)"' } }),
+      'index.html': '<h1>old</h1>\n',
+    };
+    const { runner, id } = await makeConfirmedTask({
+      files,
+      runChecks: true,
+      sandboxRunner: testSandboxRunner(),
+    });
+    const r = await runner.save(id);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const rec = r.task.saveRecord!;
+    expect(rec.checked).toBe(true);
+    expect(rec.checksSummary).toEqual({ passed: 2, failed: 0 });
+    expect(rec.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(rec.trialCommit).toBe(rec.mergeCommit);
+
+    const uv = toUserView(r.task, { busy: false });
+    expect(uv.saveRecord).toMatchObject({ checked: true, checksText: '检查通过', passedCount: 2, failedCount: 0 });
+    expect(uv.verdict).toContain('检查通过');
+    expect(JSON.stringify(uv)).not.toMatch(/npm run|node -e|process\.exit/);
+
+    const tv = buildTaskView(r.task, { scripts: ['build', 'test'], running: false });
+    expect(tv.saveCheckText).toBe('检查通过');
+    expect(JSON.stringify(tv)).not.toMatch(/npm run|node -e|process\.exit/);
+  });
+
+  it('无可用检查：saveRecord 记录 checked=false，界面显示「未检查」且绝不显示「通过」或「安全」', async () => {
+    const { runner, id } = await makeConfirmedTask({
+      files: { 'index.html': '<h1>old</h1>\n' },
+      runChecks: true,
+      sandboxRunner: testSandboxRunner(),
+    });
+    const r = await runner.save(id);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const rec = r.task.saveRecord!;
+    expect(rec.checked).toBe(false);
+    expect(rec.checksSummary).toEqual({ passed: 0, failed: 0 });
+    expect(rec.checkedAt).toBeUndefined();
+    expect(rec.trialCommit).toBe(rec.mergeCommit);
+
+    const uv = toUserView(r.task, { busy: false });
+    expect(uv.saveRecord).toMatchObject({ checked: false, checksText: '未检查', passedCount: 0, failedCount: 0 });
+    expect(uv.verdict).toContain('未检查');
+    expect(uv.verdict).not.toMatch(/通过|安全/);
+
+    const tv = buildTaskView(r.task, { scripts: [], running: false });
+    expect(tv.saveCheckText).toBe('未检查');
   });
 });

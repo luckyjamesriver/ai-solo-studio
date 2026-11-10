@@ -68,6 +68,11 @@ export interface OpLog {
   finishedAt?: string;
 }
 
+export interface ChecksSummary {
+  passed: number;
+  failed: number;
+}
+
 /** 保存的结果，撤销只能依据它 */
 export interface SaveRecord {
   preMergeHead: string;
@@ -75,6 +80,14 @@ export interface SaveRecord {
   mergeCommit: string;
   branch: string;
   savedAt: string;
+  /** 合并后是否运行了全部声明的自动检查并通过 */
+  checked?: boolean;
+  /** 合并后自动检查通过/失败数量 */
+  checksSummary?: ChecksSummary;
+  /** 运行合并后自动检查的时间（未检查时省略） */
+  checkedAt?: string;
+  /** 试合并产生的提交（写入主项目 --ff-only 的源提交） */
+  trialCommit?: string;
 }
 
 export interface Task {

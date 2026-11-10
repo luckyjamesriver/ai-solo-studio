@@ -119,6 +119,7 @@ export function Acceptance({ task, onChanged }: { task: TaskView; onChanged: () 
         {task.fullTrust && <span className="badge-trust" data-testid="fulltrust-badge">{COPY.fullTrustBadge}</span>}
         <span className="muted" data-testid="executor-info">执行者：{task.executorText}</span>
         <span className="muted">{v.stateText}</span>
+        {v.saveRecord && <span className="badge-checked" data-testid="save-record-check">{v.saveRecord.checksText}</span>}
         {v.reconciled && <span className="badge-checked" data-testid="reconciled-badge">{COPY.reconciledBadge}</span>}
       </div>
       {v.reconciled && <p className="muted" data-testid="reconciled-note">{v.reconciled}</p>}

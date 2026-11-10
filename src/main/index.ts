@@ -65,13 +65,23 @@ function requireProject(): string {
 async function projectStatus() {
   const dir = requireProject();
   const repo = await G.isRepo(dir);
+  const taskList = repo ? await new TaskStore(dir, STORE_OPTS).list() : [];
+  const byMerge = new Map(taskList.filter((t) => t.saveRecord?.mergeCommit).map((t) => [t.saveRecord!.mergeCommit, t.saveRecord!]));
+  const savePoints = repo
+    ? (await G.savePoints(dir, 20)).map((sp) => {
+        const rec = byMerge.get(sp.sha);
+        if (!rec) return sp;
+        const checked = rec.checked === true;
+        return { ...sp, checked, checksText: (checked ? '检查通过' : '未检查') as '检查通过' | '未检查' };
+      })
+    : [];
   return {
     path: dir,
     name: path.basename(dir),
     isRepo: repo,
     uncommitted: repo ? await G.uncommittedCount(dir) : 0,
-    savePoints: repo ? await G.savePoints(dir, 20) : [],
-    tasks: repo ? await new TaskStore(dir, STORE_OPTS).list() : [],
+    savePoints,
+    tasks: taskList,
   };
 }
 

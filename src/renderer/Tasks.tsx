@@ -83,6 +83,7 @@ export function Tasks() {
               <button className="link" onClick={() => setSelected(t.id)}>{t.goal}</button>
               {t.fullTrust && <span className="badge-trust" data-testid="fulltrust-badge-list">{COPY.fullTrustBadge}</span>}
               <span className="muted"> {t.stateText}</span>
+              {t.saveCheckText && <span className="muted" data-testid="task-save-check"> · {t.saveCheckText}</span>}
               {t.reconciled && <span className="badge-checked" data-testid="reconciled-badge-list">{COPY.reconciledBadge}</span>}
             </li>
           ))}

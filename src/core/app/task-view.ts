@@ -66,6 +66,8 @@ export interface TaskView {
   model?: string;
   /** 执行者与模型完整文案（如 "Codex · gpt-5" 或 "Codex"） */
   executorText: string;
+  /** 保存记录的检查结论（已保存或曾保存任务显示“检查通过”或“未检查”，不含命令） */
+  saveCheckText: '检查通过' | '未检查' | null;
 }
 
 export const STATE_TEXT: Record<TaskState, string> = {
@@ -198,6 +200,7 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     executorName,
     model,
     executorText,
+    saveCheckText: task.saveRecord ? (task.saveRecord.checked === true ? '检查通过' : '未检查') : null,
     // 诊断记录：时间线的文字（含应用自己的说明），经已知噪音过滤；工具事件只留概括，不含命令
     diagnostics: task.timeline
       .filter((e) => e.kind !== 'tool' && e.kind !== 'isolation' && e.kind !== 'state')

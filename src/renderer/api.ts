@@ -18,7 +18,7 @@ export interface HealthReport {
   pathInfo: { processPath: string; supplementalDirs: string[] };
   project: { name: string } | null;
 }
-export interface SavePoint { sha: string; message: string; date: string }
+export interface SavePoint { sha: string; message: string; date: string; checked?: boolean; checksText?: '检查通过' | '未检查' }
 export interface ProjectStatus { path: string; name: string; isRepo: boolean; uncommitted: number; savePoints: SavePoint[]; tasks: { id: string; request: string; state: string }[] }
 export type OpenResult =
   | { kind: 'opened'; status: ProjectStatus }
@@ -33,7 +33,7 @@ export interface DisclosureState {
 }
 
 export type { TaskView, ResultView, FactView, ExtraDirView } from '../core/app/task-view.js';
-export type { UserAcceptanceView, ViewItem, ViewChange, ActionState } from '../core/acceptance/view.js';
+export type { UserAcceptanceView, ViewItem, ViewChange, ActionState, SaveRecordView } from '../core/acceptance/view.js';
 export type { ChangePreview, Hunk } from '../core/acceptance/snippets.js';
 export type { AcceptanceActionResult } from '../core/app/task-controller.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';

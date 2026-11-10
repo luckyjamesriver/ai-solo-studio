@@ -744,7 +744,17 @@ export class TaskRunner extends EventEmitter {
       }
 
       const mergeCommit = await G.headSha(repo);
-      t.saveRecord = { preMergeHead: preHead, taskCommit, mergeCommit, branch: binding.branch, savedAt: new Date().toISOString() };
+      t.saveRecord = {
+        preMergeHead: preHead,
+        taskCommit,
+        mergeCommit,
+        branch: binding.branch,
+        savedAt: new Date().toISOString(),
+        checked,
+        checksSummary,
+        ...(checkedAt ? { checkedAt } : {}),
+        trialCommit,
+      };
       this.opStep(t, '合并到项目', true, mergeCommit);
       await this.opPhase(t, 'merged', { mergeCommit }); // 合并完成立刻落盘，之后即使中断也能据此核对
 
@@ -990,6 +1000,10 @@ export class TaskRunner extends EventEmitter {
             mergeCommit: f.merged,
             branch: t.binding?.branch ?? (await G.currentBranch(repo)),
             savedAt: new Date().toISOString(),
+            checked: op.checked ?? false,
+            checksSummary: op.checksSummary ?? { passed: 0, failed: 0 },
+            ...(op.checkedAt ? { checkedAt: op.checkedAt } : {}),
+            ...(op.trialCommit ? { trialCommit: op.trialCommit } : {}),
           };
           this.opStep(t, '启动核对：合并已在分支上', true, f.merged);
           op.mergeCommit = f.merged;
