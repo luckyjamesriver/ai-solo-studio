@@ -169,4 +169,18 @@ export const COPY = {
   projectSettingsModeDesc: '根据本项目最近一次开工选用的模式自动预选；只是预选，每个任务开工前仍会重新确认。',
   projectSettingsRiskTitle: '项目风险说明',
   projectSettingsRiskDesc: '标准模式下 AI 只改动任务副本并拦截敏感凭证；完全信任模式拥有当前账户全部权限，需要逐个任务确认。',
+  // 阶段 5a：讨论阶段（UI v2.1 第 4 节，原型 #03-discuss）
+  discussTabSummary: '方案摘要',
+  discussTabPlannerChat: '与首席对话',
+  discussTabReviewerChat: '与复核对话',
+  discussTabRecord: '评审记录',
+  discussUnreviewedBadge: '未经独立评审',
+  discussDevPresetBadge: '开发者预设',
+  discussModifyReqButton: '修改需求',
+  discussModifyReqHint: '修改需求会终止当前讨论线程并按修改后的需求重新开始，方案需要重新起草和评审。',
+  discussChatReqHint: '想改需求，请用「修改需求」',
+  discussSkipButton: '跳过讨论，直接写计划',
+  discussApproveButton: '批准方案',
+  discussStartButton: '开始讨论',
+  discussPostReviewBadge: '评审后的讨论 · 非独立评审',
 } as const;

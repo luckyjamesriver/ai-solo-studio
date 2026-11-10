@@ -393,6 +393,14 @@ export function App() {
               refreshProjectTasks(screen.projectId);
               refreshWorkbench();
             }}
+            onTaskReplaced={(nextTask) => {
+              const seq = (refreshSeqRef.current[screen.projectId] ?? 0) + 1;
+              refreshSeqRef.current[screen.projectId] = seq;
+              upsertTask(screen.projectId, nextTask);
+              setScreen({ kind: 'task', projectId: screen.projectId, taskId: nextTask.id });
+              refreshProjectTasks(screen.projectId);
+              refreshWorkbench();
+            }}
             onAcceptanceChanged={() => {
               refreshProjectTasks(screen.projectId);
               loadProjectData(screen.projectId);

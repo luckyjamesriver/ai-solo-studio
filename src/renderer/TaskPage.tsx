@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Acceptance } from './Acceptance.js';
+import { DiscussionPage } from './DiscussionPage.js';
 import { PlanCard } from './PlanCard.js';
 import { RunView } from './RunView.js';
 import { StoppedPage } from './StoppedPage.js';
@@ -15,6 +16,7 @@ interface TaskPageProps {
   onBackToProject: () => void;
   onStop: () => void;
   onTaskChanged: (t: TaskView) => void;
+  onTaskReplaced?: (t: TaskView) => void;
   onAcceptanceChanged: () => void;
 }
 
@@ -32,6 +34,7 @@ export function TaskPage({
   onBackToProject,
   onStop,
   onTaskChanged,
+  onTaskReplaced,
   onAcceptanceChanged,
 }: TaskPageProps) {
   const [ackStopToken, setAckStopToken] = useState<string | null>(null);
@@ -43,8 +46,9 @@ export function TaskPage({
   useEffect(() => {
     if (showRun) setAckStopToken(null);
   }, [showRun]);
-  const showPlan = !showRun && ['draft', 'planned', 'approved'].includes(task.state) && task.layer.runStatus !== '已锁定';
-  const stoppedInfo = !showRun && !showPlan ? task.stoppedInfo : null;
+  const showDiscuss = !showRun && ['draft', 'clarifying'].includes(task.state) && task.layer.runStatus !== '已锁定';
+  const showPlan = !showRun && ['planned', 'approved'].includes(task.state) && task.layer.runStatus !== '已锁定';
+  const stoppedInfo = !showRun && !showDiscuss && !showPlan ? task.stoppedInfo : null;
   const showStopped = !!stoppedInfo && ackStopToken !== stoppedInfo.token;
 
   const stage = task.layer.stage;
@@ -55,7 +59,7 @@ export function TaskPage({
   const acceptDone = !showStopped && stage === 'ended';
   const acceptCur = !showStopped && stage === 'reviewing';
 
-  const useBare = showRun || showPlan || showStopped || !error;
+  const useBare = showRun || showDiscuss || showPlan || showStopped || !error;
 
   return (
     <main className="main" data-testid="task-page" aria-label={task.goal}>
@@ -101,6 +105,14 @@ export function TaskPage({
       <div className={`taskpane${useBare ? ' taskpane-bare' : ''}`} data-testid="task-pane">
         {showRun ? (
           <RunView task={task} onStop={onStop} />
+        ) : showDiscuss ? (
+          <DiscussionPage
+            key={task.id}
+            projectId={projectId}
+            task={task}
+            onTaskUpdated={onTaskChanged}
+            onTaskReplaced={onTaskReplaced ?? onTaskChanged}
+          />
         ) : showPlan ? (
           <PlanCard
             key={task.id}

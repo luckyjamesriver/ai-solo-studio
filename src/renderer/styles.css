@@ -653,3 +653,63 @@ blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--col
   color: var(--color-primary-hover);
   font-weight: 700;
 }
+
+.plan-full-text {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: var(--text-muted)/1.6 var(--font-mono);
+}
+
+.discuss-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-ui);
+  font-size: var(--text-muted);
+}
+
+.discuss-step-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-muted);
+}
+
+.discuss-step-item[data-status="current"] {
+  color: var(--color-ink);
+  font-weight: 700;
+}
+
+.discuss-step-item[data-status="failed"] {
+  color: var(--color-warn-ink);
+  font-weight: 600;
+}
+
+.discuss-finding-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  background: var(--color-surface-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.discuss-chat-msg {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: var(--color-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.discuss-chat-msg.from-user {
+  background: var(--color-surface-subtle);
+}

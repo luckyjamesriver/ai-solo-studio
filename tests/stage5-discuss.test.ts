@@ -2,6 +2,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { DiscussionViewBody, type DiscussionBodyProps } from '../src/renderer/DiscussionPage.js';
+import type { DiscussionView } from '../src/core/app/discussion-service.js';
 import { TaskController } from '../src/core/app/task-controller.js';
 import { TaskPrefs } from '../src/core/app/prefs.js';
 import { FakeExecutor } from '../src/core/executor/adapters/fake.js';
@@ -329,5 +333,168 @@ describe('阶段 5a 提交①：暂停恢复 FlowUI + 控制器驱动 + 审批�
 
     void DRAFT;
     void REVISE;
+  });
+});
+
+function renderDiscussBody(view: DiscussionView, over: Partial<DiscussionBodyProps> = {}): string {
+  const props: DiscussionBodyProps = {
+    view,
+    taskState: 'clarifying',
+    busy: false,
+    actionError: null,
+    activeTab: 'summary',
+    onTabChange: () => undefined,
+    selectedPreset: view.preset,
+    onSelectPreset: () => undefined,
+    reqEdits: [],
+    onChangeReqEdits: () => undefined,
+    retryNote: '',
+    onChangeRetryNote: () => undefined,
+    rejectDrafts: {},
+    onChangeRejectDraft: () => undefined,
+    showFullPlan: false,
+    onToggleFullPlan: () => undefined,
+    modifyOpen: false,
+    modifyText: view.rawRequirement,
+    onToggleModify: () => undefined,
+    onChangeModifyText: () => undefined,
+    onStart: () => undefined,
+    onSkip: () => undefined,
+    onConsent: () => undefined,
+    onConfirmReqs: () => undefined,
+    onResolveFailure: () => undefined,
+    onAdjudicate: () => undefined,
+    onApproveDecision: () => undefined,
+    onModifyRequirements: () => undefined,
+    ...over,
+  };
+  return renderToStaticMarkup(createElement(DiscussionViewBody, props));
+}
+
+describe('阶段 5a 提交②：讨论页面、依据核验逐字呈现、未经独立评审、需求修改', () => {
+  it('四类依据核验结论均原样渲染（不美化），且存在安全/未裁决问题时批准方案置灰并写明原因', async () => {
+    const planner = scripted({
+      review: undefined,
+      revise: {
+        plan: '## 方案（含四类依据测试）\n测试依据展示',
+        resolutions: [
+          { index: 1, result: '交用户裁决', reason: 'r1' },
+          { index: 2, result: '交用户裁决', reason: 'r2' },
+          { index: 3, result: '交用户裁决', reason: 'r3' },
+          { index: 4, result: '交用户裁决', reason: 'r4' },
+        ],
+        item_marks: [{ id: 'R1', mark: '保留' }, { id: 'R2', mark: '保留' }],
+        additions: [],
+      },
+    });
+    const reviewer = scripted(
+      {
+        review: {
+          requirement_checks: [{ id: 'R1', covered: true, note: '' }, { id: 'R2', covered: true, note: '' }],
+          findings: [
+            { problem: '依据为空', severity: '阻断', basis: '', impact: 'i1', suggestion: 's1', resolution: '' },
+            { problem: '纯文字依据', severity: '阻断', basis: '常识推断无需文件', impact: 'i2', suggestion: 's2', resolution: '' },
+            { problem: '文件不存在', severity: '阻断', basis: 'docs/not-found.md#缺口', impact: 'i3', suggestion: 's3', resolution: '' },
+            { problem: '引用存在文件', severity: '阻断', basis: 'docs/ref.md#安全', impact: 'i4', suggestion: 's4', resolution: '' },
+          ],
+          missing_evidence: ['缺少压测数据'],
+        },
+      },
+      {},
+      { id: 'fake-claude', service: 'Claude Code CLI' },
+    );
+    const { ctl } = await makeTempCtl({ planner, reviewer, devPersonalEnabled: true });
+
+    const created = await ctl.create('测试四类依据展示');
+    await ctl.startDiscussion(created.id, 'dev-personal');
+    await ctl.waitDiscussion(created.id);
+    const c1 = await ctl.getDiscussionView(created.id);
+    await ctl.confirmDiscussionSend(created.id, c1.pendingConsentService!, true);
+    await ctl.waitDiscussion(created.id);
+    const reqV = await ctl.getDiscussionView(created.id);
+    await ctl.confirmDiscussionRequirements(
+      created.id,
+      reqV.requirements.map((r) => ({ id: r.id, text: r.text })),
+    );
+    await ctl.waitDiscussion(created.id);
+    const c2 = await ctl.getDiscussionView(created.id);
+    await ctl.confirmDiscussionSend(created.id, c2.pendingConsentService!, true);
+    await ctl.waitDiscussion(created.id);
+
+    const view = await ctl.getDiscussionView(created.id);
+    expect(view.pendingAdjudications).toHaveLength(4);
+    expect(view.canApprove).toBe(false);
+
+    const summaryHtml = renderDiscussBody(view);
+    expect(summaryHtml).toContain('未经证实');
+    expect(summaryHtml).toContain('依据为空或“无”');
+    expect(summaryHtml).toContain('给出了文字依据，但没有可核验的本地文件引用，宿主无法核验');
+    expect(summaryHtml).toContain('依据无法核实');
+    expect(summaryHtml).toContain('docs/not-found.md（文件不存在或不在项目目录内）');
+    expect(summaryHtml).toContain('提供了依据（文件存在）');
+    expect(summaryHtml).toContain('宿主核实了所引用的文件（及章节标题）存在；不代表文件内容支持该意见，仍需人工判断');
+    expect(summaryHtml).toContain('disabled=""');
+    expect(summaryHtml).toContain('先裁决上面 4 条意见');
+    // 未返回费用时不虚构金额
+    expect(summaryHtml).toContain('仅按次数与时长统计');
+    expect(summaryHtml).not.toMatch(/\$\d/);
+
+    // 评审记录 tab 只读渲染：6 字段 + 缺口资料
+    const recordHtml = renderDiscussBody(view, { activeTab: 'record' });
+    expect(recordHtml).toContain('缺少压测数据');
+    expect(recordHtml).toContain('依据为空');
+    expect(recordHtml).toContain('引用存在文件');
+
+    // 安全检查失败且已知费用时：批准方案同样置灰，Claude 费用按已知金额展示
+    const blockedSafeHtml = renderDiscussBody({
+      ...view,
+      pendingAdjudications: [],
+      safetyIssues: ['步骤 draft（第 1 次尝试）思考者请求了工具（1 次，已被拒绝）：隔离预期被打破'],
+      blockedBecause: ['安全检查未通过：步骤 draft（第 1 次尝试）思考者请求了工具（1 次，已被拒绝）：隔离预期被打破'],
+      canApprove: false,
+      budget: { ...view.budget, knownCostUsd: 0.0425 },
+    });
+    expect(blockedSafeHtml).toContain('安全检查未通过');
+    expect(blockedSafeHtml).toContain('$0.0425');
+    expect(blockedSafeHtml).toContain('disabled=""');
+  });
+
+  it('单思考者界面隐藏「与复核对话」且标「未经独立评审」；冻结后点击修改需求终止旧线程并创建新讨论任务', async () => {
+    const planner = scripted();
+    const { repo, ctl } = await makeTempCtl({ planner });
+
+    const oldTask = await ctl.create('最初的需求');
+    await ctl.startDiscussion(oldTask.id, 'codex-single');
+    await ctl.waitDiscussion(oldTask.id);
+    const c1 = await ctl.getDiscussionView(oldTask.id);
+    await ctl.confirmDiscussionSend(oldTask.id, c1.pendingConsentService!, true);
+    await ctl.waitDiscussion(oldTask.id);
+    const r1 = await ctl.getDiscussionView(oldTask.id);
+    await ctl.confirmDiscussionRequirements(
+      oldTask.id,
+      r1.requirements.map((r) => ({ id: r.id, text: r.text })),
+    );
+    await ctl.waitDiscussion(oldTask.id);
+
+    const singleView = await ctl.getDiscussionView(oldTask.id);
+    const html = renderDiscussBody(singleView);
+    expect(html).toContain('未经独立评审');
+    expect(html).toContain('与首席对话');
+    expect(html).not.toContain('与复核对话');
+
+    // 冻结后修改需求 -> 旧线程停机、旧任务放弃、返回绑定新线程的新任务
+    const nextTask = await ctl.modifyDiscussionRequirements(oldTask.id, '修改后的新需求：增加导出');
+    expect(nextTask.id).not.toBe(oldTask.id);
+    expect(nextTask.request).toBe('修改后的新需求：增加导出');
+    expect(nextTask.state).toBe('draft');
+
+    const oldThread = await new ThreadStore(repo).load(singleView.threadId);
+    expect(oldThread.state).toBe('stopped');
+    expect(oldThread.stoppedReason).toContain('修改需求');
+
+    const nextView = await ctl.getDiscussionView(nextTask.id);
+    expect(nextView.threadId).not.toBe(singleView.threadId);
+    expect(nextView.pauseAt).toBe('ready');
+    expect(nextView.rawRequirement).toBe('修改后的新需求：增加导出');
   });
 });

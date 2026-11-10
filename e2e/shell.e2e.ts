@@ -277,6 +277,8 @@ async function openProjectWithFake(proj: string, script: unknown[], data = mk('d
 async function newTask(page: Page, text: string) {
   await page.getByTestId('request').fill(text);
   await page.getByTestId('create-task').click();
+  await page.getByTestId('skip-discussion-button').waitFor();
+  await page.getByTestId('skip-discussion-button').click();
   await page.getByTestId('plan-card').waitFor();
 }
 // 任务记录在记录库里：<项目>/.studio/records/tasks/<id>.json，外层是修订号等元数据，任务内容在 data 里（ADR 0005）
