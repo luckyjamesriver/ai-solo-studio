@@ -7,6 +7,7 @@ import { CorruptRecordError, migrateLegacyFiles, RecordStore, updateRecord, type
  * 全部经持久化服务提交（CAS、事件日志）；旧版本的单文件（recent-projects.json 等）第一次打开时迁移。
  */
 export type AppRecord = Record<string, unknown>;
+export type AppStoreOptions = OpenOptions;
 
 export const APP_COLLECTION: CollectionDef<AppRecord> = { name: 'app', schemaVersion: 1, schema: z.record(z.string(), z.unknown()) as unknown as z.ZodType<AppRecord> };
 
@@ -40,6 +41,11 @@ export class AppStore {
       await store.appendEvent('diagnostic', { what: `应用记录 ${id} 无法读取，已按“没有”处理`, raw: e.message }).catch(() => undefined);
       return null;
     }
+  }
+
+  /** 读取并原子更新一条应用级记录（CAS，绝不绕过 persistence 层）。 */
+  async update(id: string, empty: AppRecord, mutate: (cur: AppRecord) => AppRecord, note?: string): Promise<AppRecord> {
+    return updateRecord(await this.store(), APP_COLLECTION, id, empty, mutate, note ? { note } : {});
   }
 
   /** 是否已展示过首次环境体检引导（B8）。 */

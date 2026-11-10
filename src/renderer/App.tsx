@@ -7,6 +7,8 @@ import { TaskPage } from './TaskPage.js';
 import { Workbench } from './Workbench.js';
 import {
   studio,
+  type ClaudeKeySaveResult,
+  type ClaudeKeyStatus,
   type DisclosureState,
   type HealthReport,
   type OpenResult,
@@ -48,6 +50,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [disc, setDisc] = useState<DisclosureState | null>(null);
   const [showDisc, setShowDisc] = useState(false);
+  const [claudeKey, setClaudeKey] = useState<ClaudeKeyStatus | null>(null);
 
   const mountedRef = useRef(true);
   const refreshSeqRef = useRef<Record<string, number>>({});
@@ -58,6 +61,26 @@ export function App() {
     setNotice(null);
     setError(null);
     setScreen(next);
+  }, []);
+
+  const refreshClaudeKey = useCallback(() => {
+    studio()
+      .getClaudeKeyStatus()
+      .then((s) => {
+        if (mountedRef.current) setClaudeKey(s);
+      })
+      .catch((e: Error) => {
+        if (mountedRef.current) setError(e.message);
+      });
+  }, []);
+
+  const refreshDisclosure = useCallback(() => {
+    studio()
+      .getDisclosure()
+      .then((d) => {
+        if (mountedRef.current) setDisc(d);
+      })
+      .catch(() => undefined);
   }, []);
 
   const refreshWorkbench = useCallback(() => {
@@ -137,6 +160,7 @@ export function App() {
     refreshEnv(true);
     refreshRecent();
     refreshWorkbench();
+    refreshClaudeKey();
     studio()
       .getDisclosure()
       .then((d) => {
@@ -150,7 +174,7 @@ export function App() {
     return () => {
       mountedRef.current = false;
     };
-  }, [refreshEnv, refreshRecent, refreshWorkbench]);
+  }, [refreshEnv, refreshRecent, refreshWorkbench, refreshClaudeKey]);
 
   const activeProjectId = screen.kind === 'project' || screen.kind === 'task' ? screen.projectId : null;
   const activeTaskList = activeProjectId ? tasksByProject[activeProjectId]?.tasks ?? [] : [];
@@ -202,6 +226,24 @@ export function App() {
         setNotice('你没有同意创建版本记录，所以没有打开这个文件夹。你的文件没有任何改动。');
       }
     }).catch((e: Error) => setError(e.message));
+
+  const handleSaveClaudeKey = async (secret: string): Promise<ClaudeKeySaveResult> => {
+    const res = await studio().saveClaudeKey(secret);
+    if (res.ok && mountedRef.current) {
+      setClaudeKey(res.status);
+      refreshDisclosure();
+    }
+    return res;
+  };
+
+  const handleDeleteClaudeKey = async (): Promise<ClaudeKeyStatus> => {
+    const s = await studio().deleteClaudeKey();
+    if (mountedRef.current) {
+      setClaudeKey(s);
+      refreshDisclosure();
+    }
+    return s;
+  };
 
   const acceptDisclosure = () =>
     studio()
@@ -326,6 +368,7 @@ export function App() {
         onSelectSettings={() => {
           navigate({ kind: 'settings', tab: 'disclosure' });
           refreshEnv();
+          refreshClaudeKey();
         }}
       />
 
@@ -414,10 +457,13 @@ export function App() {
             tab={screen.tab}
             disc={disc}
             env={env}
+            claudeKey={claudeKey}
             error={error}
             onTabChange={(tab) => setScreen({ kind: 'settings', tab })}
             onShowDisclosure={() => setShowDisc(true)}
             onRefreshEnv={() => refreshEnv()}
+            onSaveClaudeKey={handleSaveClaudeKey}
+            onDeleteClaudeKey={handleDeleteClaudeKey}
           />
         )}
       </div>

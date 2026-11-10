@@ -15,6 +15,9 @@ const api = {
   initProject: (consent: boolean) => ipcRenderer.invoke('project:init', consent),
   getDisclosure: () => ipcRenderer.invoke('disclosure:get'),
   acceptDisclosure: () => ipcRenderer.invoke('disclosure:accept'),
+  getClaudeKeyStatus: () => ipcRenderer.invoke('settings:getClaudeKey'),
+  saveClaudeKey: (secret: string) => ipcRenderer.invoke('settings:saveClaudeKey', secret),
+  deleteClaudeKey: () => ipcRenderer.invoke('settings:deleteClaudeKey'),
   // B3-2 + 阶段 2 多项目：任务。第一个参数固定为已打开的 projectId；没有任何路径参数——
   // 额外文件夹由主进程弹出系统选择框取得并校验。
   listTasks: (projectId: string) => ipcRenderer.invoke('tasks:list', projectId),

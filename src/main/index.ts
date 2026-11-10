@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setSupplementalPath } from '../core/env/host-env.js';
@@ -12,6 +12,7 @@ import { CodexThinker } from '../core/thinking/codex.js';
 import { RecentProjects } from '../core/app/recent.js';
 import { DisclosureStore, buildDisclosure } from '../core/app/disclosure.js';
 import { AppStore } from '../core/app/app-store.js';
+import { ClaudeKeyStore, type SecretVault } from '../core/app/claude-key.js';
 import { TaskStore } from '../core/task/store.js';
 import { TaskController } from '../core/app/task-controller.js';
 import { TaskPrefs } from '../core/app/prefs.js';
@@ -37,6 +38,33 @@ let pendingInit: string | null = null;
 const dataDir = () => app.getPath('userData');
 const recent = () => new RecentProjects(dataDir(), {}, STORE_OPTS);
 const disclosureStore = () => new DisclosureStore(dataDir(), STORE_OPTS);
+const safeStorageVault: SecretVault = {
+  async isAvailable() {
+    const ok = await safeStorage.isAsyncEncryptionAvailable();
+    if (!ok) {
+      return {
+        ok: false,
+        reason: '当前系统的安全加密存储（safeStorage）不可用，拒绝以明文存储或解密 Anthropic API Key。',
+      };
+    }
+    if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+      return {
+        ok: false,
+        reason: '当前 Linux 桌面环境未配置系统密钥环（当前后端为明文 basic_text），拒绝以明文保存 Anthropic API Key。',
+      };
+    }
+    return { ok: true };
+  },
+  async encrypt(plaintext) {
+    const buf = await safeStorage.encryptStringAsync(plaintext);
+    return buf.toString('base64');
+  },
+  async decrypt(cipherB64) {
+    const res = await safeStorage.decryptStringAsync(Buffer.from(cipherB64, 'base64'));
+    return res.result;
+  },
+};
+const claudeKeyStore = () => new ClaudeKeyStore(dataDir(), safeStorageVault, STORE_OPTS);
 const TOOLS = ['git', 'node', 'npm', 'codex'] as const;
 
 openProjects.setHealthProbe(async (): Promise<WorkbenchEntry[]> => {
@@ -242,7 +270,12 @@ async function health(): Promise<HealthReport & { firstRun?: boolean }> {
 
 async function disclosure() {
   const codex = await resolveTool('codex', {});
-  const content = buildDisclosure({ codexInstalled: !!codex, devPersonalClaude: process.env[DEV_PERSONAL_ENV] === '1' && !app.isPackaged });
+  const keyStatus = await claudeKeyStore().status().catch(() => ({ configured: false, available: false }));
+  const content = buildDisclosure({
+    codexInstalled: !!codex,
+    claudeApiConfigured: keyStatus.configured && keyStatus.available,
+    devPersonalClaude: process.env[DEV_PERSONAL_ENV] === '1' && !app.isPackaged,
+  });
   return { content, accepted: await disclosureStore().get() };
 }
 
@@ -317,6 +350,14 @@ ipcMain.handle('disclosure:accept', async () => {
   await disclosureStore().accept((await disclosure()).content);
   return disclosure();
 });
+ipcMain.handle('settings:getClaudeKey', () => claudeKeyStore().status());
+ipcMain.handle('settings:saveClaudeKey', async (_e, secret: unknown) => {
+  if (typeof secret !== 'string' || secret.length > 512) {
+    throw new Error('无效的 API Key 输入参数。');
+  }
+  return claudeKeyStore().save(secret);
+});
+ipcMain.handle('settings:deleteClaudeKey', () => claudeKeyStore().delete());
 
 // 单实例（ADR 0005）：第二个实例只唤起已有窗口，不启动，更不会写数据——所有写入都来自同一个主进程。
 const gotSingleInstanceLock = app.requestSingleInstanceLock();

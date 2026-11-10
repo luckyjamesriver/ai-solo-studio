@@ -24,6 +24,8 @@ export interface DisclosureContent {
 export interface DisclosureInput {
   /** 本机已安装的执行体 */
   codexInstalled: boolean;
+  /** 用户已在设置中配置可用的 Anthropic API Key */
+  claudeApiConfigured?: boolean;
   /** 开发者自用的 Claude 思考者是否可用（打包版永远为 false） */
   devPersonalClaude: boolean;
 }
@@ -32,6 +34,7 @@ export interface DisclosureInput {
 export function buildDisclosure(input: DisclosureInput): DisclosureContent {
   const services: DisclosureService[] = [];
   if (input.codexInstalled) services.push({ name: 'OpenAI（Codex）', role: '动手修改你的项目（施工），也可担任方案评审者' });
+  if (input.claudeApiConfigured) services.push({ name: 'Anthropic', role: '在讨论阶段担任思考者（拆解需求、起草或评审方案）' });
   if (input.devPersonalClaude) services.push({ name: 'Anthropic（Claude，开发者自用模式）', role: '起草和整理方案（规划）' });
   return {
     version: DISCLOSURE_VERSION,

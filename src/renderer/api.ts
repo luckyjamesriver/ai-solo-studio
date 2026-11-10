@@ -67,6 +67,7 @@ export type {
 } from '../core/acceptance/view.js';
 export type { ChangePreview, Hunk } from '../core/acceptance/snippets.js';
 export type { AcceptanceActionResult } from '../core/app/task-controller.js';
+export type { ClaudeKeySaveResult, ClaudeKeyStatus, ClaudeKeyValidationCategory } from '../core/app/claude-key.js';
 export type { DiscussionView, DiscussionPreset } from '../core/app/discussion-service.js';
 export type {
   BasisStatus,
@@ -86,6 +87,7 @@ export type {
   ReviewRecordSnapshot,
   StepName,
 } from '../core/thinking/flow/index.js';
+import type { ClaudeKeySaveResult, ClaudeKeyStatus } from '../core/app/claude-key.js';
 import type { ProjectBriefInput as BriefIn, ProjectBriefView as BriefView } from '../core/thinking/flow/index.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
 import type { DiscussionView } from '../core/app/discussion-service.js';
@@ -146,6 +148,9 @@ interface StudioApi {
   initProject(consent: boolean): Promise<OpenResult>;
   getDisclosure(): Promise<DisclosureState>;
   acceptDisclosure(): Promise<DisclosureState>;
+  getClaudeKeyStatus(): Promise<ClaudeKeyStatus>;
+  saveClaudeKey(secret: string): Promise<ClaudeKeySaveResult>;
+  deleteClaudeKey(): Promise<ClaudeKeyStatus>;
 }
 
 declare global {
