@@ -28,7 +28,7 @@ export const SAFE_GIT_CONFIG: readonly string[] = [
 ];
 
 const hostGitEnv = (extra?: Record<string, string>): NodeJS.ProcessEnv => {
-  const env: NodeJS.ProcessEnv = { ...hostEnv(), GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
+  const env: NodeJS.ProcessEnv = { ...hostEnv(), GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' };
   // 继承来的这些变量会让 git 操作落到别的仓库或索引上；外部 diff 程序一律清空
   for (const k of ['GIT_EXTERNAL_DIFF', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PAGER']) delete env[k];
   return { ...env, ...(extra ?? {}) };
