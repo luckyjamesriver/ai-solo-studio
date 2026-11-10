@@ -491,6 +491,22 @@ export async function savePoints(repo: string, limit = 50): Promise<SavePoint[]>
 }
 
 /**
+ * 沿当前 HEAD 的第一父链列出 `fromSha..HEAD` 之间的提交（不含 fromSha，从最新到最旧）。
+ * 若 fromSha 不是 HEAD 的祖先（或不存在），返回 null。
+ */
+export async function firstParentCommitsAfter(repo: string, fromSha: string): Promise<SavePoint[] | null> {
+  if (!(await isAncestor(repo, fromSha, 'HEAD'))) return null;
+  const out = await git(repo, ['log', '--first-parent', '--format=%H%x1f%s%x1f%cI', `${fromSha}..HEAD`]);
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      const [sha = '', message = '', date = ''] = l.split('\x1f');
+      return { sha, message, date };
+    });
+}
+
+/**
  * 回到某个保存点：以一个新提交恢复该保存点的文件内容，不改写历史。
  * 中途失败时把工作区与索引恢复到调用前的 HEAD（调用前已核验工作区干净，所以其中的改动都是本函数造成的）。
  */

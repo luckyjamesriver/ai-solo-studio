@@ -528,3 +528,80 @@ describe('阶段 1 · 项目级锁（manualReview 锁定同项目其他任务的
     expect(await fs.readFile(path.join(repo, 'b.txt'), 'utf8')).toBe('b\n');
   });
 });
+
+describe('阶段 1 · 撤销：说清楚为什么不能撤销', () => {
+  async function saveTask(repo: string, goal: string, file: string, content: string) {
+    const runner = new TaskRunner({
+      repo,
+      executor: new FakeExecutor([{ do: 'write', path: file, content }, { do: 'exit', code: 0 }]),
+      runChecks: false,
+    });
+    const t = await runner.create(goal);
+    await runner.setPlan(t.id, { ...basePlan, goal });
+    await runner.approve(t.id);
+    await runner.start(t.id);
+    await runner.confirm(t.id, { criterion: 0, decision: 'confirmed' });
+    const r = await runner.save(t.id);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected save ok');
+    return { runner, id: t.id, task: r.task };
+  }
+
+  it('撤销被后续 studio 保存挡住：返回原因包含挡住它的任务名与时间，替代笼统 undoRefused；且不跨保存撤销', async () => {
+    const repo = await makeRepo({ 'a.txt': 'a0\n', 'b.txt': 'b0\n', 'c.txt': 'c0\n' });
+    const a = await saveTask(repo, '改首页标题', 'a.txt', 'a1\n');
+    const b = await saveTask(repo, '新增页脚导航', 'b.txt', 'b1\n');
+    const c = await saveTask(repo, '调整页边距', 'c.txt', 'c1\n');
+
+    const headBefore = await G.headSha(repo);
+    const preview = await a.runner.previewUndo((await a.runner.store.get(a.id))!);
+    expect(preview).toMatchObject({ ok: false, reason: 'undo_refused' });
+    expect(preview?.blockingSaves?.map((x) => x.goal)).toEqual(['新增页脚导航', '调整页边距']);
+    expect(preview?.detail).toContain('新增页脚导航');
+    expect(preview?.detail).toContain('调整页边距');
+    expect(preview?.detail).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+    expect(preview?.detail).not.toBe(MESSAGES.undoRefused);
+
+    const undoRes = await a.runner.undo(a.id);
+    expect(undoRes.ok).toBe(false);
+    if (undoRes.ok) return;
+    expect(undoRes.reason).toBe('undo_refused');
+    expect(undoRes.blockingSaves).toHaveLength(2);
+    expect(undoRes.blockingSaves?.map((x) => x.goal)).toEqual(['新增页脚导航', '调整页边距']);
+    expect(undoRes.detail).toContain('新增页脚导航');
+    expect(undoRes.detail).toContain('调整页边距');
+    expect(undoRes.detail).not.toBe(MESSAGES.undoRefused);
+
+    // 不实现跨保存撤销：主项目与 A 任务保持原样
+    expect(await G.headSha(repo)).toBe(headBefore);
+    expect(await fs.readFile(path.join(repo, 'a.txt'), 'utf8')).toBe('a1\n');
+    expect((await a.runner.store.get(a.id))!.state).toBe('saved');
+
+    // 用户视图也展示具体的阻塞任务名与时间
+    const view = toUserView((await a.runner.store.get(a.id))!, { busy: false, undoCheck: preview });
+    expect(view.actions.undo.enabled).toBe(false);
+    expect(view.actions.undo.reason).toContain('新增页脚导航');
+    expect(view.actions.undo.reason).toContain('调整页边距');
+
+    // 最新保存（HEAD === C.mergeCommit）仍可正常撤销
+    expect((await c.runner.undo(c.id)).ok).toBe(true);
+    expect(await fs.readFile(path.join(repo, 'c.txt'), 'utf8')).toBe('c0\n');
+    // 撤销 C 产生的新提交同样在 HEAD 上，B 仍在 A 之后挡住 A
+    const aAfter = await a.runner.undo(a.id);
+    expect(aAfter.ok).toBe(false);
+    if (!aAfter.ok) expect(aAfter.detail).toContain('新增页脚导航');
+  });
+
+  it('mapFailure 对所有新增 reason 不透传核心层 detail 原文', () => {
+    for (const r of ['checks_failed', 'project_changed', 'failed_restored', 'project_locked'] as const) {
+      const res = mapFailure({
+        ok: false,
+        reason: r,
+        detail: 'fatal: /Users/victim git 原文',
+        failedChecks: ['test'],
+        blockingTask: '任务 X',
+      });
+      expect(JSON.stringify(res), r).not.toMatch(/fatal|\/Users\/victim|git 原文/);
+    }
+  });
+});

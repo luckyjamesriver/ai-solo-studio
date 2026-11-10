@@ -160,6 +160,13 @@ export function hasExternalImpact(t: Task): boolean {
 
 const mapStatus = (s: string): ViewItemStatus => (s === 'verified' || s === 'user_confirmed' ? 'verified' : s === 'failed' || s === 'user_rejected' ? 'failed' : s === 'not_checked' ? 'not_checked' : 'pending_user');
 
+function formatShortTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** 核心层返回给界面的失败信息 → 固定文案。未知原因一律用 messages 里的固定文案，不透传核心层的文字。 */
 export function mapFailure(f: OpFail): { message: string; files?: string[] } {
   const files = f.files?.map(safeRelPath).filter((x): x is string => !!x);
@@ -189,7 +196,14 @@ export function mapFailure(f: OpFail): { message: string; files?: string[] } {
       );
     }
     case 'abnormal': return withFiles(MESSAGES.abnormal);
-    case 'undo_refused': return withFiles(MESSAGES.undoRefused);
+    case 'undo_refused':
+      if (f.blockingSaves?.length) {
+        const items = f.blockingSaves
+          .map((b) => `「${scrubAiText(b.goal)}」（${formatShortTime(b.savedAt)}）`)
+          .join('、');
+        return withFiles(`在这次保存之后，还有后来的保存挡住了它，暂时不能只撤销这一项：${items}。`);
+      }
+      return withFiles(MESSAGES.undoRefused);
     case 'cleanup_pending': return withFiles(f.detail === MESSAGES.saveCleanupPending || f.detail === MESSAGES.discardCleanupPending || f.detail === MESSAGES.cleanupBusy ? f.detail : VIEW_TEXT.cleanupNeeded);
     case 'failed': return withFiles(MESSAGES.opFailed);
     default: return withFiles(MESSAGES.unknownError);

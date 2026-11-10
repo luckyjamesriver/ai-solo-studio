@@ -34,6 +34,13 @@ export type OpFailReason =
   | 'cleanup_pending'
   | 'failed';
 
+export interface BlockingSave {
+  taskId?: string;
+  goal: string;
+  savedAt: string;
+  mergeCommit: string;
+}
+
 /** 保存 / 撤销 / 重试清理的失败返回：detail 是给用户看的中文原因（核心层文案常量），files 是相关文件清单 */
 export interface OpFail {
   ok: false;
@@ -44,6 +51,8 @@ export interface OpFail {
   failedChecks?: CheckName[];
   /** project_locked 时正处于 manualReview 的阻塞任务名称 */
   blockingTask?: string;
+  /** undo_refused 时挡住当前撤销的后续保存列表 */
+  blockingSaves?: BlockingSave[];
 }
 export type SaveResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult; checked: boolean } | OpFail;
 export type DiscardResult = { ok: true; task: Task; message: string; cleanup: G.CleanupResult } | OpFail;
@@ -830,6 +839,55 @@ export class TaskRunner extends EventEmitter {
     }
   }
 
+  private async findBlockingSaves(t: Task): Promise<BlockingSave[]> {
+    const rec = t.saveRecord;
+    if (!rec) return [];
+    const commits = await G.firstParentCommitsAfter(this.opts.repo, rec.preMergeHead).catch(() => null);
+    if (!commits || commits.length === 0) return [];
+    const afterMerge: G.SavePoint[] = [];
+    for (const c of commits) {
+      if (c.sha === rec.mergeCommit) break;
+      afterMerge.push(c);
+    }
+    const tasks = await this.store.list();
+    const byMerge = new Map<string, Task>();
+    for (const x of tasks) {
+      if (x.id !== t.id && x.saveRecord?.mergeCommit) byMerge.set(x.saveRecord.mergeCommit, x);
+    }
+    const out: BlockingSave[] = [];
+    for (const c of [...afterMerge].reverse()) {
+      const owner = byMerge.get(c.sha);
+      if (owner) {
+        out.push({
+          taskId: owner.id,
+          goal: owner.plan?.goal ?? owner.request,
+          savedAt: owner.saveRecord!.savedAt,
+          mergeCommit: c.sha,
+        });
+      } else {
+        const m = c.message.match(/^studio: 保存「(.+)」$/);
+        if (m) {
+          out.push({ goal: m[1]!, savedAt: c.date, mergeCommit: c.sha });
+        }
+      }
+    }
+    return out;
+  }
+
+  private async undoHeadMismatchFail(t: Task): Promise<OpFail> {
+    const blockingSaves = await this.findBlockingSaves(t);
+    if (blockingSaves.length > 0) {
+      const items = blockingSaves.map((b) => `「${b.goal}」（${formatShortTime(b.savedAt)}）`).join('、');
+      return {
+        ok: false,
+        reason: 'undo_refused',
+        detail: `在这次保存之后，还有后来的保存挡住了它，暂时不能只撤销这一项：${items}。`,
+        blockingSaves,
+      };
+    }
+    return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused };
+  }
+
   /** 撤销这次保存（B4-plan 第 5 节）：只在“合并提交仍是当前分支 HEAD、分支一致、工作区干净”时，用新提交恢复到合并前。 */
   async undo(id: string): Promise<UndoResult> {
     if (!this.enter(id)) return this.busyFail();
@@ -845,7 +903,7 @@ export class TaskRunner extends EventEmitter {
       if (!d.supported) return { ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver, files: d.drivers };
       const branch = await G.currentBranch(repo);
       if (branch !== rec.branch) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused };
-      if ((await G.headSha(repo)) !== rec.mergeCommit) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused };
+      if ((await G.headSha(repo)) !== rec.mergeCommit) return this.undoHeadMismatchFail(t);
       const dirty = await G.dirtyFiles(repo);
       if (dirty.length) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused, files: dirty };
 
@@ -1137,11 +1195,18 @@ export class TaskRunner extends EventEmitter {
     const d = await G.detectExternalDrivers(repo);
     if (!d.supported) return { ok: false, reason: 'external_driver', detail: MESSAGES.externalDriver };
     if ((await G.currentBranch(repo)) !== rec.branch) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused };
-    if ((await G.headSha(repo)) !== rec.mergeCommit) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused };
+    if ((await G.headSha(repo)) !== rec.mergeCommit) return this.undoHeadMismatchFail(t);
     const dirty = await G.dirtyFiles(repo);
     if (dirty.length) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused, files: dirty };
     return null;
   }
+}
+
+function formatShortTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export function buildPrompt(t: Task): string {
