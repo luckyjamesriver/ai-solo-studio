@@ -86,6 +86,7 @@
    - `PlanCard.tsx` 原条件 `!hasPlan && preferredMode === 'full_trust'` 在跳过讨论或批准讨论进入 `planned` 态后不再显示预选提示；改为 `!task.fullTrustConfirmed && preferredMode === 'full_trust' && mode === 'full_trust'`；
    - `e2e/shell.e2e.ts` `gitProject` 未递归建子目录导致写 `docs/PROJECT_CONTEXT.md` 报错；`确定性并发控制` 的 `__blockFirstList` 开关未在第一次挂起后复位导致 `skipDiscussion` 触发的第二次 `tasks:list` 也拿到空数组；两处修复后 42/42 E2E 一次全绿。
 5. 初次截图视觉审阅发现 `04`/`05`/`06` 右栏进度中「你裁决分歧」在全部裁决完成后仍为 `●`（未切到 `✓` 和 `● 批准方案`），以及 `08` 失败卡与对话时间戳直接展示 `draft`/`failed` 和完整 ISO 字符串。已在 `driver.ts` 与 `DiscussionPage.tsx` 修正并重跑全套验证与复核截图。
+6. 首次推送 `rebuild` 的 CI（Run [`42837836184`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42837836184)）在 `ubuntu-latest` 全绿，在 `macos-latest` E2E 执行 `conflict-site` 偶发 `git commit` 遭遇 `.git/index.lock: File exists`（由于 `confirmOverall` 后的 `projectStatus` 触发后台只读 `git status` 未关闭可选锁引起）；在 [`src/core/git/git.ts`](../../src/core/git/git.ts) `hostGitEnv` 加入 `GIT_OPTIONAL_LOCKS: '0'` 后重新跑通全套本地单测与 E2E 并重推 CI。
 
 ### GitHub Actions CI（`rebuild` 分支）
-- 待推送 `rebuild` 并记录双平台 CI 链接。
+- 等待新一次双平台 CI 完成并补充链接。
