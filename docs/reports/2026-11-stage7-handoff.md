@@ -102,7 +102,7 @@
 - `npm run typecheck`：退出码 `0`
 - `npx vitest run --maxWorkers=2`：**35 个测试文件通过，12 个真实环境集成测试按条件跳过（共 47 个文件）；613 个用例通过，38 个集成用例跳过（共 651 个），0 失败**（含 [`tests/stage7-handoff.test.ts`](../../tests/stage7-handoff.test.ts) 4 项、[`tests/stage7-rounds.test.ts`](../../tests/stage7-rounds.test.ts) 2 项、[`tests/handoff.test.ts`](../../tests/handoff.test.ts) 29 项、[`tests/security.test.ts`](../../tests/security.test.ts) 58 项）
 - `npm run build && npm run smoke`：全部 PASS（`window.studio` 受控接口、Git 与 Codex 五层体检，退出码 `0`）
-- `npm run test:e2e`：**51 / 51 全部通过**（`326.22s`，0 失败、0 跳过；含阶段 7 新增 2 项外部交接与多轮代码保留全流程 E2E）
+- `npm run test:e2e`：**51 / 51 全部通过**（`309.84s`，0 失败、0 跳过；含阶段 7 新增 2 项外部交接与多轮代码保留全流程 E2E）
 
 ### GitHub Actions 双平台 CI（`rebuild` 分支）
 - （推送后补填双平台绿灯运行链接）

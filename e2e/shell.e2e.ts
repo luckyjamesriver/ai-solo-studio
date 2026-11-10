@@ -2580,15 +2580,31 @@ describe('阶段 7：外部执行交接与各轮代码保留（E2E）', () => {
     expect(fs.existsSync(path.join(proj, taskFileRel))).toBe(true);
     await stage7Shot(a.page, '02-external-waiting');
 
-    // 3. 切回待我处理工作台：显示在正在运行分组且标为「外部执行中」，「需要你决定」角标为 0
+    // 3. 切回待我处理工作台：显示在正在运行分组且标为「外部执行中」，不计入「需要你决定」与项目待处理角标（CI 无 Codex 时可能有 health 环境提示，故精确断言 task 条目与 projects 计数）
     await a.page.getByTestId('nav-workbench').click();
     await a.page.getByTestId('workbench').waitFor();
-    expect(await a.page.getByTestId('workbench').innerText()).toContain('需要你决定（0）');
+    expect(await a.page.getByTestId('wb-needs-decision').innerText()).not.toContain('请用外部工具更新页脚');
     expect(await a.page.getByTestId('wb-running').innerText()).toContain('外部执行中');
+    expect(await a.page.getByTestId('wb-running').innerText()).toContain('请用外部工具更新页脚');
+    const wbS7 = await a.page.evaluate(() =>
+      (window as unknown as {
+        studio: {
+          getWorkbench: () => Promise<{
+            needsDecision: Array<{ kind: 'task' | 'health' }>;
+            counts: { running: number };
+            projects: Array<{ id: string; needsAttentionCount: number }>;
+          }>;
+        };
+      }).studio.getWorkbench(),
+    );
+    expect(wbS7.needsDecision.filter((item) => item.kind === 'task')).toHaveLength(0);
+    expect(wbS7.counts.running).toBe(1);
+    expect(wbS7.projects[0]!.needsAttentionCount).toBe(0);
+    expect(await a.page.getByTestId(`project-badge-${wbS7.projects[0]!.id}`).count()).toBe(0);
     await stage7Shot(a.page, '03-workbench-external-badge');
 
-    // 从工作台进入任务，校验导入「不符（mismatch）」只读限制
-    await a.page.locator('[data-testid^="wb-act-"]').first().click();
+    // 从工作台「正在运行」分组进入任务，校验导入「不符（mismatch）」只读限制
+    await a.page.getByTestId('wb-running').locator('[data-testid^="wb-act-"]').first().click();
     await a.page.getByTestId('external-waiting-page').waitFor();
 
     const realRepo = fs.realpathSync(proj);
