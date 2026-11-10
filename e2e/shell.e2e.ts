@@ -3,6 +3,7 @@ import { _electron as electron, type ElectronApplication, type Page } from 'play
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,9 +21,11 @@ const stage2ShotDir = process.env.E2E_STAGE2_SHOT_DIR;
 const stage3ShotDir = process.env.E2E_STAGE3_SHOT_DIR;
 const stage4ShotDir = process.env.E2E_STAGE4_SHOT_DIR;
 const stage5ShotDir = process.env.E2E_STAGE5_SHOT_DIR;
+const stage5bShotDir = process.env.E2E_STAGE5B_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
+const servers: http.Server[] = [];
 const mk = (prefix: string) => {
   const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `studio-e2e-${prefix}-`)));
   tmpDirs.push(d);
@@ -94,6 +97,12 @@ const stage5Shot = async (page: Page, name: string) => {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
+const stage5bShot = async (page: Page, name: string) => {
+  if (!stage5bShotDir) return;
+  const target = path.join(stage5bShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
 const acceptDisclosure = async (page: Page) => {
   await page.getByRole('button', { name: '我了解了，同意' }).click();
   await expect_(page.getByTestId('disclosure')).toHaveCount(0);
@@ -105,6 +114,7 @@ const expect_ = (loc: ReturnType<Page['getByTestId']>) => ({
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((a) => a.close().catch(() => undefined)));
+  await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
   for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
@@ -1898,5 +1908,251 @@ describe('阶段 5a：讨论阶段界面、按思考者隔离对话、单/双模
     await a.page.getByTestId('approve-discussion-button').click();
     await a.page.getByTestId('plan-card').waitFor();
     expect(await a.page.getByTestId('plan-unreviewed-badge').innerText()).toBe('未经独立评审');
+  });
+});
+
+describe('阶段 5b：项目简介、Claude API Key 与 AI 角色配置（E2E）', () => {
+  it('普通项目无 docs/PROJECT_CONTEXT.md：点开始讨论先填项目简介 → 保存并继续讨论，并在项目设置中查看/修改，绝不写入 docs/', async () => {
+    const data = mk('s5b-brief-data');
+    const proj = gitProject('s5b-ordinary-site', {
+      'index.html': '<h1>普通项目首页</h1>\n',
+      '.gitignore': '.studio/\n',
+    });
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await a.page.getByTestId('onboarding-continue').click();
+    await a.page.getByTestId('workbench').waitFor();
+    await useFakeThinkers(a.app, { withFindings: false });
+    await stubDialog(a.app, proj);
+    await a.page.getByTestId('nav-open-project').click();
+    await a.page.getByTestId('project').waitFor();
+
+    await a.page.getByTestId('request').fill('给普通项目加一个联系表单');
+    await a.page.getByTestId('create-task').click();
+    await a.page.getByTestId('discussion-page').waitFor();
+
+    // 未填简介时点击开始讨论 → 弹出项目简介三问表单
+    await a.page.getByTestId('start-discussion-button').click();
+    await a.page.getByTestId('discussion-brief-card').waitFor();
+    await stage5bShot(a.page, '01-project-brief-form');
+
+    // 填写三个问题并提交 → 自动继续进入首次外发确认
+    const briefCard = a.page.getByTestId('discussion-brief-card');
+    await briefCard.getByLabel(/这个项目是什么/).fill('个人工作室作品集与接单主页');
+    await briefCard.getByLabel(/有什么原则不能违反/).fill('不引入重型第三方 UI 框架，保证首屏秒开');
+    await briefCard.getByLabel(/做给谁用/).fill('来访客户与独立设计师');
+    await briefCard.getByRole('button', { name: /保存简介并开始讨论/ }).click();
+
+    await a.page.getByTestId('discussion-consent-allow').waitFor();
+    expect(fs.existsSync(path.join(proj, '.studio', 'project-brief.md'))).toBe(true);
+    expect(fs.existsSync(path.join(proj, 'docs'))).toBe(false);
+
+    // 切到项目设置查看已保存的项目简介卡片与 AI 角色卡片
+    await a.page.getByTestId('breadcrumb-project').click();
+    await a.page.getByTestId('project').waitFor();
+    await a.page.getByTestId('tab-project-settings').click();
+    await a.page.getByTestId('project-settings-brief').waitFor();
+    await a.page.getByTestId('project-settings-roles').waitFor();
+    expect(
+      await a.page
+        .getByTestId('project-settings-brief')
+        .getByLabel(/这个项目是什么/)
+        .inputValue(),
+    ).toBe('个人工作室作品集与接单主页');
+    await stage5bShot(a.page, '02-project-settings-brief');
+  });
+
+  it('假 Anthropic 服务：Key 验证失败 → 保存加密 Key 显示后 4 位 → 同 AI 提示 → 首席 Claude + 复核 Codex 双思考者讨论 → 删 Key 回退未设置', async () => {
+    const VALID_KEY = 'sk-ant-fake-demo-4321';
+    const INVALID_KEY = 'sk-ant-invalid-fake-0000';
+    const srv = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c) => chunks.push(c as Buffer));
+      req.on('end', () => {
+        const keyHeader = String(req.headers['x-api-key'] ?? '');
+        if (!keyHeader || keyHeader === INVALID_KEY || keyHeader.includes('invalid')) {
+          res.writeHead(401, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: `invalid api key ${keyHeader}` } }));
+          return;
+        }
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {
+          max_tokens?: number;
+          messages?: { content?: string }[];
+        };
+        const userText = body.messages?.[0]?.content ?? '';
+        let out: unknown = 'ok';
+        if ((body.max_tokens ?? 0) > 32) {
+          if (userText.includes('"resolutions"')) {
+            out = {
+              plan: '## 方案（Claude API 修订版）\n使用 CSS 变量实现主题切换，保留现有装饰图片并在验收记录标注已知风险。',
+              resolutions: [{ index: 1, result: '交用户裁决', reason: '装饰图片暗色调节首版交由用户确认' }],
+              item_marks: [
+                { id: 'R1', mark: '保留' },
+                { id: 'R2', mark: '保留' },
+              ],
+              additions: [],
+            };
+          } else if (userText.includes('"coverage"')) {
+            out = {
+              plan: '## 方案（Claude API 起草）\n用 CSS 变量切换主题并通过本地偏好持久保存。',
+              coverage: [
+                { id: 'R1', how: '顶部增加主题开关' },
+                { id: 'R2', how: '写入本地存储恢复' },
+              ],
+            };
+          } else {
+            out = { items: [{ text: '增加浅色与深色切换开关' }, { text: '记住用户的外观偏好' }] };
+          }
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'msg_e2e_ok',
+            type: 'message',
+            role: 'assistant',
+            model: 'claude-opus-5-5',
+            stop_reason: 'end_turn',
+            content:
+              typeof out === 'string'
+                ? [{ type: 'text', text: out }]
+                : [{ type: 'thinking', thinking: 'reasoning' }, { type: 'text', text: JSON.stringify(out) }],
+            usage: (body.max_tokens ?? 0) > 32 ? { input_tokens: 420, output_tokens: 135 } : { input_tokens: 8, output_tokens: 2 },
+          }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+    servers.push(srv);
+    const localMessagesUrl = `http://127.0.0.1:${(srv.address() as { port: number }).port}/v1/messages`;
+
+    const data = mk('s5b-roles-data');
+    const proj = gitProject('s5b-claude-dual-site', {
+      'index.html': '<h1>v0</h1>\n',
+      'docs/PROJECT_CONTEXT.md': STAGE5_CONTEXT_MD,
+      'docs/ref.md': STAGE5_REF_MD,
+      '.gitignore': '.studio/\n',
+    });
+
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await a.page.getByTestId('onboarding-continue').click();
+    await a.page.getByTestId('workbench').waitFor();
+
+    // 在主进程内把发往 Anthropic Messages API 的请求转发到本地假 HTTP 服务，生产代码零测试开关
+    await a.app.evaluate((_el, targetUrl) => {
+      const origFetch = globalThis.fetch.bind(globalThis);
+      globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.startsWith('https://api.anthropic.com/')) {
+          return origFetch(targetUrl, init);
+        }
+        return origFetch(input, init);
+      }) as typeof fetch;
+    }, localMessagesUrl);
+
+    // 1. 打开全局设置（默认进入「AI 与角色」页签）→ 验证未设置 Key 与未接入 AI 禁止保存
+    await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId('settings-ai-connections').waitFor();
+    expect(await a.page.getByTestId('claude-key-tag').innerText()).toBe('未设置');
+    expect(await a.page.getByTestId('global-role-executor').innerText()).toContain('Codex');
+    expect(await a.page.locator('select[data-testid*="executor"]').count()).toBe(0);
+    await stage5bShot(a.page, '03-settings-unset');
+
+    // 选择未接入的 Claude 作为首席 → 出现未接入提示且禁止保存
+    await a.page.getByTestId('global-role-chief').selectOption('claude');
+    await a.page.getByTestId('global-role-unconnected-warn').waitFor();
+    expect(await enabled(a.page, 'global-roles-save')).toBe(false);
+    await a.page.getByTestId('global-role-chief').selectOption('codex');
+
+    // 2. 验证无效 Key → 报错「Key 无效」且不显示 Key 明文、不保存
+    await a.page.getByTestId('claude-key-input').fill(INVALID_KEY);
+    await a.page.getByTestId('claude-key-save').click();
+    await a.page.getByTestId('claude-key-error').waitFor();
+    const errText = await a.page.getByTestId('claude-key-error').innerText();
+    expect(errText).toContain('Key 无效');
+    expect(errText).not.toContain(INVALID_KEY);
+    await stage5bShot(a.page, '04-settings-key-invalid');
+
+    // 3. 输入合法假 Key → 假服务验证通过 + Electron safeStorage 加密保存 → 显示后 4 位
+    await a.page.getByTestId('claude-key-input').fill(VALID_KEY);
+    await a.page.getByTestId('claude-key-save').click();
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="claude-key-tag"]')?.textContent?.trim() === '可用');
+    expect(await a.page.getByTestId('claude-key-summary').innerText()).toContain('尾号 4321');
+    await stage5bShot(a.page, '05-settings-key-valid');
+
+    // 校验真实 userData 磁盘文件不含 Key 明文
+    const walkDisk = (dir: string): string[] =>
+      fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory() ? walkDisk(path.join(dir, e.name)) : [path.join(dir, e.name)],
+      );
+    for (const f of walkDisk(path.join(data, 'records'))) {
+      expect(fs.readFileSync(f, 'utf8'), f).not.toContain('fake-demo-4321');
+    }
+
+    // 4. 首席和复核都选 Claude → 出现「未经独立评审」说明
+    await a.page.getByTestId('global-role-chief').selectOption('claude');
+    await a.page.getByTestId('global-role-reviewer').selectOption('claude');
+    await a.page.getByTestId('global-same-ai-notice').waitFor();
+    expect(await a.page.getByTestId('global-same-ai-notice').innerText()).toContain('未经独立评审');
+    await stage5bShot(a.page, '06-settings-same-ai');
+
+    // 5. 启用假 Codex 复核并刷新「AI 与角色」状态后保存 首席=Claude / 复核=Codex
+    await useFakeThinkers(a.app, { withFindings: true });
+    await a.page.getByTestId('tab-settings-health').click();
+    await a.page.getByTestId('tab-settings-ai').click();
+    await a.page.getByTestId('global-role-chief').selectOption('claude');
+    await a.page.getByTestId('global-role-reviewer').selectOption('codex');
+    await a.page.waitForFunction(() => {
+      const btn = document.querySelector('[data-testid="global-roles-save"]') as HTMLButtonElement | null;
+      return !!btn && !btn.disabled;
+    });
+    await a.page.getByTestId('global-roles-save').click();
+    await a.page.getByTestId('global-roles-notice').waitFor();
+
+    // 6. 打开项目、创建任务并走双思考者讨论（Claude API 首席 + Codex 复核）
+    await stubDialog(a.app, proj);
+    await a.page.getByTestId('nav-open-project').click();
+    await a.page.getByTestId('project').waitFor();
+    await a.page.getByTestId('request').fill('网站增加主题外观切换并记住偏好');
+    await a.page.getByTestId('create-task').click();
+    await a.page.getByTestId('discussion-page').waitFor();
+    expect(await a.page.getByTestId('discussion-roles').innerText()).toContain('首席：Claude（API）');
+    expect(await a.page.getByTestId('discussion-roles').innerText()).toContain('复核：ChatGPT（Codex）');
+
+    await a.page.getByTestId('start-discussion-button').click();
+    await a.page.getByTestId('discussion-consent-allow').waitFor();
+    expect(await a.page.getByTestId('discussion-consent-card').innerText()).toContain('Anthropic');
+    await a.page.getByTestId('discussion-consent-allow').click();
+
+    await a.page.getByTestId('discussion-reqs-confirm-card').waitFor();
+    await a.page.getByTestId('discussion-confirm-reqs').click();
+
+    // 复核 Codex 首次外发确认
+    await a.page.getByTestId('discussion-consent-allow').waitFor();
+    await a.page.getByTestId('discussion-consent-allow').click();
+
+    // 停在裁决意见阶段：双思考者标签页（含与复核对话）、token 用量（无虚构 $）与角色全部可见
+    await a.page.getByTestId('discussion-adjudication-list').waitFor();
+    expect(await a.page.getByTestId('discussion-tab-reviewer-chat').count()).toBe(1);
+    expect(await a.page.getByTestId('budget-tokens').innerText()).toContain('输入');
+    expect(await a.page.getByTestId('budget-cost').innerText()).toContain('不估算金额');
+    await stage5bShot(a.page, '07-discussion-dual-claude');
+
+    // 7. 删除 Claude Key → 角色回退「未设置」，新建任务的讨论页在下一次开始前给出提示并拒绝启动
+    await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId('claude-key-delete').click();
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="claude-key-tag"]')?.textContent?.trim() === '未设置');
+    expect(await a.page.getByTestId('global-role-chief').inputValue()).toBe('unset');
+
+    await a.page.getByTestId('nav-workbench').click();
+    await a.page.getByTestId('workbench').waitFor();
+    // 回到项目新建第二个未开始的任务
+    await a.page.getByRole('button', { name: 's5b-claude-dual-site' }).first().click();
+    await a.page.getByTestId('project').waitFor();
+    await a.page.getByTestId('request').fill('新增第二项需求检验删 Key 后提示');
+    await a.page.getByTestId('create-task').click();
+    await a.page.getByTestId('discussion-page').waitFor({ timeout: 10_000 });
+    await a.page.getByTestId('discussion-role-problem').waitFor({ timeout: 10_000 });
+    expect(await a.page.getByTestId('discussion-role-problem').innerText()).toContain('未设置');
   });
 });
