@@ -173,12 +173,15 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
       });
     case 'approved':
       return mk('building', {
-        runStatus: '待开工确认',
+        runStatus: opts.isLiveRunning ? '运行中' : '待开工确认',
         outcome: null,
-        workbenchGroup: 'needs_decision',
-        needsAttention: true,
-        impact: '计划已批准但尚未开始执行，主项目文件未改动',
-        actionLabel: '去开工',
+        workbenchGroup: opts.isLiveRunning ? 'running' : 'needs_decision',
+        isRunning: !!opts.isLiveRunning,
+        needsAttention: !opts.isLiveRunning,
+        impact: opts.isLiveRunning
+          ? '正在独立副本中准备开工并施工，你的项目当前保持原样'
+          : '计划已批准但尚未开始执行，主项目文件未改动',
+        actionLabel: opts.isLiveRunning ? '查看' : '去开工',
       });
     case 'running':
       return mk('building', {

@@ -305,6 +305,8 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
     }
 
     expect(classifyTaskState(baseTask('draft'))).toMatchObject({ stage: 'building', runStatus: '待配置计划', outcome: null, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('approved'), { isLiveRunning: false })).toMatchObject({ stage: 'building', runStatus: '待开工确认', isRunning: false, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('approved'), { isLiveRunning: true })).toMatchObject({ stage: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
     expect(classifyTaskState(baseTask('running'))).toMatchObject({ stage: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
     expect(classifyTaskState(baseTask('exec_succeeded'), { isLiveRunning: true })).toMatchObject({ stage: 'building', runStatus: '运行中', workbenchGroup: 'running' });
     expect(classifyTaskState(baseTask('exec_succeeded'), { isLiveRunning: false })).toMatchObject({ stage: 'building', runStatus: '运行中', workbenchGroup: 'needs_decision' });

@@ -27,11 +27,12 @@
    - 实现项目看板 [`ProjectBoard.tsx`](../../src/renderer/ProjectBoard.tsx)（`02-project`）：标签页为「任务 / 保存记录 / 项目设置」；看板列按三层状态映射到「施工中 / 待验收 / 已结束」（阶段 2 暂隐藏尚无后台的「讨论中」列）；卡片固定按「任务名 → 当前状态 → AI 与辅助信息」排列；支持在项目栏内显式「关闭项目」及被拒绝提示。
    - 在主进程 `AppStore` 新增首次环境体检引导完成状态持久化与 `healthProbe` 接入，为工作台与首次引导提供后台支持。
 
-4. **`feat(ui): task page frame and settings shell`（本报告随本次提交推送）**
+4. **`feat(ui): task page frame and settings shell`（`09d7184`，及紧随其后的工作台竞态修复提交）**
    - 新增任务页外框 [`TaskPage.tsx`](../../src/renderer/TaskPage.tsx)：固定顶部展示「项目 › 任务」面包屑、任务标题与两步阶段条（「施工 / 验收」，讨论阶段在阶段 5 前不展示）；原有的 `PlanCard` / `RunView` / `Acceptance` 原样放入外框并统一使用新配色与字体，内部安全与验收逻辑不变。
    - 新增首次启动环境体检引导 [`EnvOnboarding.tsx`](../../src/renderer/EnvOnboarding.tsx) 与共用组件 [`HealthList.tsx`](../../src/renderer/HealthList.tsx)：首次启动展示引导并可一键进入工作台；再次启动直接进入工作台，仅当检测到未通过项时在工作台「需要你决定」提示并支持跳转至「设置 → 环境体检」。
    - 新增全局设置外框 [`SettingsPage.tsx`](../../src/renderer/SettingsPage.tsx)（「资料外发 / 环境体检」）与项目设置内容（仅保留有后台支撑的「新任务预选模式」「项目风险说明」）。
    - 按 B9 按钮层级规范统一每屏仅保留一个实心主按钮，把高风险操作（「仍然保存」、放弃、撤销确认、「完全信任模式确认」）改为次要描边按钮，把阶段 1 未检查确认面板中的「打开预览」升为主按钮。
+   - 紧随提交修复 macOS CI（`42784305957`）暴露的 `approved` + `isLiveRunning` 状态分类竞态：正在准备 worktree 的已批准任务在工作台归入「正在运行」，并同步补强单元测试与 [`03-task-building.png`](../screenshots/stage2/03-task-building.png) 截图。
 
 ---
 
@@ -44,7 +45,8 @@
 | `draft` | 施工 | 施工中 | 待配置计划 | — | 需要你决定 | 否 |
 | `clarifying` | 施工 | 施工中 | 等你裁决 | — | 需要你决定 | 否 |
 | `planned` | 施工 | 施工中 | 待开工确认 | — | 需要你决定 | 否 |
-| `approved` | 施工 | 施工中 | 待开工确认 | — | 需要你决定 | 否 |
+| `approved`（`isLiveRunning=true`） | 施工 | 施工中 | 运行中 | — | 正在运行 | 否 |
+| `approved`（`isLiveRunning=false`） | 施工 | 施工中 | 待开工确认 | — | 需要你决定 | 否 |
 | `running` | 施工 | 施工中 | 运行中 | — | 正在运行 | 否 |
 | `exec_succeeded`（`isLiveRunning=true`） | 施工 | 施工中 | 运行中 | — | 正在运行 | 否 |
 | `exec_succeeded`（`isLiveRunning=false`） | 施工 | 施工中 | 运行中 | — | 需要你决定 | 否 |
@@ -134,15 +136,15 @@
 
 ## 7. 验证结果、CI 链接与过程中的失败记录
 
-### 最终本地验证数字（提交 4 之前全量实跑，无删改或放宽断言）
+### 最终本地验证数字（竞态修复及重拍截图后全量实跑，无删改或放宽断言）
 - `npm run typecheck`：通过（0 错误）
 - 单元测试（`npx vitest run --maxWorkers=4`）：**27 个测试文件、544 项测试全部通过**（另有 11 个 `tests/integration/*.real.test.ts` 测试文件共 37 项因未设置 `STUDIO_REAL_CODEX=1` 按既有配置跳过，0 失败）
-- Electron 端到端测试（`npm run test:e2e`）：**1 个测试文件、37 项测试全部通过**（耗时 `129.23s`）
+- Electron 端到端测试（`E2E_STAGE2_SHOT_DIR=docs/screenshots/stage2 npm run test:e2e`）：**1 个测试文件、37 项测试全部通过**（耗时 `152.29s`，并同步刷新阶段 2 全部 7 张截图）
 - 桌面冒烟测试（`npm run smoke`）：**全部 6 项检查通过**，正常退出 `code=0`
 
 ### GitHub CI 状态
 - **第一部分（Commit 1 · `914d90c`）CI 通过**：[`https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42780381268`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42780381268) — `test (ubuntu-latest)`（`1m3s`）与 `test (macos-latest)`（`5m29s`，含 35 项 Electron 端到端测试）均 `success`。
-- **第二部分（Commit 2–4）**：Commit 2 (`072d451`) 与 Commit 3 (`a5a0e4a`) 均在本地完成编译/测试/冒烟后依次提交，将随 Commit 4 与本报告一同推送至 `rebuild` 并触发双平台 CI 校验。
+- **第二部分初推（Commit 2–4 · `072d451`..`09d7184`）**：[`https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42784305957`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42784305957) — `test (ubuntu-latest)`（`46s`）`success`；`test (macos-latest)` 36/37 通过，仅在 `e2e/shell.e2e.ts:1226` 暴露一处状态分类竞态（详见下方第 7 条）。修复提交与更新后的本报告将推送至 `rebuild` 进行新一轮双平台 CI 验证。
 
 ### 过程中的所有失败及修复
 1. **`tests/security.test.ts:816` 报 `ReferenceError: os is not defined`**：新增的 `OpenProjectManager` 运行时安全测试调用了 `os.tmpdir()` 但测试文件顶部未引入 `node:os`；在测试块内补充 `await import('node:os')` 后通过。
@@ -153,3 +155,6 @@
    - `tests/save-safety.test.ts:807` 偶现 `无效的参数`：因旧版 `acceptanceView` 未把 `TaskController.active` 计入 `busy` 且测试仅用 `while (view.busy)` 等待；已在 [`task-controller.ts`](../../src/core/app/task-controller.ts#L258) 的 `acceptanceView` 中加入 `this.active.has(t.id)`，并把该测试等待条件收紧为 `view.busy || view.state !== 'reviewing'`（设 500 轮上限防死循环）。
 5. **`e2e/shell.e2e.ts:185` Playwright 严格模式冲突（`strict mode violation`）**：空工作台顶部入口与侧栏都命名为「打开项目文件夹」，导致 `getByRole('button', { name: '打开项目文件夹' })` 匹配两个按钮；将工作台空态头部按钮文案调整为「＋ 打开项目」后消除冲突，37 项端到端测试一次全过。
 6. **看板卡片标题视觉居中对齐偏移**：截图审阅发现 [`02-project-board.png`](../screenshots/stage2/02-project-board.png) 中 `.card-title` 继承了 `button { justify-content: center }` 导致卡片标题居中；补充 `.card-title { justify-content: flex-start; text-align: left; }` 后重新构建、全跑测试并重拍截图验证对齐正确。
+7. **macOS CI 运行 [`42784305957`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42784305957) 暴露 `e2e/shell.e2e.ts:1226` 超时（`TimeoutError: page.waitForFunction` 等待 `[data-testid="wb-running"]` 包含 `'任务二持续施工'`）**：
+   - 根因：点击「开始施工」后任务立即进入 `TaskController.active`（异步创建 worktree 期间持久化状态仍为 `approved`），但 [`classifyTaskState`](../../src/core/app/task-state-view.ts) 对 `approved` 一律归为 `workbenchGroup: 'needs_decision'` 且 `isRunning: false`；快速切回工作台读取到 `counts.running === 0`，导致 `App.tsx` 关闭 `shouldPoll` 轮询，后续 `approved → running` 迁移不会被工作台自动刷新。
+   - 修复：在 `classifyTaskState` 的 `approved` 分支按 `opts.isLiveRunning` 区分——活跃施工中返回 `workbenchGroup: 'running'`、`runStatus: '运行中'`、`isRunning: true`；在 [`tests/multi-project.test.ts`](../../tests/multi-project.test.ts) 增补 `approved` 与 `isLiveRunning` 组合断言，并在 [`e2e/shell.e2e.ts`](../../e2e/shell.e2e.ts) 拍摄 `03-task-building.png` 前增加等待 `run-view` 出现 `[data-testid="perm-summary"]` 的步骤。修复后本地 `typecheck`、544 项单元测试、37 项 E2E 与 6 项冒烟检查全部通过。

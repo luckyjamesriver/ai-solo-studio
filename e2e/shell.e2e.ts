@@ -1207,6 +1207,7 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     await newTask(a.page, '任务二持续施工');
     await a.page.getByTestId('start-button').click();
     await a.page.getByTestId('run-view').waitFor();
+    await a.page.getByTestId('perm-summary').waitFor({ timeout: 30_000 });
     await stage2Shot(a.page, '03-task-building');
 
     // 3. 在侧栏切换回 site-one 并截看板图
