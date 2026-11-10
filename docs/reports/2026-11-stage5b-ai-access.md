@@ -131,4 +131,6 @@
 8. **全量 E2E 运行中 [`PlanCard.tsx`](../../src/renderer/PlanCard.tsx) `完全信任` 取消后竞态超时（43/44 通过，1 项超时）**：如第 1 节所述，`cancelTrust` 先卸载确认框再异步保存 `standard` 模式，高负载下被紧随其后的勾选操作触发竞态覆写；在 `4ae7d53` 中通过 `savePromiseRef` 跟踪并在保存及 `onChanged` 完成后再关闭确认面板，全量 44/44 E2E 一次稳定通过。
 
 ### GitHub Actions 双平台 CI（`rebuild` 分支）
-- 待推送 `rebuild` 并完成双平台运行后补充验证运行链接与 `ubuntu-latest` / `macos-latest` 结果。
+- 验证运行（`e57afe1`，含全部代码、[`4ae7d53`](https://github.com/luckyjamesriver/ai-solo-studio/commit/4ae7d53) 竞态修复、全部 44 项 E2E、7 张阶段 5b 截图与本报告）：[https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346)
+  - `test (ubuntu-latest)`：`success`（1m3s，[job 129973983878](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346/job/129973983878)，含 `typecheck`、`npm test`、`build`）
+  - `test (macos-latest)`：`success`（4m47s，[job 129973983264](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346/job/129973983264)，含 `typecheck`、`npm test`、`build` 与 macOS 全部 Electron E2E）
