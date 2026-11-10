@@ -10,6 +10,8 @@ const api = {
   closeProject: (projectId: string) => ipcRenderer.invoke('projects:close', projectId),
   getWorkbench: () => ipcRenderer.invoke('workbench:get'),
   projectStatus: (projectId: string) => ipcRenderer.invoke('project:status', projectId),
+  getProjectBrief: (projectId: string) => ipcRenderer.invoke('project:getBrief', projectId),
+  saveProjectBrief: (projectId: string, brief: ProjectBriefInput) => ipcRenderer.invoke('project:saveBrief', projectId, brief),
   initProject: (consent: boolean) => ipcRenderer.invoke('project:init', consent),
   getDisclosure: () => ipcRenderer.invoke('disclosure:get'),
   acceptDisclosure: () => ipcRenderer.invoke('disclosure:accept'),
@@ -67,6 +69,13 @@ interface PlanInput {
 interface RequirementEditInput {
   id?: string;
   text: string;
+}
+
+/** 项目简介（三个问题，写入 .studio/project-brief.md） */
+interface ProjectBriefInput {
+  whatItIs: string;
+  principles: string;
+  targetUsers: string;
 }
 
 contextBridge.exposeInMainWorld('studio', api);

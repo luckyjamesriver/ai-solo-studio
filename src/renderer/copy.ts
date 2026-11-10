@@ -185,3 +185,6 @@ export const COPY = {
   discussStartButton: '开始讨论',
   discussPostReviewBadge: '评审后的讨论 · 非独立评审',
 } as const;
+
+export const PROJECT_BRIEF_OUTBOUND_NOTICE =
+  '项目简介会作为必带背景资料发送给参与讨论的 AI 服务；首次向该服务发送资料前仍会先征得你的同意。';

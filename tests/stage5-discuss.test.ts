@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DiscussionViewBody, type DiscussionBodyProps } from '../src/renderer/DiscussionPage.js';
+import { ProjectBriefForm } from '../src/renderer/ProjectBriefForm.js';
 import { PlanCard } from '../src/renderer/PlanCard.js';
 import { Sidebar } from '../src/renderer/Sidebar.js';
 import { OpenProjectManager } from '../src/core/app/open-projects.js';
@@ -17,8 +18,16 @@ import { FakeExecutor } from '../src/core/executor/adapters/fake.js';
 import { RecordStore } from '../src/core/persistence/index.js';
 import { TaskStore } from '../src/core/task/store.js';
 import { FakeThinker } from '../src/core/thinking/fake.js';
-import { ConsentStore, createPausedFlowUI, inspectDiscussion, runPausedFlow, ThreadStore } from '../src/core/thinking/flow/index.js';
+import {
+  ConsentStore,
+  createPausedFlowUI,
+  inspectDiscussion,
+  readProjectBriefView,
+  runPausedFlow,
+  ThreadStore,
+} from '../src/core/thinking/flow/index.js';
 import { makeProject, scripted, REQ, DRAFT, REVIEW, REVISE } from './flow-helpers.js';
+import { makeRepo } from './helpers.js';
 
 const cleanDirs: string[] = [];
 
@@ -821,5 +830,68 @@ describe('阶段 5a 提交④：批准后转为施工计划、未经独立评审
     );
     expect(sideHtml).toContain('data-testid="workbench-badge"');
     expect(sideHtml).toContain('data-testid="project-badge-proj-s5"');
+  });
+});
+
+describe('阶段 5b 提交①：项目简介作为普通项目必带层', () => {
+  it('无 docs/PROJECT_CONTEXT.md 也无简介时：getDiscussionView 标记缺失且 startDiscussion 拒绝发起调用；保存简介后即可开始并进必带层', async () => {
+    const emptyRepo = await makeRepo({ 'README.md': '# demo\n', '.gitignore': '.studio/\n' });
+    cleanDirs.push(emptyRepo);
+    const planner = scripted();
+    const { ctl } = await makeTempCtl({ repo: emptyRepo, planner });
+
+    const task = await ctl.create('为普通项目添加搜索功能');
+    const v0 = await ctl.getDiscussionView(task.id);
+    expect(v0.hasRequiredContext).toBe(false);
+    expect(v0.requiredContextSource).toBe('none');
+    await expect(ctl.startDiscussion(task.id, 'codex-single')).rejects.toThrow(/必带层|项目简介/);
+    expect(planner.requests).toHaveLength(0);
+
+    const saved = await ctl.saveProjectBrief({
+      whatItIs: '一个离线笔记整理应用',
+      principles: '数据永远留在本地',
+      targetUsers: '研究人员与学生',
+    });
+    expect(saved.source).toBe('project_brief');
+    expect(saved.readOnly).toBe(false);
+    expect(saved.exists).toBe(true);
+
+    const v1 = await ctl.getDiscussionView(task.id);
+    expect(v1.hasRequiredContext).toBe(true);
+    expect(v1.requiredContextSource).toBe('project_brief');
+
+    await ctl.startDiscussion(task.id, 'codex-single');
+    await ctl.waitDiscussion(task.id);
+    const consentView = await ctl.getDiscussionView(task.id);
+    await ctl.confirmDiscussionSend(task.id, consentView.pendingConsentService!, true);
+    await ctl.waitDiscussion(task.id);
+    expect(planner.requests).toHaveLength(1);
+    const reqText = JSON.stringify(planner.requests[0]!.context.required);
+    expect(reqText).toContain('一个离线笔记整理应用');
+    expect(reqText).toContain('数据永远留在本地');
+    expect(reqText).toContain('研究人员与学生');
+
+    // 未在 docs/ 下生成任何文件（既无 PROJECT_CONTEXT.md 也未建 docs 目录）
+    await expect(fs.access(path.join(emptyRepo, 'docs'))).rejects.toThrow();
+
+    // 表单在开始讨论前渲染三个问题与外发提示
+    const formHtml = renderToStaticMarkup(
+      createElement(ProjectBriefForm, {
+        submitLabel: '保存简介并开始讨论',
+        onSubmit: async () => undefined,
+      }),
+    );
+    expect(formHtml).toContain('这个项目是什么？');
+    expect(formHtml).toContain('有什么原则不能违反？');
+    expect(formHtml).toContain('做给谁用？');
+    expect(formHtml).toContain('首次向该服务发送资料前仍会先征得你的同意');
+
+    // 若项目已有 docs/PROJECT_CONTEXT.md，则只读显示且不可覆盖
+    const ctxRepo = await makeProject();
+    cleanDirs.push(ctxRepo);
+    const briefView = await readProjectBriefView(ctxRepo);
+    expect(briefView.source).toBe('project_context');
+    expect(briefView.readOnly).toBe(true);
+    expect(briefView.readOnlyNote).toBe('本项目使用 docs/PROJECT_CONTEXT.md');
   });
 });

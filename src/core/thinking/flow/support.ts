@@ -38,18 +38,36 @@ export function extractSections(md: string, nums: number[]): string {
   return out.join('\n').trim();
 }
 
-/** 必带层：PROJECT_CONTEXT 第 1、2、4 节。读取不到或这几节为空 → 抛错（不带必带层就不发起调用）。 */
+/** 必带层：先读 docs/PROJECT_CONTEXT.md（第 1、2、4 节），没有时回退到应用管理的 .studio/project-brief.md；两者都没有或相关节为空 → 抛错。 */
 export async function loadRequiredContext(projectRoot: string): Promise<{ name: string; text: string }> {
   const file = path.join(projectRoot, 'docs', 'PROJECT_CONTEXT.md');
-  let md: string;
+  let md: string | undefined;
   try {
     md = await fs.readFile(file, 'utf8');
-  } catch {
-    throw new Error('找不到 docs/PROJECT_CONTEXT.md：必带层上下文缺失，不发起任何调用');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      throw new Error('无法读取 docs/PROJECT_CONTEXT.md：必带层上下文缺失，不发起任何调用');
+    }
   }
-  const text = extractSections(md, [1, 2, 4]);
-  if (!text) throw new Error('docs/PROJECT_CONTEXT.md 中找不到第 1、2、4 节：必带层上下文缺失，不发起任何调用');
-  return { name: 'PROJECT_CONTEXT.md（第 1、2、4 节）', text };
+  if (md !== undefined) {
+    const text = extractSections(md, [1, 2, 4]);
+    if (!text) throw new Error('docs/PROJECT_CONTEXT.md 中找不到第 1、2、4 节：必带层上下文缺失，不发起任何调用');
+    return { name: 'PROJECT_CONTEXT.md（第 1、2、4 节）', text };
+  }
+
+  const briefFile = path.join(projectRoot, '.studio', 'project-brief.md');
+  let briefMd: string | undefined;
+  try {
+    briefMd = await fs.readFile(briefFile, 'utf8');
+  } catch {
+    briefMd = undefined;
+  }
+  if (briefMd !== undefined) {
+    const text = extractSections(briefMd, [1, 2, 4]);
+    if (text) return { name: '.studio/project-brief.md（第 1、2、4 节）', text };
+  }
+
+  throw new Error('找不到 docs/PROJECT_CONTEXT.md 或项目简介（.studio/project-brief.md）：必带层上下文缺失，不发起任何调用');
 }
 
 /** 按需层：调用方显式指定的文件，限定在项目根目录内。 */

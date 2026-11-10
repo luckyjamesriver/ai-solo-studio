@@ -1,9 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { FakeThinkStep, Thinker, ThinkRequest, ThinkResult } from '../src/core/thinking/index.js';
 import { buildThinkPrompt, parseStructured } from '../src/core/thinking/index.js';
-import { applyEdits, ConsentStore, extractSections, FlowEngine, ThreadStore, verifyBasis, type StepName } from '../src/core/thinking/flow/index.js';
+import {
+  applyEdits,
+  ConsentStore,
+  extractSections,
+  FlowEngine,
+  loadRequiredContext,
+  saveProjectBrief,
+  ThreadStore,
+  verifyBasis,
+  type StepName,
+} from '../src/core/thinking/flow/index.js';
 import { DRAFT, REQ, REVIEW, REVISE, J, engineFor, makeProject, makeUI, readJson, scripted, stepOf, threadDir } from './flow-helpers.js';
 
 const STEPS: StepName[] = ['requirements', 'draft', 'review', 'revise'];
@@ -54,6 +65,56 @@ describe('正常路径与状态', () => {
     expect(txt).not.toContain('SECRET-SECTION-3');
     expect(txt).not.toContain('SECRET-SECTION-5');
     expect(extractSections('## 1. a\nx\n## 3. b\ny\n## 4. c\nz', [1, 4])).toBe('## 1. a\nx\n## 4. c\nz');
+  });
+
+  it('必带层读取顺序：PROJECT_CONTEXT 优先 → .studio/project-brief.md → 都没有则拒绝，且项目简介不写入 docs/', async () => {
+    const emptyRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-brief-'));
+    try {
+      await expect(loadRequiredContext(emptyRoot)).rejects.toThrow(/必带层上下文缺失/);
+
+      const savedView = await saveProjectBrief(emptyRoot, {
+        whatItIs: '一个本地待办清单工具',
+        principles: '',
+        targetUsers: '独立开发者与小型团队',
+      });
+      expect(savedView.source).toBe('project_brief');
+      expect(savedView.readOnly).toBe(false);
+      expect(savedView.exists).toBe(true);
+      expect(savedView.brief).toEqual({
+        whatItIs: '一个本地待办清单工具',
+        principles: '',
+        targetUsers: '独立开发者与小型团队',
+      });
+
+      const briefFile = path.join(emptyRoot, '.studio', 'project-brief.md');
+      const briefMd = await fs.readFile(briefFile, 'utf8');
+      expect(briefMd).toContain('## 1. 一句话\n\n一个本地待办清单工具');
+      expect(briefMd).toContain('## 2. 核心原则\n\n暂无');
+      expect(briefMd).toContain('## 4. 目标用户\n\n独立开发者与小型团队');
+      await expect(fs.access(path.join(emptyRoot, 'docs'))).rejects.toThrow();
+
+      const fromBrief = await loadRequiredContext(emptyRoot);
+      expect(fromBrief.name).toBe('.studio/project-brief.md（第 1、2、4 节）');
+      expect(fromBrief.text).toContain('一个本地待办清单工具');
+      expect(fromBrief.text).toContain('暂无');
+      expect(fromBrief.text).toContain('独立开发者与小型团队');
+
+      // 若同时存在 docs/PROJECT_CONTEXT.md，优先读它并禁止 saveProjectBrief 覆盖
+      await fs.mkdir(path.join(emptyRoot, 'docs'), { recursive: true });
+      await fs.writeFile(
+        path.join(emptyRoot, 'docs', 'PROJECT_CONTEXT.md'),
+        '## 1. 项目\n来自 CONTEXT\n## 2. 原则\nCONTEXT 原则\n## 4. 用户\nCONTEXT 用户\n',
+        'utf8',
+      );
+      const fromContext = await loadRequiredContext(emptyRoot);
+      expect(fromContext.name).toBe('PROJECT_CONTEXT.md（第 1、2、4 节）');
+      expect(fromContext.text).toContain('来自 CONTEXT');
+      await expect(
+        saveProjectBrief(emptyRoot, { whatItIs: 'x', principles: 'y', targetUsers: 'z' }),
+      ).rejects.toThrow(/PROJECT_CONTEXT\.md/);
+    } finally {
+      await fs.rm(emptyRoot, { recursive: true, force: true }).catch(() => undefined);
+    }
   });
 
   it('线程状态与尝试分开：线程目录里 thread.json 记录尝试，正式产物各自成文件', async () => {

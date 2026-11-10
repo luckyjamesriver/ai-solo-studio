@@ -22,6 +22,12 @@ import {
   type DiscussionView,
   type ResolvedThinkerSet,
 } from './discussion-service.js';
+import {
+  hasRequiredContext,
+  readProjectBriefView,
+  saveProjectBrief as writeProjectBrief,
+  type ProjectBriefView,
+} from '../thinking/flow/index.js';
 
 export interface PlanInput {
   goal: string;
@@ -645,6 +651,28 @@ export class TaskController {
     return threadId;
   }
 
+  async getProjectBrief(): Promise<ProjectBriefView> {
+    return readProjectBriefView(this.o.repo);
+  }
+
+  async saveProjectBrief(raw: unknown): Promise<ProjectBriefView> {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(VIEW_TEXT.invalidArgument);
+    const b = raw as { whatItIs?: unknown; principles?: unknown; targetUsers?: unknown };
+    if (typeof b.whatItIs !== 'string' || typeof b.principles !== 'string' || typeof b.targetUsers !== 'string') {
+      throw new Error(VIEW_TEXT.invalidArgument);
+    }
+    if (b.whatItIs.length > 2000 || b.principles.length > 2000 || b.targetUsers.length > 2000) {
+      throw new Error(VIEW_TEXT.invalidArgument);
+    }
+    await writeProjectBrief(this.o.repo, {
+      whatItIs: b.whatItIs,
+      principles: b.principles,
+      targetUsers: b.targetUsers,
+    });
+    await G.ensureStudioIgnored(this.o.repo).catch(() => undefined);
+    return readProjectBriefView(this.o.repo);
+  }
+
   async waitDiscussion(id: unknown): Promise<void> {
     const tid = this.checkArg(TASK_ID, id);
     await this.d().waitIdle(tid);
@@ -668,6 +696,9 @@ export class TaskController {
     const current = await this.d().getView(t);
     if (current.preset !== preset) {
       await this.d().setPresetBeforeStart(t, preset);
+    }
+    if (!(await hasRequiredContext(this.o.repo))) {
+      throw new Error('找不到项目简介（或 docs/PROJECT_CONTEXT.md），请先填写项目简介后再开始讨论。');
     }
     this.d().launchTurn(t, threadId, preset);
     return this.d().getView(t);

@@ -302,6 +302,8 @@ ipcMain.handle('project:openRecent', async (_e, id: unknown): Promise<OpenResult
   return openValidated(r.path);
 });
 ipcMain.handle('project:status', (_e, projectId: unknown) => projectStatus(projectId));
+ipcMain.handle('project:getBrief', (_e, projectId: unknown) => controllerFor(projectId).getProjectBrief());
+ipcMain.handle('project:saveBrief', (_e, projectId: unknown, brief: unknown) => controllerFor(projectId).saveProjectBrief(brief));
 ipcMain.handle('project:init', async (_e, consent: unknown): Promise<OpenResult> => {
   const target = pendingInit;
   pendingInit = null;

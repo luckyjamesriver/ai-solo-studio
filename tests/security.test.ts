@@ -278,24 +278,28 @@ describe('安全基线（防回归）', () => {
     // 阶段 3 修订（仅按前例同步登记 continueTask，参数为 projectId: string, id: string，不放宽任何参数形态）
     // 阶段 4 修订（按前例同步登记 rejectCriterion / reworkTask / editReworkPermissions，参数形态固定且带 projectId，不放宽任何约束）
     // 阶段 5a 修订（按前例同步登记 10 个讨论与流程引擎驱动方法，参数形态固定且带 projectId，无路径参数）
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'reworkTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
-    expect(entries).toHaveLength(46);
-    const SHAPES = ['', 'id: string', 'projectId: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string', 'projectId: string, id: string, preset: string', 'projectId: string, id: string, service: string, allow: boolean', 'projectId: string, id: string, edits: RequirementEditInput[]', 'projectId: string, id: string, choice: string, note: string', 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string', 'projectId: string, id: string, decision: string', 'projectId: string, id: string, newRequest: string', 'projectId: string, id: string, target: string, message: string'];
+    // 阶段 5b 修订（按前例同步登记项目简介 IPC 方法 getProjectBrief / saveProjectBrief，参数形态固定且带 projectId，无路径参数）
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'reworkTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
+    expect(entries).toHaveLength(48);
+    const SHAPES = ['', 'id: string', 'projectId: string', 'projectId: string, brief: ProjectBriefInput', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string', 'projectId: string, id: string, preset: string', 'projectId: string, id: string, service: string, allow: boolean', 'projectId: string, id: string, edits: RequirementEditInput[]', 'projectId: string, id: string, choice: string, note: string', 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string', 'projectId: string, id: string, decision: string', 'projectId: string, id: string, newRequest: string', 'projectId: string, id: string, target: string, message: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
       expect(e.params, `${e.name} 不得有路径类参数`).not.toMatch(/\b(?:path|paths|dir|dirs|folder|file|filename|cwd|url)\b\s*:/i);
     }
-    // 计划表单与需求条目类型里同样没有路径字段
+    // 计划表单、需求条目与项目简介类型里同样没有路径字段
     const planType = /interface PlanInput \{([\s\S]*?)\}/.exec(preload)?.[1] ?? '';
     expect(planType).toMatch(/goal: string/);
     expect(planType).not.toMatch(/path|dir|folder|file|cwd|url/i);
     const reqEditType = /interface RequirementEditInput \{([\s\S]*?)\}/.exec(preload)?.[1] ?? '';
     expect(reqEditType).toMatch(/text: string/);
     expect(reqEditType).not.toMatch(/path|dir|folder|file|cwd|url/i);
+    const briefType = /interface ProjectBriefInput \{([\s\S]*?)\}/.exec(preload)?.[1] ?? '';
+    expect(briefType).toMatch(/whatItIs: string/);
+    expect(briefType).not.toMatch(/path|dir|folder|file|cwd|url/i);
     // 每个 IPC 通道在主进程中都有处理函数，且主进程处理函数的参数形态同样固定
     const main = read('src/main/index.ts');
     for (const e of entries) expect(main, e.channel).toContain(`ipcMain.handle('${e.channel}'`);
-    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, projectId: unknown', '_e, consent: unknown', '_e, projectId: unknown, request: unknown', '_e, projectId: unknown, id: unknown', '_e, projectId: unknown, id: unknown, feedback: unknown', '_e, projectId: unknown, id: unknown, plan: unknown', '_e, projectId: unknown, id: unknown, key: unknown', '_e, projectId: unknown, id: unknown, ack: unknown', '_e, projectId: unknown, id: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown, reason: unknown', '_e, projectId: unknown, id: unknown, preset: unknown', '_e, projectId: unknown, id: unknown, service: unknown, allow: unknown', '_e, projectId: unknown, id: unknown, edits: unknown', '_e, projectId: unknown, id: unknown, choice: unknown, note: unknown', '_e, projectId: unknown, id: unknown, kind: unknown, key: unknown, decision: unknown, reason: unknown', '_e, projectId: unknown, id: unknown, decision: unknown', '_e, projectId: unknown, id: unknown, newRequest: unknown', '_e, projectId: unknown, id: unknown, target: unknown, message: unknown'];
+    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, projectId: unknown', '_e, projectId: unknown, brief: unknown', '_e, consent: unknown', '_e, projectId: unknown, request: unknown', '_e, projectId: unknown, id: unknown', '_e, projectId: unknown, id: unknown, feedback: unknown', '_e, projectId: unknown, id: unknown, plan: unknown', '_e, projectId: unknown, id: unknown, key: unknown', '_e, projectId: unknown, id: unknown, ack: unknown', '_e, projectId: unknown, id: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown, reason: unknown', '_e, projectId: unknown, id: unknown, preset: unknown', '_e, projectId: unknown, id: unknown, service: unknown, allow: unknown', '_e, projectId: unknown, id: unknown, edits: unknown', '_e, projectId: unknown, id: unknown, choice: unknown, note: unknown', '_e, projectId: unknown, id: unknown, kind: unknown, key: unknown, decision: unknown, reason: unknown', '_e, projectId: unknown, id: unknown, decision: unknown', '_e, projectId: unknown, id: unknown, newRequest: unknown', '_e, projectId: unknown, id: unknown, target: unknown, message: unknown'];
     for (const m of main.matchAll(/ipcMain\.handle\('[^']+',\s*(?:async\s*)?\(([^)]*)\)/g)) {
       expect(MAIN_SHAPES, m[1]).toContain(m[1]);
     }
@@ -470,6 +474,8 @@ describe('安全基线（防回归）', () => {
         listOpenProjects: '',
         closeProject: 'projectId: string',
         getWorkbench: '',
+        getProjectBrief: 'projectId: string',
+        saveProjectBrief: 'projectId: string, brief: ProjectBriefInput',
         continueTask: 'projectId: string, id: string',
         reworkTask: 'projectId: string, id: string, feedback: string',
         editReworkPermissions: 'projectId: string, id: string, feedback: string',
@@ -810,8 +816,8 @@ describe('安全基线（防回归）', () => {
     it('每个接收 projectId 的 IPC 处理函数都先校验 projectId 在已打开项目表中', () => {
       const handlerPattern = /ipcMain\.handle\('([^']+)',\s*\(([^)]*)\)\s*=>\s*([^\n]+)\);/g;
       const guarded = [...main.matchAll(handlerPattern)].filter((m) => /\bprojectId\b/.test(m[2]!));
-      // 1 个 projects:close + 1 个 project:status + 11 个 tasks:* + 10 个 discussion:* + 13 个 acceptance:* = 36 个带 projectId 的处理函数
-      expect(guarded).toHaveLength(36);
+      // 1 个 projects:close + 1 个 project:status + 2 个 project:Brief + 11 个 tasks:* + 10 个 discussion:* + 13 个 acceptance:* = 38 个带 projectId 的处理函数
+      expect(guarded).toHaveLength(38);
       const validBody = /^(?:controllerFor\(projectId\)\.\w+\(|projectStatus\(projectId\)|openProjects\.close\(projectId\))/;
       for (const m of guarded) {
         expect(m[3], `handler ${m[1]} 必须首先通过 openProjects 校验 projectId`).toMatch(validBody);

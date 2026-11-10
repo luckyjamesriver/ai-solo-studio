@@ -4,9 +4,11 @@ import {
   type DiscussionPreset,
   type DiscussionView,
   type PendingAdjudicationItem,
+  type ProjectBriefInput,
   type RequirementEditInput,
   type TaskView,
 } from './api.js';
+import { ProjectBriefForm } from './ProjectBriefForm.js';
 import { COPY } from './copy.js';
 
 export type DiscussionTab = 'summary' | 'planner-chat' | 'reviewer-chat' | 'record';
@@ -47,6 +49,10 @@ export interface DiscussionBodyProps {
   onAdjudicate: (item: PendingAdjudicationItem, decision: 'accept' | 'reject') => void;
   onApproveDecision: (decision: 'approve' | 'reject' | 'stop') => void;
   onModifyRequirements: () => void;
+  briefFormOpen?: boolean;
+  briefError?: string | null;
+  onCancelBriefForm?: () => void;
+  onSubmitBrief?: (brief: ProjectBriefInput) => Promise<void> | void;
   plannerChatDraft?: string;
   reviewerChatDraft?: string;
   onChangePlannerChatDraft?: (text: string) => void;
@@ -113,6 +119,10 @@ export function DiscussionViewBody({
   onAdjudicate,
   onApproveDecision,
   onModifyRequirements,
+  briefFormOpen = false,
+  briefError = null,
+  onCancelBriefForm,
+  onSubmitBrief,
   plannerChatDraft = '',
   reviewerChatDraft = '',
   onChangePlannerChatDraft,
@@ -520,7 +530,20 @@ export function DiscussionViewBody({
                 </section>
               )}
 
-              {view.pauseAt === 'ready' && !view.running && (
+              {view.pauseAt === 'ready' && !view.running && briefFormOpen && (
+                <section className="box hl" data-testid="discussion-brief-card">
+                  <ProjectBriefForm
+                    title="先填一下项目简介，再开始讨论"
+                    submitLabel="保存简介并开始讨论"
+                    busy={busy}
+                    serverError={briefError}
+                    onSubmit={(b) => onSubmitBrief?.(b)}
+                    {...(onCancelBriefForm ? { onCancel: onCancelBriefForm } : {})}
+                  />
+                </section>
+              )}
+
+              {view.pauseAt === 'ready' && !view.running && !briefFormOpen && (
                 <section className="box hl" data-testid="discussion-ready-card">
                   <h2>需求草稿</h2>
                   <p style={{ marginTop: '6px' }}>{view.rawRequirement}</p>
@@ -1001,6 +1024,8 @@ export function DiscussionPage({
   const [modifyText, setModifyText] = useState('');
   const [plannerChatDraft, setPlannerChatDraft] = useState('');
   const [reviewerChatDraft, setReviewerChatDraft] = useState('');
+  const [briefFormOpen, setBriefFormOpen] = useState(false);
+  const [briefError, setBriefError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -1032,6 +1057,8 @@ export function DiscussionPage({
     setModifyText(task.request);
     setPlannerChatDraft('');
     setReviewerChatDraft('');
+    setBriefFormOpen(false);
+    setBriefError(null);
     setActionError(null);
     void refreshView().catch((e) => setActionError(e instanceof Error ? e.message : String(e)));
   }, [projectId, task.id, task.request, refreshView]);
@@ -1096,7 +1123,15 @@ export function DiscussionPage({
       modifyText={modifyText}
       onToggleModify={setModifyOpen}
       onChangeModifyText={setModifyText}
-      onStart={() => void runAction(() => studio().startDiscussion(projectId, task.id, selectedPreset))}
+      onStart={() => {
+        if (!view.hasRequiredContext) {
+          setActionError(null);
+          setBriefError(null);
+          setBriefFormOpen(true);
+          return;
+        }
+        void runAction(() => studio().startDiscussion(projectId, task.id, selectedPreset));
+      }}
       onSkip={() => {
         setActionError(null);
         setBusy(true);
@@ -1148,6 +1183,28 @@ export function DiscussionPage({
           })
           .catch((e) => setActionError(e instanceof Error ? e.message : String(e)))
           .finally(() => setBusy(false));
+      }}
+      briefFormOpen={briefFormOpen}
+      briefError={briefError}
+      onCancelBriefForm={() => {
+        setBriefFormOpen(false);
+        setBriefError(null);
+      }}
+      onSubmitBrief={async (brief) => {
+        setBriefError(null);
+        setActionError(null);
+        setBusy(true);
+        try {
+          await studio().saveProjectBrief(projectId, brief);
+          const next = await studio().startDiscussion(projectId, task.id, selectedPreset);
+          setBriefFormOpen(false);
+          syncFromView(next);
+          void studio().getTask(projectId, task.id).then(onTaskUpdated).catch(() => undefined);
+        } catch (e) {
+          setBriefError(e instanceof Error ? e.message : String(e));
+        } finally {
+          setBusy(false);
+        }
       }}
       plannerChatDraft={plannerChatDraft}
       reviewerChatDraft={reviewerChatDraft}

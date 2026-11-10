@@ -7,6 +7,7 @@ import {
   inspectDiscussion,
   readApprovedThreadPlan,
   readDiscussionChats,
+  readProjectBriefView,
   runPausedFlow,
   sendThreadChat,
   stopThreadRecord,
@@ -24,6 +25,7 @@ import {
   type FlowOutcome,
   type PauseKind,
   type PendingAdjudicationItem,
+  type ProjectBriefView,
   type ResumeDecisions,
   type ReviewRecordSnapshot,
   type StepName,
@@ -87,6 +89,8 @@ export interface DiscussionView {
   chats: DiscussionChatsView;
   stoppedReason: string | null;
   budgetNote: string;
+  hasRequiredContext: boolean;
+  requiredContextSource: ProjectBriefView['source'];
 }
 
 export interface ConvertedApprovedPlan {
@@ -248,7 +252,10 @@ export class DiscussionService {
     const set = this.resolveSet(preset);
     const active = this.activeStep.get(task.id) ?? null;
     const err = this.errors.get(task.id) ?? null;
-    const chats = await readDiscussionChats(this.opts.repo, threadId);
+    const [chats, briefView] = await Promise.all([
+      readDiscussionChats(this.opts.repo, threadId),
+      readProjectBriefView(this.opts.repo),
+    ]);
 
     return {
       taskId: task.id,
@@ -290,6 +297,8 @@ export class DiscussionService {
       chats,
       stoppedReason: snap.stoppedReason,
       budgetNote: BUDGET_NOTE,
+      hasRequiredContext: briefView.exists,
+      requiredContextSource: briefView.source,
     };
   }
 

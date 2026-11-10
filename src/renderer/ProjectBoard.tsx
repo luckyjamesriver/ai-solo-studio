@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import type { DisclosureState, ProjectStatus, TaskView } from './api.js';
+import { useEffect, useState } from 'react';
+import { studio, type DisclosureState, type ProjectBriefView, type ProjectStatus, type TaskView } from './api.js';
+import { ProjectBriefForm } from './ProjectBriefForm.js';
 import { COPY } from './copy.js';
 
 export type ProjectBoardTab = 'tasks' | 'history' | 'settings';
@@ -42,6 +43,28 @@ export function ProjectBoard({
 }: ProjectBoardProps) {
   const [request, setRequest] = useState('');
   const [creating, setCreating] = useState(false);
+  const [briefView, setBriefView] = useState<ProjectBriefView | null>(null);
+  const [briefBusy, setBriefBusy] = useState(false);
+  const [briefError, setBriefError] = useState<string | null>(null);
+  const [briefSavedNotice, setBriefSavedNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab !== 'settings') return;
+    let cancelled = false;
+    setBriefError(null);
+    setBriefSavedNotice(null);
+    studio()
+      .getProjectBrief(project.id)
+      .then((v) => {
+        if (!cancelled) setBriefView(v);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setBriefError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, tab]);
 
   const submit = async () => {
     if (!request.trim() || creating) return;
@@ -248,6 +271,53 @@ export function ProjectBoard({
 
       {tab === 'settings' && (
         <section className="grid" data-testid="project-settings" aria-label={COPY.boardTabSettings}>
+          <div className="box" data-testid="project-settings-brief">
+            {briefView?.readOnly ? (
+              <>
+                <div className="row sb">
+                  <h2>项目简介</h2>
+                  <span className="tag">只读</span>
+                </div>
+                <p className="muted" data-testid="project-brief-readonly" style={{ marginTop: '6px' }}>
+                  {briefView.readOnlyNote ?? '本项目使用 docs/PROJECT_CONTEXT.md'}
+                </p>
+              </>
+            ) : briefView ? (
+              <ProjectBriefForm
+                initial={briefView.brief}
+                title="项目简介"
+                submitLabel="保存项目简介"
+                busy={briefBusy}
+                outboundNotice={briefView.outboundNotice}
+                savedNotice={briefSavedNotice}
+                serverError={briefError}
+                onSubmit={async (brief) => {
+                  setBriefError(null);
+                  setBriefSavedNotice(null);
+                  setBriefBusy(true);
+                  try {
+                    const updated = await studio().saveProjectBrief(project.id, brief);
+                    setBriefView(updated);
+                    setBriefSavedNotice('项目简介已保存。');
+                  } catch (e) {
+                    setBriefError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setBriefBusy(false);
+                  }
+                }}
+              />
+            ) : (
+              <>
+                <h2>项目简介</h2>
+                {briefError ? (
+                  <p role="alert" className="error">{briefError}</p>
+                ) : (
+                  <p className="muted">正在加载项目简介…</p>
+                )}
+              </>
+            )}
+          </div>
+
           <div className="box">
             <h2>{COPY.projectSettingsModeTitle}</h2>
             <div className="item">

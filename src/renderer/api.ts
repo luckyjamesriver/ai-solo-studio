@@ -79,11 +79,14 @@ export type {
   DiscussionStepStatus,
   PauseKind,
   PendingAdjudicationItem,
+  ProjectBriefInput,
+  ProjectBriefView,
   RequirementItem,
   ReviewFindingRecord,
   ReviewRecordSnapshot,
   StepName,
 } from '../core/thinking/flow/index.js';
+import type { ProjectBriefInput as BriefIn, ProjectBriefView as BriefView } from '../core/thinking/flow/index.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
 import type { DiscussionView } from '../core/app/discussion-service.js';
 import type { AcceptanceActionResult } from '../core/app/task-controller.js';
@@ -138,6 +141,8 @@ interface StudioApi {
   closeProject(projectId: string): Promise<CloseProjectResult>;
   getWorkbench(): Promise<WorkbenchView>;
   projectStatus(projectId: string): Promise<ProjectStatus>;
+  getProjectBrief(projectId: string): Promise<BriefView>;
+  saveProjectBrief(projectId: string, brief: BriefIn): Promise<BriefView>;
   initProject(consent: boolean): Promise<OpenResult>;
   getDisclosure(): Promise<DisclosureState>;
   acceptDisclosure(): Promise<DisclosureState>;
