@@ -83,7 +83,7 @@ export function Workbench({
               data-testid="workbench-open-project"
               onClick={onOpenProject}
             >
-              打开项目文件夹
+              ＋ 打开项目
             </button>
           )}
         </div>

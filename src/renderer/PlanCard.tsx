@@ -14,8 +14,8 @@ function TrustPanel({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: 
           <input type="checkbox" data-testid="trust-ack" checked={ack} onChange={(e) => setAck(e.target.checked)} /> {COPY.fullTrustAck}
         </label>
         <div className="row">
-          <button data-testid="trust-confirm" disabled={!ack} onClick={onConfirm}>{COPY.fullTrustConfirm}</button>
-          <button className="secondary" data-testid="trust-cancel" onClick={onCancel}>{COPY.fullTrustCancel}</button>
+          <button className="secondary" data-testid="trust-confirm" disabled={!ack} onClick={onConfirm}>{COPY.fullTrustConfirm}</button>
+          <button data-testid="trust-cancel" onClick={onCancel}>{COPY.fullTrustCancel}</button>
         </div>
       </div>
     </div>

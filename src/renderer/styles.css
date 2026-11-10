@@ -297,6 +297,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 }
 
 .card-title {
+  justify-content: flex-start;
   text-align: left;
   font-family: var(--font-ui);
   font-weight: 700;

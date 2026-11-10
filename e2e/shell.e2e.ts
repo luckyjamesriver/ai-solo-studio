@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.resolve(import.meta.dirname, '..');
 const electronBin = createRequire(import.meta.url)('electron') as string;
 const shotDir = process.env.E2E_SCREENSHOT_DIR;
+const stage2ShotDir = process.env.E2E_STAGE2_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -62,6 +63,12 @@ const shot = async (page: Page, name: string) => {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
+const stage2Shot = async (page: Page, name: string) => {
+  if (!stage2ShotDir) return;
+  const target = path.join(stage2ShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
 const acceptDisclosure = async (page: Page) => {
   await page.getByRole('button', { name: '我了解了，同意' }).click();
   await expect_(page.getByTestId('disclosure')).toHaveCount(0);
@@ -87,11 +94,13 @@ describe('首次外发告知', () => {
     expect(text).toContain('凭证');
     await shot(a.page, '1-首次外发告知');
     await acceptDisclosure(a.page);
+    await a.page.getByTestId('nav-settings').click();
     expect(await a.page.getByTestId('outbound-status').innerText()).toContain('已确认');
     expect(fs.existsSync(path.join(data, 'records', 'app', 'disclosure.json'))).toBe(true);
     await a.app.close();
 
     const b = await launch(data);
+    await b.page.getByTestId('nav-settings').click();
     await b.page.getByTestId('outbound-status').waitFor();
     await b.page.waitForTimeout(800);
     expect(await b.page.getByTestId('disclosure').count()).toBe(0);
@@ -105,8 +114,9 @@ describe('首次外发告知', () => {
     const a = await launch(data);
     await a.page.getByTestId('disclosure').waitFor({ timeout: 20_000 });
     await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await a.page.locator('ul.env li').first().waitFor({ timeout: 60_000 }); // 首次引导中的体检仍可浏览
+    await a.page.getByTestId('nav-settings').click();
     expect(await a.page.getByTestId('outbound-status').innerText()).toContain('尚未确认');
-    await a.page.locator('ul.env li').first().waitFor({ timeout: 60_000 }); // 体检仍可浏览
     expect(fs.existsSync(path.join(data, 'records', 'app', 'disclosure.json'))).toBe(false);
     await a.app.close();
     const b = await launch(data);
@@ -345,11 +355,12 @@ describe('施工模式界面', () => {
     expect(await a.page.getByTestId('run-view').getByTestId('fulltrust-badge').innerText()).toBe('完全信任');
     expect(await a.page.getByTestId('perm-summary').innerText()).toContain('完全信任模式');
     expect(await a.page.getByTestId('run-view').locator('button').allInnerTexts()).toEqual(['停止']); // 仍然只有停止
-    expect(await a.page.getByTestId('fulltrust-badge-list').innerText()).toBe('完全信任'); // 列表里也有
     expect(taskFiles(proj)[0]?.fullTrustConfirmedAt).toBeTruthy();
     await a.page.getByTestId('stop-button').click();
     await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
     expect(await a.page.getByTestId('result').getByTestId('fulltrust-badge').innerText()).toBe('完全信任'); // 结果里标记仍在
+    await a.page.getByTestId('breadcrumb-project').click();
+    expect(await a.page.getByTestId('fulltrust-badge-list').innerText()).toBe('完全信任'); // 看板卡片里也有
   });
 
   it('偏好只预选：上次选了完全信任，新任务预选完全信任，但开工前仍然弹出确认面板', async () => {
@@ -362,6 +373,7 @@ describe('施工模式界面', () => {
     await a.page.getByTestId('trust-confirm').click();
     await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
 
+    await a.page.getByTestId('breadcrumb-project').click();
     await newTask(a.page, '任务二');
     expect(await a.page.getByTestId('mode-full-trust').isChecked()).toBe(true); // 预选
     expect(await a.page.getByTestId('preselect-note').innerText()).toContain('每个任务开工前仍需要重新确认');
@@ -473,7 +485,6 @@ describe('施工模式界面', () => {
     await newTask(a.page, '并发新建任务');
     await a.page.getByTestId('plan-card').waitFor();
     expect(await a.page.getByTestId('goal').inputValue()).toBe('并发新建任务');
-    expect(await a.page.getByTestId('task-list').innerText()).toContain('并发新建任务');
 
     // 4. 释放之前挂起的旧 listTasks() 响应（返回旧的空列表 []）
     await a.app.evaluate(() => {
@@ -487,6 +498,7 @@ describe('施工模式界面', () => {
     // 断言：由于 refreshSeq 请求序号机制，旧的空列表被判定过期并丢弃，新任务绝不会消失
     await a.page.getByTestId('plan-card').waitFor();
     expect(await a.page.getByTestId('goal').inputValue()).toBe('并发新建任务');
+    await a.page.getByTestId('breadcrumb-project').click();
     expect(await a.page.getByTestId('task-list').innerText()).toContain('并发新建任务');
 
     // 5. 模拟任务在远端被放弃/删除（后续 listTasks 均返回空列表）
@@ -857,10 +869,14 @@ describe('验收流程可用性改进（执行者显示、分步验收与成果�
     expect(await a.page.getByTestId('unchecked-confirm-reason').innerText()).toContain('没有配置可用的自动检查脚本');
     expect(await a.page.getByTestId('unchecked-preview-button').innerText()).toBe('打开预览');
     expect(await a.page.getByTestId('unchecked-confirm-save-button').innerText()).toBe('仍然保存');
+    // 阶段 2 B9：未检查确认里「打开预览」改为主按钮，「仍然保存」为次要按钮
+    expect((await a.page.getByTestId('unchecked-preview-button').getAttribute('class')) ?? '').not.toContain('secondary');
+    expect((await a.page.getByTestId('unchecked-confirm-save-button').getAttribute('class')) ?? '').toContain('secondary');
 
     // 滚动到确认区并截图
     await a.page.getByTestId('unchecked-confirm-panel').scrollIntoViewIfNeeded();
     await shot(a.page, 'save-safety/unchecked-confirm');
+    await stage2Shot(a.page, '07-unchecked-confirm');
 
     // 点击「打开预览」：同版本保留确认区
     await a.page.getByTestId('unchecked-preview-button').click();
@@ -998,6 +1014,8 @@ describe('环境体检', () => {
     await stubDialog(a.app, proj);
     await a.page.getByRole('button', { name: '打开项目文件夹' }).click();
     await a.page.getByTestId('project').waitFor();
+    await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId('tab-settings-health').click();
     const compat = a.page.locator('ul.env li[data-id="node"] [data-layer="compatible"]');
     await compat.waitFor({ timeout: 60_000 });
     await a.page.waitForFunction(() => document.querySelector('ul.env li[data-id="node"] [data-layer="compatible"]')?.getAttribute('data-state') === 'fail', undefined, { timeout: 60_000 });
@@ -1114,5 +1132,163 @@ describe('多项目后台（阶段 2 第一部分）', () => {
       return { kind: r.kind, id: r.status.id, count: list.length };
     });
     expect(reopened).toEqual({ kind: 'opened', id: res.open1Id, count: 2 });
+  });
+});
+
+describe('应用外壳：侧栏、工作台、项目看板、任务页外框与首次引导（阶段 2 第二部分）', () => {
+  it('启动 → 引导/工作台 → 打开两个项目 → 侧栏切换与固定宽度 → 进入任务页外框 → 回工作台，计数正确', async () => {
+    const data = mk('data');
+    const p1 = gitProject('site-one', { 'index.html': '<h1>one</h1>\n' });
+    const p2 = gitProject('site-two', { 'index.html': '<h1>two</h1>\n' });
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+
+    // 按 prompt 选择剧本：task 请求含「持续施工」时挂起，否则改写 index.html
+    await a.app.evaluate(
+      async (_e, arg) => {
+        const { createRequire } = process.getBuiltinModule('module');
+        const req = createRequire(arg.codexUrl);
+        const { CodexExecutor } = req(arg.codexPath);
+        const { FakeExecutor } = req(arg.fakePath);
+        CodexExecutor.prototype.start = function (opts: { prompt?: string }) {
+          const steps = (opts.prompt ?? '').includes('持续施工') ? arg.hangScript : arg.writeScript;
+          return new FakeExecutor(steps, { emitPermissions: true }).start(opts);
+        };
+      },
+      {
+        codexUrl: distUrl('executor/adapters/codex.js'),
+        codexPath: fileURLToPath(distUrl('executor/adapters/codex.js')),
+        fakePath: fileURLToPath(distUrl('executor/adapters/fake.js')),
+        hangScript: [{ do: 'hang' }],
+        writeScript: [{ do: 'write', path: 'index.html', content: '<h1>updated</h1>\n' }],
+      },
+    );
+
+    // 1. 首次启动展示环境体检引导页
+    await a.page.getByTestId('env-onboarding').waitFor();
+    await a.page.locator('ul.env li').first().waitFor({ timeout: 60_000 });
+    await stage2Shot(a.page, '06-env-onboarding');
+    await a.page.getByTestId('onboarding-continue').click();
+    await a.page.getByTestId('workbench').waitFor();
+
+    const sidebarWidth = async () => (await a.page.getByTestId('sidebar').boundingBox())!.width;
+    const wWorkbench = await sidebarWidth();
+    expect(wWorkbench).toBeGreaterThanOrEqual(200);
+    expect(wWorkbench).toBeLessThanOrEqual(220);
+
+    // 2. 打开两个项目：site-one（完成到待验收），site-two（保持施工中）
+    await stubDialog(a.app, p1);
+    await a.page.getByTestId('nav-open-project').click();
+    await a.page.getByTestId('project').waitFor();
+    expect(await sidebarWidth()).toBe(wWorkbench);
+
+    // 看板隐藏了尚无后台的「讨论中」，只展示 施工中 / 待验收 / 已结束 三列
+    expect(await a.page.getByTestId('board-col-building').isVisible()).toBe(true);
+    expect(await a.page.getByTestId('board-col-reviewing').isVisible()).toBe(true);
+    expect(await a.page.getByTestId('board-col-ended').isVisible()).toBe(true);
+
+    await newTask(a.page, '任务一验收');
+    await a.page.getByTestId('task-page').waitFor();
+    expect(await a.page.getByTestId('breadcrumb-project').innerText()).toBe('site-one');
+    expect(await a.page.getByTestId('stage-build').getAttribute('data-status')).toBe('cur');
+    expect(await a.page.getByTestId('stage-accept').getAttribute('data-status')).toBe('pending');
+    expect(await sidebarWidth()).toBe(wWorkbench);
+
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    expect(await a.page.getByTestId('stage-build').getAttribute('data-status')).toBe('done');
+    expect(await a.page.getByTestId('stage-build').innerText()).toBe('施工 ✓');
+    expect(await a.page.getByTestId('stage-accept').getAttribute('data-status')).toBe('cur');
+    await stage2Shot(a.page, '04-task-reviewing');
+
+    await stubDialog(a.app, p2);
+    await a.page.getByTestId('nav-open-project').click();
+    await a.page.getByTestId('project').waitFor();
+    await newTask(a.page, '任务二持续施工');
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('run-view').waitFor();
+    await stage2Shot(a.page, '03-task-building');
+
+    // 3. 在侧栏切换回 site-one 并截看板图
+    const openList = await a.page.evaluate(() =>
+      (window as unknown as { studio: { listOpenProjects: () => Promise<{ id: string; name: string }[]> } }).studio.listOpenProjects(),
+    );
+    const id1 = openList.find((x) => x.name === 'site-one')!.id;
+    const id2 = openList.find((x) => x.name === 'site-two')!.id;
+    await a.page.getByTestId(`nav-project-${id1}`).click();
+    await a.page.getByTestId('board-col-reviewing').waitFor();
+    expect(await a.page.getByTestId('board-col-reviewing').innerText()).toContain('任务一验收');
+    await stage2Shot(a.page, '02-project-board');
+
+    // 4. 回到工作台：核对三组汇总、筛选、侧栏角标与真实 workbench:get 一致
+    await a.page.getByTestId('nav-workbench').click();
+    await a.page.getByTestId('workbench').waitFor();
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="wb-running"]')?.textContent?.includes('任务二持续施工'));
+    expect(await a.page.getByTestId('wb-needs-decision').innerText()).toContain('任务一验收');
+    expect(await a.page.getByTestId('wb-running').innerText()).toContain('任务二持续施工');
+    await stage2Shot(a.page, '01-workbench');
+
+    const wb = await a.page.evaluate(() =>
+      (window as unknown as { studio: { getWorkbench: () => Promise<{ counts: { needsDecision: number; running: number } }> } }).studio.getWorkbench(),
+    );
+    expect(await a.page.getByTestId('workbench-badge').innerText()).toBe(String(wb.counts.needsDecision));
+    expect(await a.page.getByTestId(`project-badge-${id1}`).innerText()).toBe('1');
+    expect(await a.page.getByTestId(`project-badge-${id2}`).innerText()).toBe('1');
+
+    // 按项目筛选
+    await a.page.getByTestId('workbench-filter').selectOption(id1);
+    expect(await a.page.getByTestId('wb-needs-decision').innerText()).toContain('任务一验收');
+    expect(await a.page.getByTestId('wb-running').innerText()).not.toContain('任务二持续施工');
+    await a.page.getByTestId('workbench-filter').selectOption('all');
+
+    // 侧栏折叠与展开
+    await a.page.getByTestId('sidebar-toggle').click();
+    expect(await a.page.getByTestId('sidebar').getAttribute('data-collapsed')).toBe('true');
+    await a.page.getByTestId('sidebar-toggle').click();
+    expect(await a.page.getByTestId('sidebar').getAttribute('data-collapsed')).toBe('false');
+
+    // 设置页（只含 资料外发 / 环境体检）并截图
+    await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId('settings-page').waitFor();
+    expect(await sidebarWidth()).toBe(wWorkbench);
+    await stage2Shot(a.page, '05-settings');
+
+    // 停止运行中任务以 cleanly 退出
+    await a.page.evaluate(async (pid) => {
+      const s = (window as unknown as { studio: { listTasks: (p: string) => Promise<{ tasks: { id: string }[] }>; stopTask: (p: string, t: string) => Promise<unknown> } }).studio;
+      for (const t of (await s.listTasks(pid)).tasks) await s.stopTask(pid, t.id);
+    }, id2);
+  });
+
+  it('第一次启动显示环境体检引导；第二次启动直接进工作台且仅检测到问题时出现在需要你决定', async () => {
+    const data = mk('data');
+    const badNodeProj = gitProject('bad-node', { 'index.html': 'x', '.nvmrc': '99\n' });
+
+    // 1. 首次启动：显示引导
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await a.page.getByTestId('env-onboarding').waitFor();
+    await a.app.close();
+
+    // 2. 第二次启动：直接进工作台，不再出现首次引导
+    const b = await launch(data);
+    await b.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await b.page.getByTestId('workbench').waitFor();
+    expect(await b.page.getByTestId('env-onboarding').count()).toBe(0);
+
+    // 3. 打开 .nvmrc=99 项目触发环境问题 → 工作台「需要你决定」出现一条环境检查异常并可跳至设置环境体检
+    await stubDialog(b.app, badNodeProj);
+    await b.page.getByTestId('nav-open-project').click();
+    await b.page.getByTestId('project').waitFor();
+    await b.page.getByTestId('nav-workbench').click();
+    await b.page.getByTestId('wb-entry-env:health').waitFor({ timeout: 60_000 });
+    await b.page.getByTestId('wb-act-env:health').click();
+    await b.page.getByTestId('settings-page').waitFor();
+    await b.page.waitForFunction(
+      () => document.querySelector('ul.env li[data-id="node"] [data-layer="compatible"]')?.getAttribute('data-state') === 'fail',
+      undefined,
+      { timeout: 60_000 },
+    );
+    expect(await b.page.locator('ul.env li[data-id="node"]').innerText()).toContain('请安装 Node 99');
   });
 });

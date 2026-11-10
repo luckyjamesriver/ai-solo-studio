@@ -310,6 +310,7 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
                 {v.confirmTexts.save && <p className="notice" data-testid="save-note">{v.confirmTexts.save}</p>}
                 <div className="row" data-testid="actions">
                   <button
+                    className={v.uncheckedConfirm || a.recheck.highlight ? 'secondary' : ''}
                     data-testid="save-button"
                     disabled={disabled(step1Completed && step2Completed && a.save.enabled)}
                     onClick={() => run((s) => s.saveTask(projectId, v.taskId, v.version))}
@@ -357,7 +358,6 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
                     <div className="row">
                       <button
                         type="button"
-                        className="secondary"
                         data-testid="unchecked-preview-button"
                         disabled={pending}
                         onClick={() => run((s) => s.openPreview(projectId, v.taskId, v.version))}
@@ -366,6 +366,7 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
                       </button>
                       <button
                         type="button"
+                        className="secondary"
                         data-testid="unchecked-confirm-save-button"
                         disabled={pending || !a.save.enabled}
                         onClick={() => run((s) => s.saveUncheckedTask(projectId, v.taskId, v.version))}
@@ -432,6 +433,7 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
               </p>
               <div className="row">
                 <button
+                  className={dialog === 'discard' || dialog === 'undo' ? 'secondary' : ''}
                   data-testid="confirm-yes"
                   onClick={() =>
                     run((s) => {
@@ -443,7 +445,11 @@ export function Acceptance({ projectId, task, onChanged }: { projectId: string; 
                 >
                   {dialog === 'discard' ? COPY.discardYes : dialog === 'undo' ? COPY.undoYes : '确定直接进入验收'}
                 </button>
-                <button className="secondary" data-testid="confirm-no" onClick={() => setDialog(null)}>
+                <button
+                  className={dialog === 'discard' || dialog === 'undo' ? '' : 'secondary'}
+                  data-testid="confirm-no"
+                  onClick={() => setDialog(null)}
+                >
                   {COPY.cancel}
                 </button>
               </div>
