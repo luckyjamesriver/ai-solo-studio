@@ -114,9 +114,9 @@
 
 ### 本地验证结果（全量通过）
 - `npm run typecheck`：退出码 `0`
-- 全量单元测试（`npx vitest run --maxWorkers=4`）：**32 个文件通过，12 个真实环境/联网集成测试按条件跳过（共 44 个文件）；594 个用例通过，38 个集成用例跳过，0 失败**（耗时 `89.20s`；其中 [`tests/flow.test.ts`](../../tests/flow.test.ts) 54 项、[`tests/thinking.test.ts`](../../tests/thinking.test.ts) 34 项、[`tests/stage5-discuss.test.ts`](../../tests/stage5-discuss.test.ts) 11 项、[`tests/stage5b-claude-key.test.ts`](../../tests/stage5b-claude-key.test.ts) 4 项、[`tests/stage5b-ai-roles.test.ts`](../../tests/stage5b-ai-roles.test.ts) 3 项、[`tests/security.test.ts`](../../tests/security.test.ts) 54 项全部通过；[`tests/integration/claude-api.real.test.ts`](../../tests/integration/claude-api.real.test.ts) 默认跳过）。
+- 全量单元测试（`npx vitest run --maxWorkers=4`）：**32 个文件通过，12 个真实环境/联网集成测试按条件跳过（共 44 个文件）；595 个用例通过，38 个集成用例跳过，0 失败**（耗时 `95.79s`；其中 [`tests/flow.test.ts`](../../tests/flow.test.ts) 54 项、[`tests/thinking.test.ts`](../../tests/thinking.test.ts) 34 项、[`tests/stage5-discuss.test.ts`](../../tests/stage5-discuss.test.ts) 12 项、[`tests/stage5b-claude-key.test.ts`](../../tests/stage5b-claude-key.test.ts) 4 项、[`tests/stage5b-ai-roles.test.ts`](../../tests/stage5b-ai-roles.test.ts) 3 项、[`tests/security.test.ts`](../../tests/security.test.ts) 54 项全部通过；[`tests/integration/claude-api.real.test.ts`](../../tests/integration/claude-api.real.test.ts) 默认跳过）。
 - 构建与冒烟测试（`npm run build && npm run smoke`）：全部 PASS（精确校验 `window.studio` 共 **55** 个 IPC 方法与五层环境体检，退出码 `0`）。
-- 全量 Electron E2E（`E2E_STAGE5B_SHOT_DIR=docs/screenshots/stage5b npm run test:e2e`）：**44 / 44 全部通过**（耗时 `198.71s`，0 失败、0 跳过）。
+- 全量 Electron E2E（`npm run test:e2e`）：**44 / 44 全部通过**（耗时 `205.54s`，0 失败、0 跳过；其中阶段 5b 截图已在前置带 `E2E_STAGE5B_SHOT_DIR` 的 44/44 E2E 运行中生成并随 `e57afe1` 入库）。
 
 ### 过程中遇到的所有失败及根因修复
 1. **提交①单测报错缺少 Git 仓库**：[`stage5-discuss.test.ts`](../../tests/stage5-discuss.test.ts) 新增简介回退测试初用普通空目录而非 `makeRepo`，讨论绑定在工作树隔离检查时要求合法 Git 仓库；改用 `makeRepo` 初始化测试仓库后通过。
@@ -129,8 +129,10 @@
    - `ProjectBoard` 项目设置页签实际 `data-testid` 为 `tab-project-settings`，表单 `<textarea>` 内容应使用 Playwright `.inputValue()` 读取而非 `.innerText()`。
 7. **删除 Claude Key 后在 `chief='unset'` 时无法创建草稿任务（真实业务流缺陷）**：当用户此前将首席设为 Claude、复核设为 Codex，随后删除 Claude Key 时，首席自动回退为 `unset`；此时新建草稿任务进入 [`DiscussionService.ensureBoundThread`](../../src/core/app/discussion-service.ts) 会触发「尚未开始」分支传出 `single: false` 但未提供双思考者，被 `FlowEngine` 抛出 `需要评审者；或使用单思考者模式（single）`。已在 `resolveUnstartedPlan` 中为未开始的占位草稿线程显式传递 `single: true` 并补充回归单测。
 8. **全量 E2E 运行中 [`PlanCard.tsx`](../../src/renderer/PlanCard.tsx) `完全信任` 取消后竞态超时（43/44 通过，1 项超时）**：如第 1 节所述，`cancelTrust` 先卸载确认框再异步保存 `standard` 模式，高负载下被紧随其后的勾选操作触发竞态覆写；在 `4ae7d53` 中通过 `savePromiseRef` 跟踪并在保存及 `onChanged` 完成后再关闭确认面板，全量 44/44 E2E 一次稳定通过。
+9. **文档提交 `182088e` 的 macOS CI（Run [`42858405329`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42858405329)）暴露 [`DiscussionService.runTurn`](../../src/core/app/discussion-service.ts) `inflight` 时序竞态**：`macos-latest` 单测偶发 [`tests/stage5-discuss.test.ts#L320`](../../tests/stage5-discuss.test.ts#L320) 失败（`expected 'send_consent' to be 'adjudication'`），根因是 `runTurn` 在执行 `this.inflight.set(task.id, p)` 之前先进行了异步 `inspectDiscussion` 磁盘 IO，使 `launchTurn` 返回后立即调用的 `waitDiscussion` 在慢速 IO 下拿不到进行中的 Promise 而直接返回。已在 [`5a94366`](https://github.com/luckyjamesriver/ai-solo-studio/commit/5a94366) 让 `runTurn` 先挂起一个微任务再异步读取，确保 `launchTurn` 返回前同步完成 `this.inflight.set` 并补充同步回归测试。
 
 ### GitHub Actions 双平台 CI（`rebuild` 分支）
-- 验证运行（`e57afe1`，含全部代码、[`4ae7d53`](https://github.com/luckyjamesriver/ai-solo-studio/commit/4ae7d53) 竞态修复、全部 44 项 E2E、7 张阶段 5b 截图与本报告）：[https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346)
-  - `test (ubuntu-latest)`：`success`（1m3s，[job 129973983878](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346/job/129973983878)，含 `typecheck`、`npm test`、`build`）
-  - `test (macos-latest)`：`success`（4m47s，[job 129973983264](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346/job/129973983264)，含 `typecheck`、`npm test`、`build` 与 macOS 全部 Electron E2E）
+- 验证运行（`e57afe1`，首次双平台全绿，含 4 个阶段提交、[`4ae7d53`](https://github.com/luckyjamesriver/ai-solo-studio/commit/4ae7d53) 竞态修复、全部 44 项 E2E、7 张阶段 5b 截图）：[https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346)
+  - `test (ubuntu-latest)`：`success`（1m3s，[job 129973983878](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346/job/129973983878)）
+  - `test (macos-latest)`：`success`（4m47s，[job 129973983264](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/42857375346/job/129973983264)）
+- 含 `5a94366` 竞态修复后的推送运行：待完成回填。
