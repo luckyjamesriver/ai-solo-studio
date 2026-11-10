@@ -15,6 +15,7 @@ export type FakeStep =
   | { do: 'write'; path: string; content: string; ask?: boolean }
   | { do: 'delete'; path: string; ask?: boolean }
   | { do: 'ask'; request: Omit<PermissionRequest, 'id'>; onDeny?: 'continue' | 'fail' }
+  | { do: 'block'; request: Omit<PermissionRequest, 'id'> }
   | { do: 'hang' }
   | { do: 'exit'; code: number };
 
@@ -109,6 +110,16 @@ export class FakeExecutor implements Executor {
             const d = await ask(s.request);
             if (stopped) return;
             if (d === 'deny' && s.onDeny === 'fail') return 1;
+          } else if (s.do === 'block') {
+            const op: DeniedOperation = {
+              kind: s.request.kind,
+              ...(s.request.command ? { command: s.request.command } : {}),
+              ...(s.request.paths ? { paths: s.request.paths } : {}),
+              description: s.request.description,
+              risk: assess({ ...s.request, id: `b${++seq}` }, opts.cwd).level,
+            };
+            denied.push(op);
+            ch.push({ type: 'blocked', operation: op });
           } else if (s.do === 'hang') {
             await new Promise<void>((r) => (waker.fn = r));
             return;

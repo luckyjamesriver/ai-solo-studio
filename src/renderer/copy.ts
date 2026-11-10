@@ -41,6 +41,7 @@ export const COPY = {
   planNoAutoDecisionNote: '碰到没给的权限，那一步会被拦下，原因和影响写进验收结果。',
   startButton: '批准并开工',
   stopButton: '停止',
+  stopAfterNote: '停止后，已做的修改保留在副本里',
   incompleteTitle: 'AI 报告以下操作未能完成',
   incompleteNotice: '这是 AI 自己的说法，不一定完整，也不代表一定准确；请对照下面应用自己验证过的事实。',
   incompleteNone: 'AI 没有报告未完成的操作。（这同样只是 AI 自己的说法。）',

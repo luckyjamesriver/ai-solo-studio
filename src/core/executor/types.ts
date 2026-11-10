@@ -51,6 +51,7 @@ export type ExecutorEvent =
   | { type: 'message'; text: string; /** 适配器自己加的说明（不是 AI 的话） */ source?: 'host' }
   | { type: 'tool'; name: string; summary: string }
   | { type: 'permission_request'; request: PermissionRequest }
+  | { type: 'blocked'; operation: DeniedOperation }
   | { type: 'isolation'; info: IsolationInfo }
   | { type: 'log'; stream: 'stdout' | 'stderr'; text: string }
   | { type: 'exit'; outcome: ExitOutcome; /** 本次执行中被拒绝、因此没有执行的操作 */ denied?: DeniedOperation[] };

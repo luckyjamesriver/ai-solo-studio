@@ -90,7 +90,13 @@ export class TaskController {
 
   private async view(t: Task): Promise<TaskView> {
     const scripts = Object.keys(await detectScripts(this.o.repo)) as ('build' | 'test')[];
-    const v = buildTaskView(t, { scripts, running: this.active.has(t.id) || t.state === 'running' });
+    const running = this.active.has(t.id) || t.state === 'running';
+    const stoppedOrFailed =
+      ['stopped', 'timed_out', 'exec_failed'].includes(t.state) ||
+      (t.state === 'reviewing' && !!t.exit && (t.exit.kind !== 'exited' || t.exit.code !== 0));
+    const worktreeChanges =
+      t.worktree && (running || stoppedOrFailed) ? await G.diffSummary(t.worktree).catch(() => undefined) : undefined;
+    const v = buildTaskView(t, { scripts, running, ...(worktreeChanges ? { worktreeChanges } : {}) });
     const err = this.startErrors.get(t.id);
     if (err && !v.startFailure) v.startFailure = err;
     return v;

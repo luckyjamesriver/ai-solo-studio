@@ -8,7 +8,7 @@ import { TaskStore, type SaveOptions } from './store.js';
 import { RecordStore, StaleRunError, type OpenOptions } from '../persistence/index.js';
 import { resolveCapabilities, type Capabilities } from '../capabilities/model.js';
 import { acceptanceVersion, type OpLog, type Plan, type Task, type TimelineEntry } from './model.js';
-import type { Decision, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
+import type { Decision, DeniedOperation, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
 import {
   detectScripts,
@@ -23,6 +23,7 @@ import {
   type UncheckedKind,
 } from '../checks/scripts.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
+import { deniedText } from '../acceptance/texts.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
 import { recordProcess, verifyNoLiveExecutor, type ProcessProbe } from './process-check.js';
 
@@ -298,6 +299,9 @@ export class TaskRunner extends EventEmitter {
     delete t.effectivePermissions; // 每次开工重新记录实际生效的权限，不沿用上一次
     delete t.execProc;
     t.isolationWarnings = [];
+    t.denied = [];
+    t.deniedAcks = [];
+    const liveDenied: DeniedOperation[] = [];
     const run = this.opts.executor.start({
       cwd: t.worktree.path,
       prompt: prompt ?? buildPrompt(t),
@@ -322,6 +326,12 @@ export class TaskRunner extends EventEmitter {
         this.log(t, 'isolation', `隔离已核验：审批=${ev.info.approvalPolicy}，沙箱=${ev.info.sandbox}，模型=${ev.info.model ?? '未知'}，授予的 MCP=${ev.info.grantedMcp.join('、') || '无'}，指令来源=${ev.info.instructionSources.join('、') || '无'}${ev.info.permissions ? `；权限：${ev.info.permissions.summary}` : ''}${ev.info.warnings.length ? `；警告：${ev.info.warnings.join('；')}` : ''}`);
       }
       else if (ev.type === 'tool') this.log(t, 'tool', `${ev.name}: ${ev.summary}`);
+      else if (ev.type === 'blocked') {
+        liveDenied.push(ev.operation);
+        t.denied = [...liveDenied];
+        t.deniedAcks = t.denied.map(() => false);
+        this.log(t, 'permission', `已拦下：${deniedText(ev.operation)}`);
+      }
       else if (ev.type === 'permission_request') {
         const risk = assess(ev.request, t.worktree.path);
         if (canAutoApprove(risk, rule)) {
@@ -333,7 +343,7 @@ export class TaskRunner extends EventEmitter {
         }
       } else if (ev.type === 'exit') {
         t.exit = ev.outcome;
-        t.denied = ev.denied ?? [];
+        t.denied = ev.denied?.length ? ev.denied : liveDenied;
         t.deniedAcks = t.denied.map(() => false);
       }
       try {

@@ -33,7 +33,16 @@ export interface DisclosureState {
   accepted: { acceptedAt: string; services: string[] } | null;
 }
 
-export type { TaskView, ResultView, FactView, ExtraDirView } from '../core/app/task-view.js';
+export type {
+  TaskView,
+  ResultView,
+  FactView,
+  ExtraDirView,
+  BuildingView,
+  BuildingStep,
+  BuildingProblem,
+  ExecLogEntry,
+} from '../core/app/task-view.js';
 export type { TaskClassification, TaskStage, TaskOutcome, WorkbenchGroup } from '../core/app/task-state-view.js';
 export type { OpenProjectSummary, CloseProjectResult, WorkbenchEntry, WorkbenchNextAction, WorkbenchView } from '../core/app/open-projects.js';
 export type { UserAcceptanceView, ViewItem, ViewChange, ActionState, SaveRecordView, UncheckedConfirmView } from '../core/acceptance/view.js';

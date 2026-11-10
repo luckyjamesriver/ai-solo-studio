@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type { Task, TimelineEntry } from '../task/model.js';
 import type { TaskState } from '../task/state.js';
+import type { DeniedOperation } from '../executor/types.js';
+import type { FileChange } from '../git/git.js';
 import { describePermissions, type PermissionSummary } from './permission-text.js';
-import { extractIncomplete, type IncompleteReport } from '../acceptance/incomplete.js';
+import { extractIncomplete } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
-import { exitFailureText, notCheckedText } from '../acceptance/texts.js';
+import { deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
 import { classifyTaskState, type TaskClassification } from './task-state-view.js';
 
 /**
@@ -13,9 +16,31 @@ import { classifyTaskState, type TaskClassification } from './task-state-view.js
  * - 不含内部名词；实际生效的权限已翻译成中文；
  * - 诊断记录经过已知噪音过滤（原始 task.timeline 不改）。
  */
+import type { IncompleteReport } from '../acceptance/incomplete.js';
+
 export interface ExtraDirView {
   key: string;
   path: string;
+}
+export interface BuildingStep {
+  text: string;
+  status: 'done' | 'current';
+}
+export interface BuildingProblem {
+  text: string;
+  impact: string;
+}
+export interface ExecLogEntry {
+  at: string;
+  text: string;
+}
+export interface BuildingView {
+  currentStep: string;
+  steps: BuildingStep[];
+  problems: BuildingProblem[];
+  needsIntervention: string;
+  projectSafetyLine: string;
+  execLog: ExecLogEntry[];
 }
 export interface CheckPlanView {
   name: 'build' | 'test';
@@ -56,6 +81,8 @@ export interface TaskView {
   permissions: PermissionSummary | null;
   /** AI 的文字说明与“正在修改文件 / 正在运行命令”这类概括 */
   progress: string[];
+  /** 施工中视图专用结构（#05-build：步骤、被拦下的问题、项目安全性说明、折叠大白话日志） */
+  building: BuildingView;
   /** 没能开工的原因（权限核验失败、完全信任未确认等） */
   startFailure: string | null;
   running: boolean;
@@ -122,7 +149,139 @@ const START_FAILURE_MARKERS: [RegExp, string][] = [
 
 const checkStatusText = (s: string) => (s === 'passed' ? '通过' : s === 'failed' ? '未通过' : '未检查');
 
-export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[]; running: boolean }): TaskView {
+function formatClock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function extractSafeToolFiles(summary: string): string[] {
+  const out: string[] = [];
+  for (const part of summary.split('、')) {
+    const cleaned = part.trim().replace(/^(?:completed|in_progress|failed)\s+/i, '').replace(/^(?:update|add|create|delete|modify)\s+/i, '').trim();
+    const rel = safeRelPath(cleaned);
+    if (rel) out.push(rel);
+  }
+  return out;
+}
+
+function describeToolAction(text: string, worktreeChanges: FileChange[] = []): string {
+  const colon = text.indexOf(':');
+  const name = (colon === -1 ? text : text.slice(0, colon)).trim();
+  const summary = (colon === -1 ? '' : text.slice(colon + 1)).trim();
+  if (/run_command/.test(name)) return '正在运行命令（内容不显示）';
+  if (/file_change|^write$|^delete$/.test(name)) {
+    const files = extractSafeToolFiles(summary);
+    if (!files.length) return name === 'delete' ? '正在删除文件' : '正在修改文件';
+    const parts = files.map((rel) => {
+      const fc = worktreeChanges.find((c) => c.path === rel);
+      const verb = name === 'delete' || fc?.status === 'deleted' ? '删除' : fc?.status === 'added' ? '新增' : '修改';
+      if (fc && fc.additions !== null && fc.deletions !== null) {
+        return `${verb} ${rel}（+${fc.additions} −${fc.deletions} 行）`;
+      }
+      return `${verb} ${rel}`;
+    });
+    return parts.join('、');
+  }
+  return '正在使用其他工具';
+}
+
+function deniedImpact(d: DeniedOperation): string {
+  switch (d.kind) {
+    case 'network':
+      return '这个任务没有开启联网权限。AI 会在不联网的情况下继续尝试，不需要你处理。';
+    case 'write_file':
+    case 'delete_file':
+      return '超出允许修改范围的写操作已拦下，你的其他文件保持原样，不需要你处理。';
+    case 'run_command':
+      return '超出本次授权范围的命令已自动拦下，不会影响你的项目，不需要你处理。';
+    default:
+      return '该操作超出本次授权范围，已自动拦下，不需要你处理。';
+  }
+}
+
+function sliceLatestRun(timeline: TimelineEntry[]): TimelineEntry[] {
+  let startIdx = 0;
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const e = timeline[i]!;
+    if (e.kind === 'state' && e.text.endsWith('→ running')) {
+      startIdx = i;
+      break;
+    }
+  }
+  return timeline.slice(startIdx);
+}
+
+function buildBuildingView(task: Task, opts: { running: boolean; worktreeChanges?: FileChange[] }): BuildingView {
+  const caps = task.plan?.capabilities;
+  const fullTrust = caps?.constructionMode === 'full_trust';
+  const extraNames = (caps?.extraWritableDirs ?? []).map((d) => path.basename(d) || d);
+  const projectSafetyLine = fullTrust
+    ? '未受隔离保护；AI 可直接改动电脑上的文件'
+    : extraNames.length > 0
+      ? `你的项目不受影响；${extraNames.join('、')} 会被直接修改`
+      : '不受影响（在副本中施工）';
+
+  const entries = sliceLatestRun(task.timeline);
+  const rawSteps: string[] = [];
+  const execLog: ExecLogEntry[] = [];
+
+  for (const e of entries) {
+    const at = formatClock(e.at);
+    if (e.kind === 'isolation') {
+      execLog.push({ at, text: '已核对安全配置与生效权限' });
+      rawSteps.push('已核对运行环境与权限');
+    } else if (e.kind === 'message') {
+      const cleaned = scrubAiText(filterDiagnosticNoise(e.text)).trim();
+      if (!cleaned) continue;
+      execLog.push({ at, text: isHost(e) ? cleaned : cleaned });
+      if (!isHost(e)) rawSteps.push(cleaned);
+    } else if (e.kind === 'tool') {
+      const line = describeToolAction(e.text, opts.worktreeChanges);
+      execLog.push({ at, text: line });
+      rawSteps.push(line);
+    } else if (e.kind === 'check') {
+      const [name, status] = e.text.split(': ');
+      const line = `检查「${CHECK_LABEL[name as 'build' | 'test'] ?? name}」：${checkStatusText(status ?? '')}`;
+      execLog.push({ at, text: line });
+      rawSteps.push(line);
+    } else if (e.kind === 'permission') {
+      const cleaned = scrubAiText(filterDiagnosticNoise(e.text)).trim();
+      if (cleaned) execLog.push({ at, text: cleaned });
+    } else if (e.kind === 'error') {
+      const cleaned = scrubAiText(filterDiagnosticNoise(e.text)).trim();
+      if (cleaned) execLog.push({ at, text: cleaned });
+    }
+  }
+
+  const dedupSteps = rawSteps.filter((s, i) => s && s !== rawSteps[i - 1]);
+  const steps: BuildingStep[] = dedupSteps.map((text, idx) => ({
+    text,
+    status: opts.running && idx === dedupSteps.length - 1 ? 'current' : 'done',
+  }));
+  const currentStep = dedupSteps.at(-1) ?? '正在准备执行环境…';
+
+  const problems: BuildingProblem[] = (task.denied ?? []).map((d) => ({
+    text: deniedText(d),
+    impact: deniedImpact(d),
+  }));
+
+  if (problems.length > 0 && !entries.some((e) => e.kind === 'permission')) {
+    for (const p of problems) execLog.push({ at: formatClock(task.updatedAt), text: `已拦下：${p.text}` });
+  }
+
+  return {
+    currentStep,
+    steps,
+    problems,
+    needsIntervention: '不需要。完成后会自动进入「待我处理」。',
+    projectSafetyLine,
+    execLog,
+  };
+}
+
+export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[]; running: boolean; worktreeChanges?: FileChange[] }): TaskView {
   const caps = task.plan?.capabilities;
   const aiMessages = task.timeline.filter((e) => e.kind === 'message' && !isHost(e)).map((e) => e.text);
   const hostMessages = task.timeline.filter((e) => e.kind === 'message' && isHost(e)).map((e) => e.text);
@@ -201,6 +360,7 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     checks: opts.scripts.map((name) => ({ name, label: CHECK_LABEL[name] })),
     permissions: describePermissions(task.effectivePermissions),
     progress: compact,
+    building: buildBuildingView(task, opts),
     startFailure,
     running: opts.running,
     reconciled: task.reconciled ? `已核对：${task.reconciled.note}` : null,
