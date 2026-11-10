@@ -1504,6 +1504,42 @@ export class TaskRunner extends EventEmitter {
     if (dirty.length) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused, files: dirty };
     return null;
   }
+
+  /** 为任务绑定唯一讨论线程编号并持久化。 */
+  async bindThread(id: string, threadId: string): Promise<Task> {
+    const t = await this.load(id);
+    t.threadId = threadId;
+    await this.store.save(t);
+    return t;
+  }
+
+  /** 把已批准的讨论结论（风险、未复核标记、方案路径）与施工计划一并写入任务。 */
+  async applyApprovedDiscussion(
+    id: string,
+    payload: {
+      goal: string;
+      criteria: string[];
+      rejectedRisks: { title: string; reason: string; at: string }[];
+      planUnreviewed: boolean;
+      approvedPlanPath: string;
+      capabilities: Capabilities;
+    },
+  ): Promise<Task> {
+    const t = await this.load(id);
+    t.acceptedRisks = payload.rejectedRisks;
+    t.planUnreviewed = payload.planUnreviewed;
+    t.approvedPlanPath = payload.approvedPlanPath;
+    await this.store.save(t);
+    return this.setPlan(t.id, {
+      goal: payload.goal,
+      inScope: [],
+      outOfScope: [],
+      criteria: payload.criteria,
+      risks: [],
+      irreversible: [],
+      capabilities: payload.capabilities,
+    });
+  }
 }
 
 function formatShortTime(iso: string): string {

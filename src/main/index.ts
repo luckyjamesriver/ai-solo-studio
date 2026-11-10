@@ -7,7 +7,8 @@ import { validateProjectPath } from '../core/env/project-path.js';
 import { runHealthCheck, type HealthReport } from '../core/env/health.js';
 import * as G from '../core/git/git.js';
 import { CodexExecutor, VERIFIED_CODEX_VERSION } from '../core/executor/adapters/codex.js';
-import { DEV_PERSONAL_ENV } from '../core/thinking/claude-cli.js';
+import { ClaudeCliThinker, DEV_PERSONAL_ENV } from '../core/thinking/claude-cli.js';
+import { CodexThinker } from '../core/thinking/codex.js';
 import { RecentProjects } from '../core/app/recent.js';
 import { DisclosureStore, buildDisclosure } from '../core/app/disclosure.js';
 import { AppStore } from '../core/app/app-store.js';
@@ -97,9 +98,27 @@ async function createController(dir: string): Promise<TaskController> {
   const found = await resolveHostTools(TOOLS);
   setSupplementalPath(found.supplementalDirs);
   const codexPath = found.tools.codex?.path ?? 'codex';
+  const devPersonalEnabled = !app.isPackaged && process.env[DEV_PERSONAL_ENV] === '1';
   return new TaskController({
     repo: dir,
     makeExecutor: () => new CodexExecutor({ command: codexPath }),
+    makeThinkers: (preset) => {
+      if (preset === 'dev-personal') {
+        if (!devPersonalEnabled) throw new Error('未启用开发者预设（STUDIO_DEV_PERSONAL_CLAUDE=1）。');
+        return {
+          preset,
+          planner: new ClaudeCliThinker({ isPackaged: app.isPackaged }),
+          reviewer: new CodexThinker({ command: codexPath }),
+          single: false,
+        };
+      }
+      return {
+        preset: 'codex-single',
+        planner: new CodexThinker({ command: codexPath }),
+        single: true,
+      };
+    },
+    devPersonalEnabled,
     pickDirectory: async () => {
       const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: '选择允许 AI 修改的另一个文件夹' });
       return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
@@ -242,6 +261,16 @@ ipcMain.handle('tasks:stop', (_e, projectId: unknown, id: unknown) => controller
 ipcMain.handle('tasks:continue', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).continueTask(id));
 ipcMain.handle('tasks:rework', (_e, projectId: unknown, id: unknown, feedback: unknown) => controllerFor(projectId).reworkTask(id, feedback));
 ipcMain.handle('tasks:editReworkPermissions', (_e, projectId: unknown, id: unknown, feedback: unknown) => controllerFor(projectId).editReworkPermissions(id, feedback));
+// 阶段 5：讨论与流程引擎驱动（先校验 projectId 属于已打开项目表，再交对应项目的控制器处理）。
+ipcMain.handle('discussion:get', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).getDiscussionView(id));
+ipcMain.handle('discussion:start', (_e, projectId: unknown, id: unknown, preset: unknown) => controllerFor(projectId).startDiscussion(id, preset));
+ipcMain.handle('discussion:consent', (_e, projectId: unknown, id: unknown, service: unknown, allow: unknown) => controllerFor(projectId).confirmDiscussionSend(id, service, allow));
+ipcMain.handle('discussion:confirmReqs', (_e, projectId: unknown, id: unknown, edits: unknown) => controllerFor(projectId).confirmDiscussionRequirements(id, edits));
+ipcMain.handle('discussion:resolveFailure', (_e, projectId: unknown, id: unknown, choice: unknown, note: unknown) => controllerFor(projectId).resolveDiscussionFailure(id, choice, note));
+ipcMain.handle('discussion:adjudicate', (_e, projectId: unknown, id: unknown, kind: unknown, key: unknown, decision: unknown, reason: unknown) => controllerFor(projectId).adjudicateDiscussion(id, kind, key, decision, reason));
+ipcMain.handle('discussion:approve', (_e, projectId: unknown, id: unknown, decision: unknown) => controllerFor(projectId).decideDiscussionApproval(id, decision));
+ipcMain.handle('discussion:modifyReqs', (_e, projectId: unknown, id: unknown, newRequest: unknown) => controllerFor(projectId).modifyDiscussionRequirements(id, newRequest));
+ipcMain.handle('discussion:skip', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).skipDiscussion(id));
 // B4-2 + 阶段 2 多项目：验收、保存、放弃、撤销。先校验 projectId 属于已打开项目表，再交对应项目的控制器处理。
 ipcMain.handle('acceptance:get', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).getAcceptanceView(id));
 ipcMain.handle('acceptance:openPreview', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).openPreview(id, version));

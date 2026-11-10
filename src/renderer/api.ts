@@ -67,12 +67,28 @@ export type {
 } from '../core/acceptance/view.js';
 export type { ChangePreview, Hunk } from '../core/acceptance/snippets.js';
 export type { AcceptanceActionResult } from '../core/app/task-controller.js';
+export type { DiscussionView, DiscussionPreset } from '../core/app/discussion-service.js';
+export type {
+  BasisStatus,
+  ChatStepName,
+  Decision,
+  DiscussionBudgetView,
+  DiscussionStepStatus,
+  PauseKind,
+  PendingAdjudicationItem,
+  RequirementItem,
+  ReviewFindingRecord,
+  ReviewRecordSnapshot,
+  StepName,
+} from '../core/thinking/flow/index.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
+import type { DiscussionView } from '../core/app/discussion-service.js';
 import type { AcceptanceActionResult } from '../core/app/task-controller.js';
 import type { CloseProjectResult, OpenProjectSummary, WorkbenchView } from '../core/app/open-projects.js';
 import type { TaskView } from '../core/app/task-view.js';
 /** 计划表单：只有文字、模式与布尔值，没有任何路径 */
 export interface PlanInput { goal: string; criteria: string[]; mode: 'standard' | 'full_trust'; network: boolean }
+export interface RequirementEditInput { id?: string; text: string }
 export interface AddDirResult { view: TaskView; cancelled: boolean; rejected: string | null }
 
 interface StudioApi {
@@ -87,6 +103,15 @@ interface StudioApi {
   continueTask(projectId: string, id: string): Promise<TaskView>;
   reworkTask(projectId: string, id: string, feedback: string): Promise<TaskView>;
   editReworkPermissions(projectId: string, id: string, feedback: string): Promise<TaskView>;
+  getDiscussionView(projectId: string, id: string): Promise<DiscussionView>;
+  startDiscussion(projectId: string, id: string, preset: string): Promise<DiscussionView>;
+  confirmDiscussionSend(projectId: string, id: string, service: string, allow: boolean): Promise<DiscussionView>;
+  confirmDiscussionRequirements(projectId: string, id: string, edits: RequirementEditInput[]): Promise<DiscussionView>;
+  resolveDiscussionFailure(projectId: string, id: string, choice: string, note: string): Promise<DiscussionView>;
+  adjudicateDiscussion(projectId: string, id: string, kind: string, key: string, decision: string, reason: string): Promise<DiscussionView>;
+  decideDiscussionApproval(projectId: string, id: string, decision: string): Promise<{ view: DiscussionView; task: TaskView }>;
+  modifyDiscussionRequirements(projectId: string, id: string, newRequest: string): Promise<TaskView>;
+  skipDiscussion(projectId: string, id: string): Promise<TaskView>;
   getAcceptanceView(projectId: string, id: string): Promise<UserAcceptanceView>;
   openPreview(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   skipPreview(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;

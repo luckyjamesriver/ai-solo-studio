@@ -14,6 +14,8 @@ export type ThreadState =
   | 'rejected';
 
 export type StepName = 'requirements' | 'draft' | 'review' | 'revise';
+export type ChatStepName = 'chat_planner' | 'chat_reviewer';
+export type AnyStepName = StepName | ChatStepName;
 
 export interface RequirementItem {
   id: string; // R1、R2…，冻结后稳定
@@ -22,7 +24,7 @@ export interface RequirementItem {
 
 /** 一次调用思考者 = 一条独立的尝试记录，只追加，不覆盖。 */
 export interface AttemptRecord {
-  step: StepName;
+  step: AnyStepName;
   /** 该步骤内的尝试序号，从 1 开始 */
   n: number;
   thinkerId: string;

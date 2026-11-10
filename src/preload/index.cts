@@ -26,6 +26,16 @@ const api = {
   continueTask: (projectId: string, id: string) => ipcRenderer.invoke('tasks:continue', projectId, id),
   reworkTask: (projectId: string, id: string, feedback: string) => ipcRenderer.invoke('tasks:rework', projectId, id, feedback),
   editReworkPermissions: (projectId: string, id: string, feedback: string) => ipcRenderer.invoke('tasks:editReworkPermissions', projectId, id, feedback),
+  // 阶段 5：讨论与流程引擎驱动（无路径或宽松参数；仅传项目编号、任务编号与明确裁决选项）
+  getDiscussionView: (projectId: string, id: string) => ipcRenderer.invoke('discussion:get', projectId, id),
+  startDiscussion: (projectId: string, id: string, preset: string) => ipcRenderer.invoke('discussion:start', projectId, id, preset),
+  confirmDiscussionSend: (projectId: string, id: string, service: string, allow: boolean) => ipcRenderer.invoke('discussion:consent', projectId, id, service, allow),
+  confirmDiscussionRequirements: (projectId: string, id: string, edits: RequirementEditInput[]) => ipcRenderer.invoke('discussion:confirmReqs', projectId, id, edits),
+  resolveDiscussionFailure: (projectId: string, id: string, choice: string, note: string) => ipcRenderer.invoke('discussion:resolveFailure', projectId, id, choice, note),
+  adjudicateDiscussion: (projectId: string, id: string, kind: string, key: string, decision: string, reason: string) => ipcRenderer.invoke('discussion:adjudicate', projectId, id, kind, key, decision, reason),
+  decideDiscussionApproval: (projectId: string, id: string, decision: string) => ipcRenderer.invoke('discussion:approve', projectId, id, decision),
+  modifyDiscussionRequirements: (projectId: string, id: string, newRequest: string) => ipcRenderer.invoke('discussion:modifyReqs', projectId, id, newRequest),
+  skipDiscussion: (projectId: string, id: string) => ipcRenderer.invoke('discussion:skip', projectId, id),
   // B4-2 + 阶段 2 多项目：验收、保存、放弃、撤销。参数只有已打开项目编号、任务编号、条目编号（c0 / d0）与验收版本；没有路径、分支或 Git 参数。
   getAcceptanceView: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:get', projectId, id),
   openPreview: (projectId: string, id: string, version: string) => ipcRenderer.invoke('acceptance:openPreview', projectId, id, version),
@@ -50,6 +60,12 @@ interface PlanInput {
   criteria: string[];
   mode: 'standard' | 'full_trust';
   network: boolean;
+}
+
+/** 需求条目确认编辑项 */
+interface RequirementEditInput {
+  id?: string;
+  text: string;
 }
 
 contextBridge.exposeInMainWorld('studio', api);

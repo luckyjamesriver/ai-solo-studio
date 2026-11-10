@@ -17,6 +17,7 @@ export type AttemptFailureChoice = 'retry' | 'stop' | { retryWith: string };
  */
 export interface FlowUI {
   notify?(text: string): void;
+  onStep?(step: StepName, role: 'planner' | 'reviewer'): void;
   confirmSend(service: string): Promise<boolean | undefined>;
   confirmRequirements(items: RequirementItem[]): Promise<{ id?: string; text: string }[] | undefined>;
   onAttemptFailed(info: { step: StepName; attempt: AttemptRecord; thread: ThreadRecord }): Promise<AttemptFailureChoice | undefined>;
@@ -164,6 +165,7 @@ export class FlowEngine {
       const startedAt = this.now();
       let result: ThinkResult;
       try {
+        this.o.ui.onStep?.(step, role);
         result = await thinker.think(req);
       } catch (e) {
         result = { status: 'failed', rawText: '', sent: [], service: thinker.service, error: `思考者抛出异常：${(e as Error).message}` };

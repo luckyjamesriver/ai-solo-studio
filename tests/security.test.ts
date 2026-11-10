@@ -277,21 +277,25 @@ describe('安全基线（防回归）', () => {
     // 阶段 2 第一部分修订（A3，仅同步方法清单/参数形态）：每个任务、项目状态与验收方法最前面加 projectId: string，并登记 projects:listOpen / projects:close / workbench:get 三个方法，不得出现宽松类型。
     // 阶段 3 修订（仅按前例同步登记 continueTask，参数为 projectId: string, id: string，不放宽任何参数形态）
     // 阶段 4 修订（按前例同步登记 rejectCriterion / reworkTask / editReworkPermissions，参数形态固定且带 projectId，不放宽任何约束）
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'reworkTask', 'editReworkPermissions', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
-    expect(entries).toHaveLength(36);
-    const SHAPES = ['', 'id: string', 'projectId: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string'];
+    // 阶段 5a 修订（按前例同步登记 9 个讨论与流程引擎驱动方法，参数形态固定且带 projectId，无路径参数）
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'initProject', 'getDisclosure', 'acceptDisclosure', 'listTasks', 'createTask', 'getTask', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'stopTask', 'continueTask', 'reworkTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'revealProject']);
+    expect(entries).toHaveLength(45);
+    const SHAPES = ['', 'id: string', 'projectId: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string', 'projectId: string, id: string, preset: string', 'projectId: string, id: string, service: string, allow: boolean', 'projectId: string, id: string, edits: RequirementEditInput[]', 'projectId: string, id: string, choice: string, note: string', 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string', 'projectId: string, id: string, decision: string', 'projectId: string, id: string, newRequest: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
       expect(e.params, `${e.name} 不得有路径类参数`).not.toMatch(/\b(?:path|paths|dir|dirs|folder|file|filename|cwd|url)\b\s*:/i);
     }
-    // 计划表单类型里同样没有路径字段
+    // 计划表单与需求条目类型里同样没有路径字段
     const planType = /interface PlanInput \{([\s\S]*?)\}/.exec(preload)?.[1] ?? '';
     expect(planType).toMatch(/goal: string/);
     expect(planType).not.toMatch(/path|dir|folder|file|cwd|url/i);
+    const reqEditType = /interface RequirementEditInput \{([\s\S]*?)\}/.exec(preload)?.[1] ?? '';
+    expect(reqEditType).toMatch(/text: string/);
+    expect(reqEditType).not.toMatch(/path|dir|folder|file|cwd|url/i);
     // 每个 IPC 通道在主进程中都有处理函数，且主进程处理函数的参数形态同样固定
     const main = read('src/main/index.ts');
     for (const e of entries) expect(main, e.channel).toContain(`ipcMain.handle('${e.channel}'`);
-    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, projectId: unknown', '_e, consent: unknown', '_e, projectId: unknown, request: unknown', '_e, projectId: unknown, id: unknown', '_e, projectId: unknown, id: unknown, feedback: unknown', '_e, projectId: unknown, id: unknown, plan: unknown', '_e, projectId: unknown, id: unknown, key: unknown', '_e, projectId: unknown, id: unknown, ack: unknown', '_e, projectId: unknown, id: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown, reason: unknown'];
+    const MAIN_SHAPES = ['', '_e', '_e, id: unknown', '_e, projectId: unknown', '_e, consent: unknown', '_e, projectId: unknown, request: unknown', '_e, projectId: unknown, id: unknown', '_e, projectId: unknown, id: unknown, feedback: unknown', '_e, projectId: unknown, id: unknown, plan: unknown', '_e, projectId: unknown, id: unknown, key: unknown', '_e, projectId: unknown, id: unknown, ack: unknown', '_e, projectId: unknown, id: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown', '_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown, reason: unknown', '_e, projectId: unknown, id: unknown, preset: unknown', '_e, projectId: unknown, id: unknown, service: unknown, allow: unknown', '_e, projectId: unknown, id: unknown, edits: unknown', '_e, projectId: unknown, id: unknown, choice: unknown, note: unknown', '_e, projectId: unknown, id: unknown, kind: unknown, key: unknown, decision: unknown, reason: unknown', '_e, projectId: unknown, id: unknown, decision: unknown', '_e, projectId: unknown, id: unknown, newRequest: unknown'];
     for (const m of main.matchAll(/ipcMain\.handle\('[^']+',\s*(?:async\s*)?\(([^)]*)\)/g)) {
       expect(MAIN_SHAPES, m[1]).toContain(m[1]);
     }
@@ -469,6 +473,15 @@ describe('安全基线（防回归）', () => {
         continueTask: 'projectId: string, id: string',
         reworkTask: 'projectId: string, id: string, feedback: string',
         editReworkPermissions: 'projectId: string, id: string, feedback: string',
+        getDiscussionView: 'projectId: string, id: string',
+        startDiscussion: 'projectId: string, id: string, preset: string',
+        confirmDiscussionSend: 'projectId: string, id: string, service: string, allow: boolean',
+        confirmDiscussionRequirements: 'projectId: string, id: string, edits: RequirementEditInput[]',
+        resolveDiscussionFailure: 'projectId: string, id: string, choice: string, note: string',
+        adjudicateDiscussion: 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string',
+        decideDiscussionApproval: 'projectId: string, id: string, decision: string',
+        modifyDiscussionRequirements: 'projectId: string, id: string, newRequest: string',
+        skipDiscussion: 'projectId: string, id: string',
         getAcceptanceView: 'projectId: string, id: string',
         openPreview: 'projectId: string, id: string, version: string',
         skipPreview: 'projectId: string, id: string, version: string',
@@ -796,8 +809,8 @@ describe('安全基线（防回归）', () => {
     it('每个接收 projectId 的 IPC 处理函数都先校验 projectId 在已打开项目表中', () => {
       const handlerPattern = /ipcMain\.handle\('([^']+)',\s*\(([^)]*)\)\s*=>\s*([^\n]+)\);/g;
       const guarded = [...main.matchAll(handlerPattern)].filter((m) => /\bprojectId\b/.test(m[2]!));
-      // 1 个 projects:close + 1 个 project:status + 11 个 tasks:* + 13 个 acceptance:* = 26 个带 projectId 的处理函数
-      expect(guarded).toHaveLength(26);
+      // 1 个 projects:close + 1 个 project:status + 11 个 tasks:* + 9 个 discussion:* + 13 个 acceptance:* = 35 个带 projectId 的处理函数
+      expect(guarded).toHaveLength(35);
       const validBody = /^(?:controllerFor\(projectId\)\.\w+\(|projectStatus\(projectId\)|openProjects\.close\(projectId\))/;
       for (const m of guarded) {
         expect(m[3], `handler ${m[1]} 必须首先通过 openProjects 校验 projectId`).toMatch(validBody);
@@ -957,6 +970,80 @@ describe('安全基线（防回归）', () => {
       for (const f of rendererFiles) {
         expect(read(f), f).not.toMatch(/\brawOutput\b|\bcurrentChecks\b/);
       }
+    });
+  });
+
+  describe('阶段 5a：思考流程暂停恢复与隔离安全边界（只增不减）', () => {
+    it('所有讨论 IPC 均严格校验任务编号、参数边界、开发者预设可用性与 manualReview 状态', async () => {
+      const os = await import('node:os');
+      const { TaskController } = await import('../src/core/app/task-controller.js');
+      const { TaskPrefs } = await import('../src/core/app/prefs.js');
+      const { FakeExecutor } = await import('../src/core/executor/adapters/fake.js');
+      const { FakeThinker } = await import('../src/core/thinking/fake.js');
+      const { execFileSync } = await import('node:child_process');
+      const { TaskStore } = await import('../src/core/task/store.js');
+
+      const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-sec-s5-')));
+      const data = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-sec-s5d-')));
+      try {
+        execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+        fs.writeFileSync(path.join(repo, 'index.html'), '<h1>v0</h1>\n');
+        execFileSync('git', ['add', '-A'], { cwd: repo });
+        execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+
+        const ctl = new TaskController({
+          repo,
+          makeExecutor: () => new FakeExecutor([]),
+          pickDirectory: async () => null,
+          prefs: new TaskPrefs(data),
+          devPersonalEnabled: false,
+          makeThinkers: (preset) => ({
+            preset,
+            planner: new FakeThinker([], { available: true }, { id: 'codex', service: 'Codex' }),
+            single: true,
+          }),
+        });
+
+        await expect(ctl.getDiscussionView('../evil')).rejects.toThrow(/无效的参数/);
+        await expect(ctl.startDiscussion('../evil', 'codex-single')).rejects.toThrow(/无效的参数/);
+        await expect(ctl.skipDiscussion('../evil')).rejects.toThrow(/无效的参数/);
+
+        const draft = await ctl.create('讨论边界任务');
+        await expect(ctl.startDiscussion(draft.id, 'evil-preset')).rejects.toThrow(/无效的参数/);
+        await expect(ctl.startDiscussion(draft.id, 'dev-personal')).rejects.toThrow(/未启用开发者预设/);
+        await expect(ctl.confirmDiscussionSend(draft.id, 'Codex', 'yes')).rejects.toThrow(/无效的参数/);
+        await expect(ctl.confirmDiscussionRequirements(draft.id, [])).rejects.toThrow(/至少保留一条需求条目/);
+        await expect(ctl.confirmDiscussionRequirements(draft.id, [{ id: '../x', text: 'a' }])).rejects.toThrow(/无效的参数/);
+        await expect(ctl.resolveDiscussionFailure(draft.id, 'retryWith', '   ')).rejects.toThrow(/请先填写补充说明/);
+        await expect(ctl.adjudicateDiscussion(draft.id, 'finding', '0', 'reject', '  ')).rejects.toThrow(/驳回意见必须写一句理由/);
+        await expect(ctl.adjudicateDiscussion(draft.id, 'finding', '../0', 'accept', 'ok')).rejects.toThrow(/无效的参数/);
+        await expect(ctl.modifyDiscussionRequirements(draft.id, '   ')).rejects.toThrow(/不能为空/);
+
+        const locked = await ctl.create('锁定讨论任务');
+        const ts = new TaskStore(repo);
+        const raw = (await ts.get(locked.id))!;
+        raw.manualReview = { reason: '恢复未确认', at: new Date().toISOString() };
+        await ts.save(raw);
+        await expect(ctl.startDiscussion(locked.id, 'codex-single')).rejects.toThrow(/项目状态异常/);
+        await expect(ctl.confirmDiscussionSend(locked.id, 'Codex', true)).rejects.toThrow(/项目状态异常/);
+        await expect(ctl.skipDiscussion(locked.id)).rejects.toThrow(/项目状态异常/);
+        await expect(ctl.modifyDiscussionRequirements(locked.id, '改需求')).rejects.toThrow(/项目状态异常/);
+      } finally {
+        const { RecordStore } = await import('../src/core/persistence/index.js');
+        await RecordStore.closeAll().catch(() => undefined);
+        fs.rmSync(repo, { recursive: true, force: true });
+        fs.rmSync(data, { recursive: true, force: true });
+      }
+    });
+
+    it('渲染层与 discussion-service 不出现开发者预设自动开启或伪造费用字面量', () => {
+      const ds = read('src/core/app/discussion-service.ts');
+      const drv = read('src/core/thinking/flow/driver.ts');
+      expect(ds).not.toMatch(/DEV_PERSONAL_ENV/);
+      expect(drv).not.toMatch(/DEV_PERSONAL_ENV/);
+      // driver 里未拿到 costUsd 时必须返回 null
+      expect(drv).toContain('const knownCostUsd = costAttempts.length > 0 ?');
+      expect(drv).toContain(': null;');
     });
   });
 });

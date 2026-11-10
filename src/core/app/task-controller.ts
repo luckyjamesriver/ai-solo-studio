@@ -14,6 +14,13 @@ import type { Executor } from '../executor/types.js';
 import type { Task } from '../task/model.js';
 import { buildTaskView, extraDirKey, type TaskView } from './task-view.js';
 import type { ModePreference, TaskPrefs } from './prefs.js';
+import {
+  convertApprovedPlanToTaskPlan,
+  DiscussionService,
+  type DiscussionPreset,
+  type DiscussionView,
+  type ResolvedThinkerSet,
+} from './discussion-service.js';
 
 export interface PlanInput {
   goal: string;
@@ -41,6 +48,10 @@ export interface ControllerOptions {
   storeOptions?: OpenOptions;
   /** 外部打开预览的回调（主进程中调用 Electron shell；测试中可注入模拟） */
   openPreview?: (target: { kind: 'web' | 'finder'; targetPath: string }) => Promise<void>;
+  /** 讨论阶段思考者构造工厂（默认 Codex 单思考者；主进程按环境注入 dev-personal） */
+  makeThinkers?: (preset: DiscussionPreset) => ResolvedThinkerSet;
+  /** 是否开启开发者预设（STUDIO_DEV_PERSONAL_CLAUDE=1 且未打包） */
+  devPersonalEnabled?: boolean;
 }
 
 const EDITABLE = ['draft', 'clarifying', 'planned', 'approved'];
@@ -51,6 +62,7 @@ const EDITABLE = ['draft', 'clarifying', 'planned', 'approved'];
  */
 export class TaskController {
   private runner: TaskRunner | undefined;
+  private discussion: DiscussionService | undefined;
   private readonly active = new Set<string>();
   private readonly startErrors = new Map<string, string>();
 
@@ -66,13 +78,22 @@ export class TaskController {
     return this.runner;
   }
 
+  private d(): DiscussionService {
+    this.discussion ??= new DiscussionService({
+      repo: this.o.repo,
+      ...(this.o.devPersonalEnabled ? { devPersonalEnabled: true } : {}),
+      ...(this.o.makeThinkers ? { makeThinkers: this.o.makeThinkers } : {}),
+    });
+    return this.discussion;
+  }
+
   /** 打开并取得本项目的持久化存储实例（取得 APFS/目录锁并完成存储对账）。 */
   openRecordStore() {
     return this.r().store.recordStore();
   }
 
   isTaskActive(id: string): boolean {
-    return this.active.has(id) || this.ops.has(id);
+    return this.active.has(id) || this.ops.has(id) || this.d().isRunning(id);
   }
 
   async listTasksRaw(): Promise<Task[]> {
@@ -80,12 +101,12 @@ export class TaskController {
     return this.r().store.list();
   }
 
-  /** 是否仍有任务在施工、启停或保存/撤销/放弃等独占操作中。 */
+  /** 是否仍有任务在施工、讨论或保存/撤销/放弃等独占操作中。 */
   async hasRunningTasks(): Promise<boolean> {
     if (this.active.size > 0 || this.ops.size > 0) return true;
     await this.ready();
     const tasks = await this.r().store.list();
-    return tasks.some((t) => t.state === 'running' || this.r().isBusy(t.id));
+    return tasks.some((t) => t.state === 'running' || this.r().isBusy(t.id) || this.d().isRunning(t.id));
   }
 
   private async view(t: Task): Promise<TaskView> {
@@ -124,7 +145,10 @@ export class TaskController {
     if (typeof request !== 'string' || !request.trim()) throw new Error('请先写下你想让 AI 做什么。');
     if (request.length > 4000) throw new Error('需求太长了，请精简到 4000 字以内。');
     await this.ready();
-    return this.view(await this.r().create(request.trim()));
+    const t = await this.r().create(request.trim());
+    const threadId = await this.d().ensureBoundThread(t);
+    const bound = await this.r().bindThread(t.id, threadId);
+    return this.view(bound);
   }
 
   async get(id: unknown): Promise<TaskView> {
@@ -593,6 +617,197 @@ export class TaskController {
       const r = await this.r().retryCleanup(t.id);
       return r.ok ? { ok: true, message: okMessage(r.task) } : { ok: false, ...mapFailure(r) };
     });
+  }
+
+  // ───────────────────────── 阶段 5：讨论与流程引擎驱动 ─────────────────────────
+
+  private async ensureTaskThread(t: Task): Promise<string> {
+    if (t.threadId) return t.threadId;
+    const threadId = await this.d().ensureBoundThread(t);
+    await this.r().bindThread(t.id, threadId);
+    t.threadId = threadId;
+    return threadId;
+  }
+
+  async waitDiscussion(id: unknown): Promise<void> {
+    const tid = this.checkArg(TASK_ID, id);
+    await this.d().waitIdle(tid);
+  }
+
+  async getDiscussionView(id: unknown): Promise<DiscussionView> {
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    await this.ensureTaskThread(t);
+    return this.d().getView(t);
+  }
+
+  async startDiscussion(id: unknown, preset: unknown): Promise<DiscussionView> {
+    if (preset !== 'codex-single' && preset !== 'dev-personal') throw new Error(VIEW_TEXT.invalidArgument);
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (!['draft', 'clarifying'].includes(t.state)) throw new Error('只有讨论中的任务才能开始或继续讨论。');
+    if (this.d().isRunning(t.id)) throw new Error('讨论正在进行中，请稍候。');
+    const threadId = await this.ensureTaskThread(t);
+    const current = await this.d().getView(t);
+    if (current.preset !== preset) {
+      await this.d().setPresetBeforeStart(t, preset);
+    }
+    this.d().launchTurn(t, threadId, preset);
+    return this.d().getView(t);
+  }
+
+  async confirmDiscussionSend(id: unknown, service: unknown, allow: unknown): Promise<DiscussionView> {
+    if (typeof service !== 'string' || !service.trim() || service.length > 200) throw new Error(VIEW_TEXT.invalidArgument);
+    if (typeof allow !== 'boolean') throw new Error(VIEW_TEXT.invalidArgument);
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    const threadId = await this.ensureTaskThread(t);
+    const cur = await this.d().getView(t);
+    if (!allow) {
+      await this.d().runTurnSync(t, threadId, cur.preset, { sendConsent: { service, allow: false } });
+    } else {
+      this.d().launchTurn(t, threadId, cur.preset, { sendConsent: { service, allow: true } });
+    }
+    return this.d().getView(t);
+  }
+
+  async confirmDiscussionRequirements(id: unknown, edits: unknown): Promise<DiscussionView> {
+    if (!Array.isArray(edits) || edits.length === 0 || edits.length > 50) throw new Error('请至少保留一条需求条目。');
+    const parsed: { id?: string; text: string }[] = [];
+    for (const raw of edits) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(VIEW_TEXT.invalidArgument);
+      const item = raw as { id?: unknown; text?: unknown };
+      if (item.id !== undefined && (typeof item.id !== 'string' || !/^R\d{1,3}$/.test(item.id))) {
+        throw new Error(VIEW_TEXT.invalidArgument);
+      }
+      if (typeof item.text !== 'string') throw new Error(VIEW_TEXT.invalidArgument);
+      const text = item.text.trim().slice(0, 500);
+      if (text) parsed.push({ ...(item.id ? { id: item.id } : {}), text });
+    }
+    if (parsed.length === 0) throw new Error('确认后的需求条目不能为空，请至少保留一条。');
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    const threadId = await this.ensureTaskThread(t);
+    const cur = await this.d().getView(t);
+    if (cur.pauseAt !== 'requirements_confirmation') throw new Error('当前不处于需求条目确认阶段。');
+    this.d().launchTurn(t, threadId, cur.preset, { requirements: parsed });
+    return this.d().getView(t);
+  }
+
+  async resolveDiscussionFailure(id: unknown, choice: unknown, note: unknown): Promise<DiscussionView> {
+    if (choice !== 'retry' && choice !== 'retryWith' && choice !== 'stop') throw new Error(VIEW_TEXT.invalidArgument);
+    if (typeof note !== 'string' || note.length > 2000) throw new Error(VIEW_TEXT.invalidArgument);
+    if (choice === 'retryWith' && !note.trim()) throw new Error('请先填写补充说明再重试。');
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    const threadId = await this.ensureTaskThread(t);
+    const cur = await this.d().getView(t);
+    if (cur.pauseAt !== 'attempt_failed') throw new Error('当前没有待处理的失败尝试。');
+    if (choice === 'stop') {
+      await this.d().runTurnSync(t, threadId, cur.preset, { attemptFailure: 'stop' });
+    } else {
+      this.d().launchTurn(t, threadId, cur.preset, {
+        attemptFailure: choice === 'retryWith' ? { retryWith: note.trim() } : 'retry',
+      });
+    }
+    return this.d().getView(t);
+  }
+
+  async adjudicateDiscussion(
+    id: unknown,
+    kind: unknown,
+    key: unknown,
+    decision: unknown,
+    reason: unknown,
+  ): Promise<DiscussionView> {
+    if (kind !== 'finding' && kind !== 'scope') throw new Error(VIEW_TEXT.invalidArgument);
+    if (typeof key !== 'string' || !/^[A-Za-z0-9:_-]{1,64}$/.test(key)) throw new Error(VIEW_TEXT.invalidArgument);
+    if (decision !== 'accept' && decision !== 'reject') throw new Error(VIEW_TEXT.invalidArgument);
+    if (typeof reason !== 'string' || reason.length > 1000) throw new Error(VIEW_TEXT.invalidArgument);
+    const trimmed = reason.trim();
+    if (decision === 'reject' && !trimmed) throw new Error('驳回意见必须写一句理由。');
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    const threadId = await this.ensureTaskThread(t);
+    const cur = await this.d().getView(t);
+    if (cur.state !== 'awaiting_approval') throw new Error('当前不处于意见裁决阶段。');
+    await this.d().runTurnSync(t, threadId, cur.preset, {
+      adjudication: { kind, key, decision, reason: trimmed || '确认接受' },
+    });
+    return this.d().getView(t);
+  }
+
+  async decideDiscussionApproval(id: unknown, decision: unknown): Promise<{ view: DiscussionView; task: TaskView }> {
+    if (decision !== 'approve' && decision !== 'reject' && decision !== 'stop') throw new Error(VIEW_TEXT.invalidArgument);
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (!['draft', 'clarifying'].includes(t.state)) throw new Error('只有讨论中的任务才能执行方案批准操作。');
+    const threadId = await this.ensureTaskThread(t);
+    const cur = await this.d().getView(t);
+    if (cur.state !== 'awaiting_approval') throw new Error('当前尚未到达方案批准节点。');
+    const outcome = await this.d().runTurnSync(t, threadId, cur.preset, { approval: decision });
+    if (outcome.kind === 'approved') {
+      const payload = await this.d().readApprovedPayload(threadId);
+      const converted = convertApprovedPlanToTaskPlan(payload);
+      const mode = await this.preferredMode();
+      await this.r().applyApprovedDiscussion(t.id, {
+        goal: converted.goal,
+        criteria: converted.criteria,
+        rejectedRisks: converted.rejectedRisks,
+        planUnreviewed: converted.single,
+        approvedPlanPath: converted.planPath,
+        capabilities: resolveCapabilities({ constructionMode: mode, externalNetwork: 'off', extraWritableDirs: [] }),
+      });
+    }
+    const updatedTask = await this.load(t.id);
+    return { view: await this.d().getView(updatedTask), task: await this.view(updatedTask) };
+  }
+
+  async modifyDiscussionRequirements(id: unknown, newRequest: unknown): Promise<TaskView> {
+    if (typeof newRequest !== 'string' || !newRequest.trim()) throw new Error('修改后的需求不能为空。');
+    if (newRequest.length > 4000) throw new Error('需求太长了，请精简到 4000 字以内。');
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (!['draft', 'clarifying'].includes(t.state)) throw new Error('只有讨论中的任务才能修改需求并重开讨论。');
+    const threadId = await this.ensureTaskThread(t);
+    const cur = await this.d().getView(t);
+    await this.d().stopThread(t.id, threadId, '用户修改需求，终止当前线程并以修改后的需求重新开始');
+    await this.r().discard(t.id);
+
+    const nextTask = await this.r().create(newRequest.trim());
+    const nextThreadId = await this.d().ensureBoundThread(nextTask, cur.preset);
+    const bound = await this.r().bindThread(nextTask.id, nextThreadId);
+    return this.view(bound);
+  }
+
+  async skipDiscussion(id: unknown): Promise<TaskView> {
+    const tid = this.checkArg(TASK_ID, id);
+    const t = await this.load(tid);
+    if (t.manualReview) throw new Error(MESSAGES.abnormal);
+    if (t.state !== 'draft' && t.state !== 'clarifying') throw new Error('只有尚未进入施工计划的任务才能跳过讨论。');
+    if (this.d().isRunning(t.id)) throw new Error('思考者正在运行，请稍候再跳过。');
+    if (t.threadId) {
+      await this.d().stopThread(t.id, t.threadId, '用户跳过讨论，直接填写施工计划');
+    }
+    const mode = await this.preferredMode();
+    const caps = resolveCapabilities({ constructionMode: mode, externalNetwork: 'off', extraWritableDirs: [] });
+    const planned = await this.r().setPlan(t.id, {
+      goal: t.request,
+      inScope: [],
+      outOfScope: [],
+      criteria: [],
+      risks: [],
+      irreversible: [],
+      capabilities: caps,
+    });
+    return this.view(planned);
   }
 }
 

@@ -176,6 +176,12 @@ export interface Task {
   revision?: number;
   /** 记录当前的运行编号：由存储层在读取后填入；开工时换成新的，旧运行的回传一律被拒绝 */
   runId?: string;
+  /** 讨论阶段绑定的唯一思考线程编号（一个任务对应一个线程） */
+  threadId?: string;
+  /** 由单思考者讨论批准转换而来的计划：界面任何展示该方案/计划的地方均标注「未经独立评审」 */
+  planUnreviewed?: boolean;
+  /** 讨论批准后写入的方案文档相对路径（如 docs/plans/...） */
+  approvedPlanPath?: string;
   request: string;
   state: TaskState;
   plan?: Plan;
