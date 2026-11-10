@@ -29,6 +29,7 @@ import {
   type StepName,
 } from '../thinking/flow/index.js';
 import type { Task } from '../task/model.js';
+import type { DiscussionClassifyHint } from './task-state-view.js';
 
 export type DiscussionPreset = 'codex-single' | 'dev-personal';
 
@@ -177,6 +178,36 @@ export class DiscussionService {
 
   lastError(taskId: string): string | null {
     return this.errors.get(taskId) ?? null;
+  }
+
+  /** 只读提取讨论摘要供任务列表/工作台分组，线程文件缺失时不阻塞视图构建。 */
+  async getClassifyHint(task: Task): Promise<DiscussionClassifyHint | undefined> {
+    if (!['draft', 'clarifying'].includes(task.state)) return undefined;
+    if (this.inflight.has(task.id)) {
+      return {
+        pauseAt: 'ready',
+        running: true,
+        activeStepText: this.activeText(task.id),
+        pauseMessage: null,
+        pendingAdjudicationsCount: 0,
+      };
+    }
+    if (!task.threadId) return undefined;
+    try {
+      const snap = await inspectDiscussion(this.opts.repo, task.threadId, {
+        pendingConsentService: this.consentPending.get(task.id) ?? null,
+        consentStore: this.consent,
+      });
+      return {
+        pauseAt: snap.pauseAt,
+        running: false,
+        activeStepText: null,
+        pauseMessage: snap.pauseMessage,
+        pendingAdjudicationsCount: snap.pendingAdjudications.length,
+      };
+    } catch {
+      return undefined;
+    }
   }
 
   private resolveSet(preset: DiscussionPreset): ResolvedThinkerSet {

@@ -305,15 +305,15 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
       const cls = classifyTaskState(baseTask(s));
       expect(cls.impact.length, s).toBeGreaterThan(0);
       expect(cls.statusTag.length, s).toBeGreaterThan(0);
-      expect(['planning', 'building', 'reviewing', 'ended']).toContain(cls.stage);
+      expect(['discussing', 'building', 'reviewing', 'ended']).toContain(cls.stage);
       if (cls.stage !== 'ended') expect(cls.outcome).toBeNull();
       else expect(['saved', 'discarded', 'undone', 'terminated']).toContain(cls.outcome);
     }
 
-    expect(classifyTaskState(baseTask('draft'))).toMatchObject({ stage: 'planning', stageLabel: '计划', boardColumn: 'planning', runStatus: '待配置计划', outcome: null, workbenchGroup: 'needs_decision' });
-    expect(classifyTaskState(baseTask('clarifying'))).toMatchObject({ stage: 'planning', stageLabel: '计划', boardColumn: 'planning', runStatus: '等你裁决', outcome: null, workbenchGroup: 'needs_decision' });
-    expect(classifyTaskState(baseTask('planned'))).toMatchObject({ stage: 'planning', stageLabel: '计划', boardColumn: 'planning', runStatus: '待开工确认', outcome: null, workbenchGroup: 'needs_decision' });
-    expect(classifyTaskState(baseTask('approved'), { isLiveRunning: false })).toMatchObject({ stage: 'planning', stageLabel: '计划', boardColumn: 'planning', runStatus: '待开工确认', isRunning: false, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('draft'))).toMatchObject({ stage: 'discussing', stageLabel: '讨论', boardColumn: 'discussing', runStatus: '待讨论', outcome: null, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('clarifying'))).toMatchObject({ stage: 'discussing', stageLabel: '讨论', boardColumn: 'discussing', runStatus: '等你裁决', outcome: null, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('planned'))).toMatchObject({ stage: 'discussing', stageLabel: '讨论', boardColumn: 'discussing', runStatus: '待开工确认', outcome: null, workbenchGroup: 'needs_decision' });
+    expect(classifyTaskState(baseTask('approved'), { isLiveRunning: false })).toMatchObject({ stage: 'discussing', stageLabel: '讨论', boardColumn: 'discussing', runStatus: '待开工确认', isRunning: false, workbenchGroup: 'needs_decision' });
     expect(classifyTaskState(baseTask('approved'), { isLiveRunning: true })).toMatchObject({ stage: 'building', stageLabel: '施工', boardColumn: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
     expect(classifyTaskState(baseTask('running'))).toMatchObject({ stage: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
     expect(classifyTaskState(baseTask('exec_succeeded'), { isLiveRunning: true })).toMatchObject({ stage: 'building', runStatus: '运行中', isRunning: true, workbenchGroup: 'running' });
@@ -405,7 +405,7 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
     await ctlMixed.stop(mixRunId);
   });
 
-  it('项目看板展示计划中空列且位于施工中左侧；任务页展示 3 步阶段条（1 计划 → 2 施工 → 3 验收）', () => {
+  it('项目看板展示讨论中空列且位于施工中左侧；任务页展示 3 步阶段条（1 讨论 → 2 施工 → 3 验收）', () => {
     const boardHtml = renderToStaticMarkup(
       React.createElement(ProjectBoard, {
         project: { id: 'p1', path: '/tmp/p1', name: 'p1', isRepo: true, uncommitted: 0, savePoints: [], tasks: [] },
@@ -431,8 +431,8 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
     expect(idxPlanning).toBeLessThan(idxBuilding);
     expect(idxBuilding).toBeLessThan(idxReviewing);
     expect(idxReviewing).toBeLessThan(idxEnded);
-    expect(boardHtml).toContain('计划中 · 0');
-    expect(boardHtml).toContain('还没有在计划中的任务');
+    expect(boardHtml).toContain('讨论中 · 0');
+    expect(boardHtml).toContain('还没有在讨论中的任务');
 
     const baseTask = (state: TaskState): Task => ({
       id: `t-${state}`,
@@ -463,7 +463,7 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
 
     const draftHtml = renderStageBar('draft', false);
     expect(draftHtml).toContain('data-testid="stage-plan" data-status="cur"');
-    expect(draftHtml).toContain('>1 计划<');
+    expect(draftHtml).toContain('>1 讨论<');
     expect(draftHtml).toContain('data-testid="stage-build" data-status="pending"');
     expect(draftHtml).toContain('>2 施工<');
     expect(draftHtml).toContain('data-testid="stage-accept" data-status="pending"');
@@ -471,7 +471,7 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
 
     const runningHtml = renderStageBar('running', true);
     expect(runningHtml).toContain('data-testid="stage-plan" data-status="done"');
-    expect(runningHtml).toContain('>1 计划 ✓<');
+    expect(runningHtml).toContain('>1 讨论 ✓<');
     expect(runningHtml).toContain('data-testid="stage-build" data-status="cur"');
     expect(runningHtml).toContain('>2 施工<');
 

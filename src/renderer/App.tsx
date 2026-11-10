@@ -167,7 +167,7 @@ export function App() {
 
   const shouldPoll =
     workbench.counts.running > 0 ||
-    activeTaskList.some((t) => t.running || BUSY.includes(t.state));
+    activeTaskList.some((t) => t.running || t.layer.isRunning || BUSY.includes(t.state));
 
   useEffect(() => {
     if (!shouldPoll) return;

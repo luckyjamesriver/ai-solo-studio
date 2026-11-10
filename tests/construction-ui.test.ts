@@ -399,9 +399,9 @@ describe('任务视图：不显示命令；意外的权限请求；未完成操�
 
 describe('施工中不再有审批：控制器与执行体的组合', () => {
   it('施工视图的数据里没有任何待决定的权限请求（执行体询问也不会交给界面）', async () => {
-    // 只读启动才会询问；施工模式下执行体适配器自己拒绝。这里确认控制器不暴露“待决定”的入口。
+    // 只读启动才会询问；施工模式下执行体适配器自己拒绝。这里确认控制器不暴露施工期的“待决定”权限入口（讨论阶段方案批准 decideDiscussionApproval 除外）。
     const names = Object.getOwnPropertyNames(TaskController.prototype);
-    expect(names.filter((n) => /respond|allow|approveRequest|decide/i.test(n))).toEqual([]);
+    expect(names.filter((n) => n !== 'decideDiscussionApproval' && /respond|allow|approveRequest|decide/i.test(n))).toEqual([]);
   });
 });
 

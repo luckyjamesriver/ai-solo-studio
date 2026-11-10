@@ -161,8 +161,29 @@ function reviewingDetails(t: Task): Pick<TaskClassification, 'runStatus' | 'impa
   };
 }
 
+/** 讨论线程当前的只读摘要（由 DiscussionService 提供，用于三层映射与工作台实时状态）。 */
+export interface DiscussionClassifyHint {
+  pauseAt:
+    | 'ready'
+    | 'send_consent'
+    | 'requirements_confirmation'
+    | 'attempt_failed'
+    | 'adjudication'
+    | 'approval'
+    | 'approved'
+    | 'stopped'
+    | 'rejected';
+  running: boolean;
+  activeStepText: string | null;
+  pauseMessage: string | null;
+  pendingAdjudicationsCount: number;
+}
+
 /** 静态穷举 TaskState 的全部 17 种取值并结合 manualReview / exit 映射到 UI v2.1 三层模型与工作台分组。 */
-export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {}): TaskClassification {
+export function classifyTaskState(
+  t: Task,
+  opts: { isLiveRunning?: boolean; discussion?: DiscussionClassifyHint } = {},
+): TaskClassification {
   const mk = (
     stage: TaskStage,
     fields: {
@@ -204,27 +225,95 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
   };
 
   const state: TaskState = t.state;
+  const discuss = opts.discussion;
   switch (state) {
     case 'draft':
-      return mk('planning', {
-        runStatus: '待配置计划',
+    case 'clarifying': {
+      if (discuss?.running) {
+        return mk('discussing', {
+          runStatus: discuss.activeStepText ? `讨论中 · ${discuss.activeStepText}` : '讨论中',
+          outcome: null,
+          workbenchGroup: 'running',
+          isRunning: true,
+          needsAttention: false,
+          impact: 'AI 思考者正在讨论分析需求与方案，主项目未受影响',
+          actionLabel: '查看讨论',
+        });
+      }
+      if (discuss?.pauseAt === 'requirements_confirmation') {
+        return mk('discussing', {
+          runStatus: '需求待确认',
+          outcome: null,
+          workbenchGroup: 'needs_decision',
+          needsAttention: true,
+          impact: 'AI 已拆解出需求条目，等你确认并冻结后继续起草方案，主项目未改动',
+          actionLabel: '去确认需求',
+        });
+      }
+      if (discuss?.pauseAt === 'adjudication') {
+        return mk('discussing', {
+          runStatus: '意见待裁决',
+          outcome: null,
+          workbenchGroup: 'needs_decision',
+          needsAttention: true,
+          impact: `有 ${discuss.pendingAdjudicationsCount || 1} 项评审意见或范围差异等你逐条裁决，主项目未改动`,
+          actionLabel: '去裁决',
+        });
+      }
+      if (discuss?.pauseAt === 'approval') {
+        return mk('discussing', {
+          runStatus: '方案待批准',
+          outcome: null,
+          workbenchGroup: 'needs_decision',
+          needsAttention: true,
+          impact: '讨论方案已就绪，等你批准并生成施工计划，主项目未改动',
+          actionLabel: '去批准方案',
+        });
+      }
+      if (discuss?.pauseAt === 'attempt_failed') {
+        return mk('discussing', {
+          runStatus: '尝试失败待选择',
+          outcome: null,
+          workbenchGroup: 'needs_decision',
+          needsAttention: true,
+          isAbnormal: true,
+          impact: discuss.pauseMessage ?? '讨论步骤未能完成，等你选择重试或停止，主项目未改动',
+          actionLabel: '去处理',
+        });
+      }
+      if (discuss?.pauseAt === 'send_consent') {
+        return mk('discussing', {
+          runStatus: '待同意外发',
+          outcome: null,
+          workbenchGroup: 'needs_decision',
+          needsAttention: true,
+          impact: discuss.pauseMessage ?? '首次向外部 AI 发送资料需要你确认，主项目未改动',
+          actionLabel: '去确认外发',
+        });
+      }
+      if (discuss?.pauseAt === 'stopped' || discuss?.pauseAt === 'rejected') {
+        return mk('discussing', {
+          runStatus: discuss.pauseAt === 'stopped' ? '已停止讨论' : '方案未批准',
+          outcome: null,
+          workbenchGroup: 'needs_decision',
+          needsAttention: true,
+          impact: discuss.pauseMessage ?? '当前讨论已结束，你可以修改需求重新讨论，或跳过讨论直接写计划',
+          actionLabel: '去查看',
+        });
+      }
+      return mk('discussing', {
+        runStatus: state === 'clarifying' ? '等你裁决' : '待讨论',
         outcome: null,
         workbenchGroup: 'needs_decision',
         needsAttention: true,
-        impact: '任务刚创建，等你确认施工计划并开工，主项目未受影响',
-        actionLabel: '去配置计划',
+        impact: state === 'clarifying'
+          ? '需要你澄清需求细节后再开始施工，主项目未受影响'
+          : '任务刚创建，等你进入讨论（或跳过讨论直接写计划），主项目未受影响',
+        actionLabel: '去讨论',
       });
-    case 'clarifying':
-      return mk('planning', {
-        runStatus: '等你裁决',
-        outcome: null,
-        workbenchGroup: 'needs_decision',
-        needsAttention: true,
-        impact: '需要你澄清需求细节后再开始施工，主项目未受影响',
-        actionLabel: '去说明',
-      });
+    }
     case 'planned':
-      return mk('planning', {
+      return mk('discussing', {
         runStatus: '待开工确认',
         outcome: null,
         workbenchGroup: 'needs_decision',
@@ -235,7 +324,7 @@ export function classifyTaskState(t: Task, opts: { isLiveRunning?: boolean } = {
         actionLabel: '去开工',
       });
     case 'approved':
-      return mk(opts.isLiveRunning ? 'building' : 'planning', {
+      return mk(opts.isLiveRunning ? 'building' : 'discussing', {
         runStatus: opts.isLiveRunning ? '运行中' : '待开工确认',
         outcome: null,
         workbenchGroup: opts.isLiveRunning ? 'running' : 'needs_decision',

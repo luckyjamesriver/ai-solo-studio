@@ -5,6 +5,11 @@ import path from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DiscussionViewBody, type DiscussionBodyProps } from '../src/renderer/DiscussionPage.js';
+import { PlanCard } from '../src/renderer/PlanCard.js';
+import { Sidebar } from '../src/renderer/Sidebar.js';
+import { OpenProjectManager } from '../src/core/app/open-projects.js';
+import { classifyTaskState } from '../src/core/app/task-state-view.js';
+import { buildTaskView } from '../src/core/app/task-view.js';
 import type { DiscussionView } from '../src/core/app/discussion-service.js';
 import { TaskController } from '../src/core/app/task-controller.js';
 import { TaskPrefs } from '../src/core/app/prefs.js';
@@ -656,5 +661,165 @@ describe('阶段 5a 提交③：每个思考者的独立对话与隔离边界', 
     const { ctl } = await makeTempCtl({ planner });
     const created = await ctl.create('单思考者聊天限制');
     await expect(ctl.sendDiscussionChat(created.id, 'reviewer', '问复核')).rejects.toThrow(/单思考者模式下没有复核思考者/);
+  });
+});
+
+describe('阶段 5a 提交④：批准后转为施工计划、未经独立评审标志、工作台实时讨论分组', () => {
+  it('PlanCard 对单思考者生成的计划展示「未经独立评审」标记；双思考者计划不显示该标记', async () => {
+    const { repo, ctl } = await makeTempCtl({ planner: scripted() });
+    const tSingle = await ctl.create('单思考者任务');
+    await ctl.startDiscussion(tSingle.id, 'codex-single');
+    await ctl.waitDiscussion(tSingle.id);
+    const vConsent = await ctl.getDiscussionView(tSingle.id);
+    await ctl.confirmDiscussionSend(tSingle.id, vConsent.pendingConsentService!, true);
+    await ctl.waitDiscussion(tSingle.id);
+    const vReqs = await ctl.getDiscussionView(tSingle.id);
+    await ctl.confirmDiscussionRequirements(
+      tSingle.id,
+      vReqs.requirements.map((r) => ({ id: r.id, text: r.text })),
+    );
+    await ctl.waitDiscussion(tSingle.id);
+    const { task: plannedSingle } = await ctl.decideDiscussionApproval(tSingle.id, 'approve');
+    expect(plannedSingle.planUnreviewed).toBe(true);
+
+    const htmlUnreviewed = renderToStaticMarkup(
+      createElement(PlanCard, {
+        projectId: 'p1',
+        task: plannedSingle,
+        preferredMode: 'standard',
+        onChanged: () => undefined,
+      }),
+    );
+    expect(htmlUnreviewed).toContain('data-testid="plan-unreviewed-badge"');
+    expect(htmlUnreviewed).toContain('未经独立评审');
+
+    // 对照：未标记 planUnreviewed 的双思考者/普通计划不出现该徽标
+    const reviewedView = buildTaskView(
+      {
+        id: 't-rev',
+        request: '双思考者任务',
+        state: 'planned',
+        planUnreviewed: false,
+        createdAt: '2026-11-10T00:00:00.000Z',
+        updatedAt: '2026-11-10T00:00:00.000Z',
+        denied: [],
+        deniedAcks: [],
+        previewed: false,
+        criteria: [],
+        timeline: [],
+      },
+      { scripts: [], running: false },
+    );
+    const htmlReviewed = renderToStaticMarkup(
+      createElement(PlanCard, {
+        projectId: 'p1',
+        task: reviewedView,
+        preferredMode: 'standard',
+        onChanged: () => undefined,
+      }),
+    );
+    expect(htmlReviewed).not.toContain('plan-unreviewed-badge');
+    void repo;
+  });
+
+  it('工作台与角标正确反映 5 个需要用户决定的讨论停靠点，运行中的讨论不计入角标', async () => {
+    const draftTask = {
+      id: 't1',
+      request: '测试工作台讨论态',
+      state: 'draft' as const,
+      createdAt: '2026-11-10T00:00:00.000Z',
+      updatedAt: '2026-11-10T00:00:00.000Z',
+      denied: [],
+      deniedAcks: [],
+      previewed: false,
+      criteria: [],
+      timeline: [],
+    };
+
+    const runningCls = classifyTaskState(draftTask, {
+      discussion: { pauseAt: 'ready', running: true, activeStepText: '首席正在起草方案', pauseMessage: null, pendingAdjudicationsCount: 0 },
+    });
+    expect(runningCls).toMatchObject({ workbenchGroup: 'running', isRunning: true, needsAttention: false, statusTag: '讨论中 · 首席正在起草方案' });
+
+    const cases: { pauseAt: 'send_consent' | 'requirements_confirmation' | 'attempt_failed' | 'adjudication' | 'approval'; expectedTag: string; abnormal?: boolean }[] = [
+      { pauseAt: 'send_consent', expectedTag: '待同意外发' },
+      { pauseAt: 'requirements_confirmation', expectedTag: '需求待确认' },
+      { pauseAt: 'attempt_failed', expectedTag: '尝试失败待选择', abnormal: true },
+      { pauseAt: 'adjudication', expectedTag: '意见待裁决' },
+      { pauseAt: 'approval', expectedTag: '方案待批准' },
+    ];
+    for (const c of cases) {
+      const cls = classifyTaskState(draftTask, {
+        discussion: { pauseAt: c.pauseAt, running: false, activeStepText: null, pauseMessage: '需要决定', pendingAdjudicationsCount: 1 },
+      });
+      expect(cls).toMatchObject({
+        stage: 'discussing',
+        boardColumn: 'discussing',
+        workbenchGroup: 'needs_decision',
+        needsAttention: true,
+        statusTag: c.expectedTag,
+        ...(c.abnormal ? { isAbnormal: true } : {}),
+      });
+    }
+
+    // 通过真实 OpenProjectManager 核对：运行中的讨论任务使角标为 0；停在需求确认时角标为 1
+    let releaseThink!: () => void;
+    let markStarted!: () => void;
+    const gate = new Promise<void>((r) => {
+      releaseThink = r;
+    });
+    const started = new Promise<void>((r) => {
+      markStarted = r;
+    });
+    const gatedPlanner = scripted();
+    const origThink = gatedPlanner.think.bind(gatedPlanner);
+    gatedPlanner.think = async (req) => {
+      markStarted();
+      await gate;
+      return origThink(req);
+    };
+
+    const { repo, ctl } = await makeTempCtl({ planner: gatedPlanner });
+    const mgr = new OpenProjectManager<RecordStore>();
+    mgr.open({ id: 'proj-s5', name: 'proj-s5', path: repo, controller: ctl, recordStore: await ctl.openRecordStore() });
+
+    const t = await ctl.create('实时工作台任务');
+    await ctl.startDiscussion(t.id, 'codex-single');
+    await ctl.waitDiscussion(t.id);
+    const wbConsent = await mgr.getWorkbench();
+    expect(wbConsent.counts.needsDecision).toBe(1);
+    expect(wbConsent.needsDecision[0]!.statusLabel).toBe('待同意外发');
+
+    const vConsent = await ctl.getDiscussionView(t.id);
+    await ctl.confirmDiscussionSend(t.id, vConsent.pendingConsentService!, true);
+    await started;
+    const wbRunning = await mgr.getWorkbench();
+    expect(wbRunning.counts).toEqual({ needsDecision: 0, running: 1, recentEnded: 0 });
+    expect(wbRunning.running[0]!.statusLabel).toBe('讨论中 · 首席正在拆解需求');
+    expect(wbRunning.projects[0]!.needsAttentionCount).toBe(0);
+
+    releaseThink();
+    await ctl.waitDiscussion(t.id);
+    const wbReqs = await mgr.getWorkbench();
+    expect(wbReqs.counts.needsDecision).toBe(1);
+    expect(wbReqs.needsDecision[0]!.statusLabel).toBe('需求待确认');
+    expect(wbReqs.projects[0]!.needsAttentionCount).toBe(1);
+
+    const sideHtml = renderToStaticMarkup(
+      createElement(Sidebar, {
+        active: { kind: 'workbench' },
+        collapsed: false,
+        projects: wbReqs.projects,
+        needsDecisionCount: wbReqs.counts.needsDecision,
+        hasAbnormalDecision: false,
+        onToggleCollapse: () => undefined,
+        onSelectWorkbench: () => undefined,
+        onSelectProject: () => undefined,
+        onOpenProject: () => undefined,
+        onSelectSettings: () => undefined,
+      }),
+    );
+    expect(sideHtml).toContain('data-testid="workbench-badge"');
+    expect(sideHtml).toContain('data-testid="project-badge-proj-s5"');
   });
 });

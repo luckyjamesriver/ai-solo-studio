@@ -19,6 +19,7 @@ const shotDir = process.env.E2E_SCREENSHOT_DIR;
 const stage2ShotDir = process.env.E2E_STAGE2_SHOT_DIR;
 const stage3ShotDir = process.env.E2E_STAGE3_SHOT_DIR;
 const stage4ShotDir = process.env.E2E_STAGE4_SHOT_DIR;
+const stage5ShotDir = process.env.E2E_STAGE5_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -31,7 +32,11 @@ const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd,
 function gitProject(name: string, files: Record<string, string> = { 'index.html': '<h1>hi</h1>' }): string {
   const d = path.join(mk('proj'), name);
   fs.mkdirSync(d);
-  for (const [n, c] of Object.entries(files)) fs.writeFileSync(path.join(d, n), c);
+  for (const [n, c] of Object.entries(files)) {
+    const dest = path.join(d, n);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, c);
+  }
   git(d, 'init', '-q', '-b', 'main');
   git(d, 'add', '-A');
   git(d, 'commit', '-q', '-m', 'init');
@@ -80,6 +85,12 @@ const stage3Shot = async (page: Page, name: string) => {
 const stage4Shot = async (page: Page, name: string) => {
   if (!stage4ShotDir) return;
   const target = path.join(stage4ShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
+const stage5Shot = async (page: Page, name: string) => {
+  if (!stage5ShotDir) return;
+  const target = path.join(stage5ShotDir, `${name}.png`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
@@ -263,6 +274,118 @@ async function enableFakeChecks(app: ElectronApplication) {
       };
     },
     { codexUrl: distUrl('executor/adapters/codex.js'), codexPath: fileURLToPath(distUrl('executor/adapters/codex.js')) },
+  );
+}
+async function useFakeThinkers(
+  app: ElectronApplication,
+  opts: { failDraftOnce?: boolean; withFindings?: boolean } = {},
+) {
+  await app.evaluate(
+    async (_e, a) => {
+      const { createRequire } = process.getBuiltinModule('module');
+      const req = createRequire(a.codexUrl);
+      const { CodexThinker } = req(a.codexPath);
+      const { ClaudeCliThinker } = req(a.claudePath);
+      let draftFailedOnce = false;
+
+      const makeResult = (
+        thinkReq: { role: string; output: { required: string[] } },
+        service: string,
+        withCost: boolean,
+      ) => {
+        const reqd = thinkReq.output?.required ?? [];
+        const sent = ['docs/PROJECT_CONTEXT.md（第 1、2、4 节）'];
+        const usage = withCost ? { costUsd: 0.0125 } : undefined;
+        let payload: unknown;
+
+        if (reqd.includes('reply')) {
+          payload = {
+            reply:
+              thinkReq.role === 'planner'
+                ? '首席说明：样式变量方案把浅色/深色集中在一张配色表里，修改维护成本最小。'
+                : '复核说明：只基于方案正文与我的正式评审记录来看，主体切换逻辑成立；主要提醒还是深色下配图亮度对比。',
+          };
+        } else if (reqd.includes('items')) {
+          payload = {
+            items: [
+              { text: '首页支持深色外观切换' },
+              { text: '刷新页面后记住用户所选外观' },
+            ],
+          };
+        } else if (reqd.includes('coverage')) {
+          if (a.failDraftOnce && !draftFailedOnce) {
+            draftFailedOnce = true;
+            return { status: 'failed', rawText: '', sent, service, error: '模型连接暂时中断（E2E 模拟失败）' };
+          }
+          payload = {
+            plan: '## 目标\n完成首页深色外观与偏好持久化。\n\n## 验收建议\n- 首页含深色外观切换按钮，点击立即切换\n- 刷新页面后保留上次选择的外观',
+            coverage: [
+              { id: 'R1', how: '顶部加入深色外观切换开关' },
+              { id: 'R2', how: '写入 localStorage 并初始化应用' },
+            ],
+          };
+        } else if (reqd.includes('requirement_checks')) {
+          payload = {
+            requirement_checks: [
+              { id: 'R1', covered: true, note: '切换开关明确' },
+              { id: 'R2', covered: true, note: '持久化方案清晰' },
+            ],
+            findings: a.withFindings
+              ? [
+                  {
+                    problem: '深色模式下现有装饰图片对比度未调整',
+                    severity: '阻断',
+                    basis: 'docs/ref.md#视觉规范',
+                    impact: '深色背景下的配图可能偏暗不易辨识',
+                    suggestion: '补充深色背景的图片亮度或遮罩调整规则',
+                    resolution: '',
+                  },
+                ]
+              : [],
+            missing_evidence: a.withFindings ? ['缺少深色模式下实测截图对比'] : [],
+          };
+        } else {
+          payload = {
+            plan: '## 方案（修订第 2 版）\n用颜色变量统一管理浅色/深色外观；首版暂不做装饰图片暗色遮罩，保持主题改动最小可逆。\n\n## 验收建议\n- 页头显示外观切换按钮，点击后立即切换浅色/深色\n- 刷新页面后保留上次选择的外观',
+            resolutions: a.withFindings
+              ? [{ index: 1, result: '交用户裁决', reason: '图片暗色处理属于额外视觉调整，交用户决定首版是否接受该风险' }]
+              : [],
+            item_marks: [
+              { id: 'R1', mark: '保留' },
+              { id: 'R2', mark: '保留' },
+            ],
+            additions: [],
+          };
+        }
+
+        const raw = JSON.stringify(payload);
+        return {
+          status: 'complete',
+          rawText: raw,
+          content: payload,
+          model: withCost ? 'claude-test' : 'codex-test',
+          ...(usage ? { usage } : {}),
+          sent,
+          service,
+        };
+      };
+
+      CodexThinker.prototype.detect = async () => ({ available: true });
+      CodexThinker.prototype.think = async function (thinkReq: { role: string; output: { required: string[] } }) {
+        return makeResult(thinkReq, this.service ?? 'Codex CLI', false);
+      };
+      ClaudeCliThinker.prototype.detect = async () => ({ available: true });
+      ClaudeCliThinker.prototype.think = async function (thinkReq: { role: string; output: { required: string[] } }) {
+        return makeResult(thinkReq, this.service ?? 'Claude Code CLI', true);
+      };
+    },
+    {
+      codexUrl: distUrl('thinking/codex.js'),
+      codexPath: fileURLToPath(distUrl('thinking/codex.js')),
+      claudePath: fileURLToPath(distUrl('thinking/claude-cli.js')),
+      failDraftOnce: !!opts.failDraftOnce,
+      withFindings: opts.withFindings !== false,
+    },
   );
 }
 async function openProjectWithFake(proj: string, script: unknown[], data = mk('data')) {
@@ -515,6 +638,7 @@ describe('施工模式界面', () => {
           return { tasks: [], preferredMode: 'standard' };
         }
         if (g.__blockFirstList) {
+          g.__blockFirstList = false;
           return new Promise((resolve) => {
             g.__staleResolvers.push(() => resolve({ tasks: [], preferredMode: 'standard' }));
           });
@@ -1180,9 +1304,9 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     await a.page.getByTestId('project').waitFor();
     expect(await sidebarWidth()).toBe(wWorkbench);
 
-    // 看板展示四列：计划中 / 施工中 / 待验收 / 已结束（「计划中」空列也保留展示提示）
+    // 看板展示四列：讨论中 / 施工中 / 待验收 / 已结束（「讨论中」空列也保留展示提示）
     expect(await a.page.getByTestId('board-col-planning').isVisible()).toBe(true);
-    expect(await a.page.getByTestId('board-col-planning').innerText()).toContain('还没有在计划中的任务');
+    expect(await a.page.getByTestId('board-col-planning').innerText()).toContain('还没有在讨论中的任务');
     expect(await a.page.getByTestId('board-col-building').isVisible()).toBe(true);
     expect(await a.page.getByTestId('board-col-reviewing').isVisible()).toBe(true);
     expect(await a.page.getByTestId('board-col-ended').isVisible()).toBe(true);
@@ -1194,7 +1318,7 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     await a.page.getByTestId('task-page').waitFor();
     expect(await a.page.getByTestId('breadcrumb-project').innerText()).toBe('site-one');
     expect(await a.page.getByTestId('stage-plan').getAttribute('data-status')).toBe('cur');
-    expect(await a.page.getByTestId('stage-plan').innerText()).toBe('1 计划');
+    expect(await a.page.getByTestId('stage-plan').innerText()).toBe('1 讨论');
     expect(await a.page.getByTestId('stage-build').getAttribute('data-status')).toBe('pending');
     expect(await a.page.getByTestId('stage-build').innerText()).toBe('2 施工');
     expect(await a.page.getByTestId('stage-accept').getAttribute('data-status')).toBe('pending');
@@ -1204,7 +1328,7 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     await a.page.getByTestId('start-button').click();
     await inState(a.page, 'reviewing');
     expect(await a.page.getByTestId('stage-plan').getAttribute('data-status')).toBe('done');
-    expect(await a.page.getByTestId('stage-plan').innerText()).toBe('1 计划 ✓');
+    expect(await a.page.getByTestId('stage-plan').innerText()).toBe('1 讨论 ✓');
     expect(await a.page.getByTestId('stage-build').getAttribute('data-status')).toBe('done');
     expect(await a.page.getByTestId('stage-build').innerText()).toBe('2 施工 ✓');
     expect(await a.page.getByTestId('stage-accept').getAttribute('data-status')).toBe('cur');
@@ -1231,7 +1355,7 @@ describe('应用外壳：侧栏、工作台、项目看板、任务页外框与�
     await a.page.getByTestId(`nav-project-${id1}`).click();
     await a.page.getByTestId('board-col-reviewing').waitFor();
     expect(await a.page.getByTestId('board-col-reviewing').innerText()).toContain('任务一验收');
-    expect(await a.page.getByTestId('board-col-planning').innerText()).toContain('还没有在计划中的任务');
+    expect(await a.page.getByTestId('board-col-planning').innerText()).toContain('还没有在讨论中的任务');
     await stage2Shot(a.page, '02-project-board');
 
     // 4. 回到工作台：核对三组汇总、筛选、侧栏角标与真实 workbench:get 一致（仅运行中任务的 site-two 角标不显示）
@@ -1594,5 +1718,182 @@ describe('阶段 4：验收页、检查依据、退回修改、多轮切换与�
     await inState(a.page, 'saved');
     expect(await a.page.getByTestId('save-record-check').innerText()).toBe('检查通过');
     expect(readProj(proj)).toBe('<h1>round2</h1>\n');
+  });
+});
+
+const STAGE5_CONTEXT_MD = `# 测试网站 — 项目背景卡
+
+## 1. 一句话
+面向独立创作者的作品展示站。
+
+## 2. 核心信念
+- 结构简单可逆，AI 自述不是证据。
+
+## 4. 目标用户
+独立设计师与创作者。
+`;
+
+const STAGE5_REF_MD = `# 视觉与交互约束
+
+## 视觉规范
+深色模式下需要保证配图与正文对比度足够清晰。
+`;
+
+describe('阶段 5a：讨论阶段界面、按思考者隔离对话、单/双模式与已知风险传递（E2E）', () => {
+  it('双思考者讨论闭环：确认需求 → 依据核验 → 驳回阻塞意见并写理由 → 首席/复核独立对话 → 评审记录 → 批准进施工计划 → 施工进验收看风险', async () => {
+    const data = mk('s5-dual-data');
+    const proj = gitProject('s5-dual-site', {
+      'index.html': '<h1>v0</h1>\n',
+      'docs/PROJECT_CONTEXT.md': STAGE5_CONTEXT_MD,
+      'docs/ref.md': STAGE5_REF_MD,
+      '.gitignore': '.studio/\n',
+    });
+    const a = await launch(data, { STUDIO_DEV_PERSONAL_CLAUDE: '1' });
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await a.page.getByTestId('onboarding-continue').click();
+    await a.page.getByTestId('workbench').waitFor();
+    await useFakeThinkers(a.app, { withFindings: true });
+    await useFakeExecutor(a.app, [{ do: 'say', text: '深色模式施工完成' }, { do: 'write', path: 'index.html', content: '<h1 data-theme="dark">v1</h1>\n' }, { do: 'exit', code: 0 }]);
+    await stubDialog(a.app, proj);
+    await a.page.getByTestId('nav-open-project').click();
+    await a.page.getByTestId('project').waitFor();
+
+    // 验证阶段 5 看板首列已改为「讨论中」
+    expect(await a.page.getByTestId('board-col-planning').innerText()).toContain('讨论中');
+
+    // 创建任务后直接进入讨论页（阶段条显示 1 讨论）
+    await a.page.getByTestId('request').fill('网站增加深色模式，访客可以切换并记住选择');
+    await a.page.getByTestId('create-task').click();
+    await a.page.getByTestId('discussion-page').waitFor();
+    expect(await a.page.getByTestId('stage-plan').innerText()).toBe('1 讨论');
+
+    // 选用开发者预设并开始讨论
+    await a.page.locator('input[name="discuss-preset"][value="dev-personal"]').check();
+    await a.page.getByTestId('start-discussion-button').click();
+
+    // 首次向 Claude Code CLI 外发确认 -> 同意 -> 停在需求条目确认
+    await a.page.getByTestId('discussion-consent-allow').waitFor();
+    await a.page.getByTestId('discussion-consent-allow').click();
+    await a.page.getByTestId('discussion-reqs-confirm-card').waitFor();
+    await stage5Shot(a.page, '01-confirm-requirements');
+
+    // 确认并冻结需求 -> 向复核 Codex 外发确认 -> 同意 -> 停在裁决分歧
+    await a.page.getByTestId('discussion-confirm-reqs').click();
+    await a.page.getByTestId('discussion-consent-allow').waitFor();
+    await a.page.getByTestId('discussion-consent-allow').click();
+    await a.page.getByTestId('discussion-adjudication-list').waitFor();
+
+    // 验证依据核验结果原文、修改需求入口、且未裁决前批准按钮置灰
+    const basisText = await a.page.getByTestId('finding-basis-1').innerText();
+    expect(basisText).toContain('提供了依据（文件存在）');
+    expect(await enabled(a.page, 'approve-discussion-button')).toBe(false);
+    expect(await a.page.getByTestId('approve-blocked-reason').innerText()).toContain('先裁决上面 1 条意见');
+    await stage5Shot(a.page, '02-summary-adjudicate');
+
+    // 展开驳回理由并填写
+    await a.page.getByTestId('adjudicate-open-reject-1').click();
+    await a.page.getByTestId('adjudicate-reason-1').fill('首版先保持主题切换简单，已接受装饰图风险');
+    expect(await enabled(a.page, 'adjudicate-reject-1')).toBe(true);
+    await stage5Shot(a.page, '03-reject-reason');
+
+    // 提交驳回 -> 裁决列表清空，批准方案变为可点
+    await a.page.getByTestId('adjudicate-reject-1').click();
+    await a.page.waitForFunction(() => document.querySelectorAll('[data-testid="discussion-adjudication-list"]').length === 0);
+    await a.page.waitForFunction(() => {
+      const btn = document.querySelector('[data-testid="approve-discussion-button"]') as HTMLButtonElement | null;
+      return !!btn && !btn.disabled;
+    });
+
+    // 与首席对话页签
+    await a.page.getByTestId('discussion-tab-planner-chat').click();
+    await a.page.getByTestId('discussion-planner-chat-panel').waitFor();
+    expect(await a.page.getByTestId('planner-chat-modify-hint').innerText()).toContain('想改需求，请用「修改需求」');
+    await a.page.getByTestId('planner-chat-input').fill('CSS 变量方案后续容易维护吗？');
+    await a.page.getByTestId('planner-chat-send').click();
+    await a.page.getByTestId('planner-chat-msg-assistant').waitFor();
+    await stage5Shot(a.page, '04-chat-planner');
+
+    // 与复核对话页签：显示“评审后的讨论 · 非独立评审”
+    await a.page.getByTestId('discussion-tab-reviewer-chat').click();
+    await a.page.getByTestId('discussion-reviewer-chat-panel').waitFor();
+    await a.page.getByTestId('reviewer-chat-input').fill('除了配图对比度，主体开关设计有漏掉需求吗？');
+    await a.page.getByTestId('reviewer-chat-send').click();
+    await a.page.getByTestId('reviewer-chat-msg-assistant').waitFor();
+    expect(await a.page.getByTestId('post-review-badge').innerText()).toBe('评审后的讨论 · 非独立评审');
+    await stage5Shot(a.page, '05-chat-reviewer');
+
+    // 评审记录（只读）页签
+    await a.page.getByTestId('discussion-tab-record').click();
+    await a.page.getByTestId('discussion-record-panel').waitFor();
+    const recText = await a.page.getByTestId('discussion-record-panel').innerText();
+    expect(recText).toContain('深色模式下现有装饰图片对比度未调整');
+    expect(recText).toContain('缺少深色模式下实测截图对比');
+    await stage5Shot(a.page, '06-review-record');
+
+    // 批准方案 -> 进入施工计划确认页 -> 批准并开工 -> 进入验收页看到「你已知晓并接受的风险」
+    await a.page.getByTestId('approve-discussion-button').click();
+    await a.page.getByTestId('plan-card').waitFor();
+    expect(await a.page.getByTestId('plan-unreviewed-badge').count()).toBe(0);
+
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('result').waitFor({ timeout: 30_000 });
+    await a.page.getByTestId('accepted-risks').waitFor();
+    await a.page.getByTestId('accepted-risks').scrollIntoViewIfNeeded();
+    const riskText = await a.page.getByTestId('accepted-risks').innerText();
+    expect(riskText).toContain('深色模式下现有装饰图片对比度未调整');
+    expect(riskText).toContain('首版先保持主题切换简单，已接受装饰图风险');
+    await stage5Shot(a.page, '09-accepted-risks');
+  });
+
+  it('单思考者默认流程（未经独立评审、隐藏与复核对话、按次数统计费用）+ 尝试失败重试说明', async () => {
+    const data = mk('s5-single-data');
+    const proj = gitProject('s5-single-site', {
+      'index.html': '<h1>v0</h1>\n',
+      'docs/PROJECT_CONTEXT.md': STAGE5_CONTEXT_MD,
+      '.gitignore': '.studio/\n',
+    });
+    const a = await launch(data);
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await a.page.getByTestId('onboarding-continue').click();
+    await a.page.getByTestId('workbench').waitFor();
+    await useFakeThinkers(a.app, { failDraftOnce: true, withFindings: false });
+    await stubDialog(a.app, proj);
+    await a.page.getByTestId('nav-open-project').click();
+    await a.page.getByTestId('project').waitFor();
+
+    await a.page.getByTestId('request').fill('单思考者深色切换任务');
+    await a.page.getByTestId('create-task').click();
+    await a.page.getByTestId('discussion-page').waitFor();
+    expect(await a.page.getByTestId('discussion-unreviewed-badge').innerText()).toBe('未经独立评审');
+    expect(await a.page.getByTestId('discussion-tab-reviewer-chat').count()).toBe(0);
+
+    await a.page.getByTestId('start-discussion-button').click();
+    await a.page.getByTestId('discussion-consent-allow').waitFor();
+    await a.page.getByTestId('discussion-consent-allow').click();
+    await a.page.getByTestId('discussion-reqs-confirm-card').waitFor();
+    await a.page.getByTestId('discussion-confirm-reqs').click();
+
+    // 起草第 1 次失败 -> 停在 attempt_failed
+    await a.page.getByTestId('discussion-failure-card').waitFor();
+    await stage5Shot(a.page, '08-attempt-failed');
+
+    // 填写补充说明并重试 -> 成功进入单思考者 approval
+    await a.page.getByTestId('discussion-failure-note').fill('请只修改首页顶部和全局 CSS 变量');
+    await a.page.getByTestId('discussion-failure-retry-with').click();
+    await a.page.waitForFunction(() => {
+      const btn = document.querySelector('[data-testid="approve-discussion-button"]') as HTMLButtonElement | null;
+      return !!btn && !btn.disabled;
+    });
+
+    // 验证：无复核对话 tab、展示未经独立评审、费用栏只按次数与时长统计（绝不出现 $）
+    expect(await a.page.getByTestId('discussion-tab-reviewer-chat').count()).toBe(0);
+    expect(await a.page.getByTestId('discussion-unreviewed-badge').innerText()).toBe('未经独立评审');
+    expect(await a.page.getByTestId('budget-cost').innerText()).toBe('仅按次数与时长统计');
+    await stage5Shot(a.page, '07-single-unreviewed');
+
+    // 批准进入施工计划页后也持续带有「未经独立评审」标记
+    await a.page.getByTestId('approve-discussion-button').click();
+    await a.page.getByTestId('plan-card').waitFor();
+    expect(await a.page.getByTestId('plan-unreviewed-badge').innerText()).toBe('未经独立评审');
   });
 });

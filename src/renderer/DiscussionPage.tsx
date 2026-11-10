@@ -61,6 +61,29 @@ function stepMarker(status: DiscussionView['steps'][number]['status']): string {
   return '○';
 }
 
+const STEP_NAME_LABEL: Record<string, string> = {
+  requirements: '拆解需求',
+  draft: '首席起草',
+  review: '复核独立评审',
+  revise: '首席修订',
+};
+
+const FAILURE_STATUS_LABEL: Record<string, string> = {
+  failed: '调用失败',
+  rate_limited: '请求过于频繁',
+  quota_exhausted: '额度不足',
+  auth_error: '登录凭证无效',
+  timeout: '调用超时',
+  incomplete: '返回内容不完整',
+};
+
+function shortTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function DiscussionViewBody({
   view,
   taskState,
@@ -266,10 +289,12 @@ export function DiscussionViewBody({
             <section className="box wbox" data-testid="discussion-failure-card">
               <div className="row sb">
                 <h2>讨论步骤失败 · 需要你选择处理方式</h2>
-                <span className="tag warn">{view.lastFailure.status}</span>
+                <span className="tag warn">
+                  {FAILURE_STATUS_LABEL[view.lastFailure.status] ?? view.lastFailure.status}
+                </span>
               </div>
               <p style={{ marginTop: '6px' }}>
-                步骤「{view.lastFailure.step}」（{view.lastFailure.at}）尝试未能完成
+                步骤「{STEP_NAME_LABEL[view.lastFailure.step] ?? view.lastFailure.step}」（{shortTime(view.lastFailure.at)}）尝试未能完成
                 {view.lastFailure.error ? `：${view.lastFailure.error}` : ''}。
               </p>
               <div style={{ marginTop: '10px' }}>
@@ -642,7 +667,7 @@ export function DiscussionViewBody({
                     >
                       <div className="row sb">
                         <strong>{m.role === 'user' ? '你' : view.plannerLabel}</strong>
-                        <span className="muted">{m.at}</span>
+                        <span className="muted">{shortTime(m.at)}</span>
                       </div>
                       <p style={{ whiteSpace: 'pre-wrap' }}>{m.text}</p>
                     </div>
@@ -708,7 +733,7 @@ export function DiscussionViewBody({
                             </span>
                           )}
                         </div>
-                        <span className="muted">{m.at}</span>
+                        <span className="muted">{shortTime(m.at)}</span>
                       </div>
                       <p style={{ whiteSpace: 'pre-wrap' }}>{m.text}</p>
                     </div>
@@ -753,7 +778,7 @@ export function DiscussionViewBody({
               <div className="row sb">
                 <h2>{COPY.discussTabRecord}（只读）</h2>
                 {view.reviewRecord && (
-                  <span className="muted">记录于 {view.reviewRecord.createdAt}</span>
+                  <span className="muted">记录于 {shortTime(view.reviewRecord.createdAt)}</span>
                 )}
               </div>
               {!view.reviewRecord ? (
@@ -1031,6 +1056,7 @@ export function DiscussionPage({
     try {
       const next = await fn();
       syncFromView(next);
+      void studio().getTask(projectId, task.id).then(onTaskUpdated).catch(() => undefined);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
     } finally {

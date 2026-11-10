@@ -81,7 +81,7 @@ export function TaskPage({
             data-testid="stage-plan"
             data-status={planDone ? 'done' : planCur ? 'cur' : 'pending'}
           >
-            {planDone ? '1 计划 ✓' : '1 计划'}
+            {planDone ? '1 讨论 ✓' : '1 讨论'}
           </span>
           <span
             className={`st${buildDone ? ' done' : buildCur ? ' cur' : ''}`}

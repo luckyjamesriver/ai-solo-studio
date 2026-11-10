@@ -4,7 +4,6 @@ import type { Task } from '../task/model.js';
 import type { TaskState } from '../task/state.js';
 import type { ModePreference } from './prefs.js';
 import { TaskController } from './task-controller.js';
-import { classifyTaskState } from './task-state-view.js';
 
 export interface ClosableStore {
   close(): Promise<void>;
@@ -182,11 +181,11 @@ export class OpenProjectManager<TStore extends ClosableStore = ClosableStore> {
     let runningCount = 0;
     let hasAbnormal = false;
     let manualReviewLocked = false;
+    const classified = await Promise.all(tasks.map(async (t) => ({ t, cls: await entry.controller.classifyTask(t) })));
     const entries: { group: 'needsDecision' | 'running' | 'recentEnded'; item: WorkbenchEntry }[] = [];
 
-    for (const t of tasks) {
+    for (const { t, cls } of classified) {
       if (t.manualReview) manualReviewLocked = true;
-      const cls = classifyTaskState(t, { isLiveRunning: entry.controller.isTaskActive(t.id) });
       if (cls.isAbnormal) hasAbnormal = true;
       if (cls.workbenchGroup === 'needs_decision') needsAttentionCount++;
       else if (cls.workbenchGroup === 'running') runningCount++;

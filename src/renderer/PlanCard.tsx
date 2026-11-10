@@ -111,7 +111,14 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
   return (
     <div className="plan stack" data-testid="plan-card">
       <section className="box">
-        <h2>{COPY.planHeaderTitle}</h2>
+        <div className="row sb">
+          <h2>{COPY.planHeaderTitle}</h2>
+          {task.planUnreviewed && (
+            <span className="tag warn" data-testid="plan-unreviewed-badge">
+              {COPY.planUnreviewedBadge}
+            </span>
+          )}
+        </div>
         <p className="muted">{task.state === 'approved' ? COPY.planApprovedHeaderDesc : COPY.planHeaderDesc}</p>
         {task.reapproveNotice && (
           <p role="status" className="notice" data-testid="criteria-reconfirm-notice" style={{ marginTop: '8px' }}>
@@ -288,7 +295,7 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
                 </span>
               </label>
 
-              {!hasPlan && preferredMode === 'full_trust' && (
+              {!task.fullTrustConfirmed && preferredMode === 'full_trust' && mode === 'full_trust' && (
                 <p className="notice" data-testid="preselect-note">{COPY.fullTrustPreselected}</p>
               )}
               <p className="muted">{COPY.planNoAutoDecisionNote}</p>

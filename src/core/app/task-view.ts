@@ -10,7 +10,13 @@ import { extractIncomplete } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
 import { MESSAGES } from '../task/messages.js';
-import { classifyTaskState, hasQuotaExhaustedError, sliceLatestRun, type TaskClassification } from './task-state-view.js';
+import {
+  classifyTaskState,
+  hasQuotaExhaustedError,
+  sliceLatestRun,
+  type DiscussionClassifyHint,
+  type TaskClassification,
+} from './task-state-view.js';
 
 /**
  * 给渲染层看的任务视图：只含大白话与必要事实。
@@ -117,6 +123,8 @@ export interface TaskView {
   round: number;
   /** 保存记录的检查结论（已保存或曾保存任务显示“检查通过”或“未检查”，不含命令） */
   saveCheckText: '检查通过' | '未检查' | null;
+  /** 由单思考者讨论生成、未经过独立评审的计划 */
+  planUnreviewed: boolean;
   /** UI v2.1 第 3 节三层状态与看板归类 */
   layer: TaskClassification;
   createdAt: string;
@@ -331,7 +339,10 @@ function buildStoppedInfo(task: Task, opts: { running: boolean; worktreeChanges?
   };
 }
 
-export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[]; running: boolean; worktreeChanges?: FileChange[] }): TaskView {
+export function buildTaskView(
+  task: Task,
+  opts: { scripts: ('build' | 'test')[]; running: boolean; worktreeChanges?: FileChange[]; discussion?: DiscussionClassifyHint },
+): TaskView {
   const caps = task.plan?.capabilities;
   const aiMessages = task.timeline.filter((e) => e.kind === 'message' && !isHost(e)).map((e) => e.text);
   const hostMessages = task.timeline.filter((e) => e.kind === 'message' && isHost(e)).map((e) => e.text);
@@ -422,7 +433,8 @@ export function buildTaskView(task: Task, opts: { scripts: ('build' | 'test')[];
     executorText,
     round: task.currentRound ?? (task.rounds?.length ? Math.max(...task.rounds.map((r) => r.round)) : 1),
     saveCheckText: task.saveRecord ? (task.saveRecord.checked === true ? '检查通过' : '未检查') : null,
-    layer: classifyTaskState(task, { isLiveRunning: opts.running }),
+    planUnreviewed: !!task.planUnreviewed,
+    layer: classifyTaskState(task, { isLiveRunning: opts.running, ...(opts.discussion ? { discussion: opts.discussion } : {}) }),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     // 诊断记录：时间线的文字（含应用自己的说明），经已知噪音过滤；工具事件只留概括，不含命令

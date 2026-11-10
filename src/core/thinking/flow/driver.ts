@@ -259,7 +259,7 @@ function formatBudget(rec: ThreadRecord): DiscussionBudgetView {
   };
 }
 
-function buildStepStatuses(rec: ThreadRecord, activeStep: StepName | null): DiscussionStepStatus[] {
+function buildStepStatuses(rec: ThreadRecord, activeStep: StepName | null, pendingAdjCount: number): DiscussionStepStatus[] {
   const has = (name: string) => rec.artifacts.some((a) => a.name === name);
   const failedStep = rec.lastFailure?.step;
   const statusOf = (stepKey: StepName, doneWhen: boolean): DiscussionStepStatus['status'] => {
@@ -276,14 +276,15 @@ function buildStepStatuses(rec: ThreadRecord, activeStep: StepName | null): Disc
       { key: 'approval', label: '批准方案', status: rec.state === 'approved' || rec.state === 'task_exported' ? 'done' : rec.state === 'awaiting_approval' ? 'current' : 'pending' },
     ];
   }
-  const adjDone = rec.state === 'approved' || rec.state === 'task_exported';
+  const doneOrApproved = rec.state === 'approved' || rec.state === 'task_exported';
+  const readyForApproval = rec.state === 'awaiting_approval' && pendingAdjCount === 0;
   return [
     { key: 'requirements', label: '拆解需求', status: statusOf('requirements', has('requirements_confirmed')) },
     { key: 'draft', label: '首席起草', status: statusOf('draft', has('draft')) },
     { key: 'review', label: '复核独立评审', status: statusOf('review', has('review')) },
     { key: 'revise', label: '首席修订', status: statusOf('revise', has('revise')) },
-    { key: 'adjudication', label: '你裁决分歧', status: adjDone ? 'done' : rec.state === 'awaiting_approval' ? 'current' : 'pending' },
-    { key: 'approval', label: '批准方案', status: rec.state === 'approved' || rec.state === 'task_exported' ? 'done' : 'pending' },
+    { key: 'adjudication', label: '你裁决分歧', status: doneOrApproved || readyForApproval ? 'done' : rec.state === 'awaiting_approval' ? 'current' : 'pending' },
+    { key: 'approval', label: '批准方案', status: doneOrApproved ? 'done' : readyForApproval ? 'current' : 'pending' },
   ];
 }
 
@@ -469,7 +470,7 @@ export async function inspectDiscussion(
     safetyIssues: checksBody?.safetyIssues ?? [],
     reviewRecord,
     budget: formatBudget(rec),
-    steps: buildStepStatuses(rec, opts.activeStep ?? null),
+    steps: buildStepStatuses(rec, opts.activeStep ?? null, pendingAdjudications.length),
     stoppedReason: rec.stoppedReason ?? null,
   };
 }

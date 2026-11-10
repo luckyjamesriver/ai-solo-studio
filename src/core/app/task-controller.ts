@@ -13,6 +13,7 @@ import { validateExtraDir } from '../executor/extra-dirs.js';
 import type { Executor } from '../executor/types.js';
 import type { Task } from '../task/model.js';
 import { buildTaskView, extraDirKey, type TaskView } from './task-view.js';
+import { classifyTaskState, type TaskClassification } from './task-state-view.js';
 import type { ModePreference, TaskPrefs } from './prefs.js';
 import {
   convertApprovedPlanToTaskPlan,
@@ -96,6 +97,15 @@ export class TaskController {
     return this.active.has(id) || this.ops.has(id) || this.d().isRunning(id);
   }
 
+  /** 按当前实时运行与讨论状态归类任务（供工作台与项目侧栏角标使用）。 */
+  async classifyTask(t: Task): Promise<TaskClassification> {
+    const discussion = await this.d().getClassifyHint(t);
+    return classifyTaskState(t, {
+      isLiveRunning: this.isTaskActive(t.id),
+      ...(discussion ? { discussion } : {}),
+    });
+  }
+
   async listTasksRaw(): Promise<Task[]> {
     await this.ready();
     return this.r().store.list();
@@ -117,7 +127,13 @@ export class TaskController {
       (t.state === 'reviewing' && !!t.exit && (t.exit.kind !== 'exited' || t.exit.code !== 0));
     const worktreeChanges =
       t.worktree && (running || stoppedOrFailed) ? await G.diffSummary(t.worktree).catch(() => undefined) : undefined;
-    const v = buildTaskView(t, { scripts, running, ...(worktreeChanges ? { worktreeChanges } : {}) });
+    const discussion = await this.d().getClassifyHint(t);
+    const v = buildTaskView(t, {
+      scripts,
+      running,
+      ...(worktreeChanges ? { worktreeChanges } : {}),
+      ...(discussion ? { discussion } : {}),
+    });
     const err = this.startErrors.get(t.id);
     if (err && !v.startFailure) v.startFailure = err;
     return v;
