@@ -61,13 +61,28 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
   const [error, setError] = useState<string | null>(null);
   const [savingCriteria, setSavingCriteria] = useState(false);
   const savePromiseRef = useRef<Promise<unknown> | null>(null);
+  const modeDirtyRef = useRef(false);
+  const prevTaskIdRef = useRef(task.id);
+  const prevUpdatedAtRef = useRef(task.updatedAt);
 
+  const criteriaKey = task.criteria.join('\u0000');
   useEffect(() => {
-    setGoal(task.goal);
-    setCriteriaRows(task.criteria);
-    setMode(task.state !== 'draft' ? task.mode : preferredMode);
-    setNetwork(task.network);
-  }, [task.id, task.updatedAt, task.state, task.goal, task.criteria, task.mode, task.network, preferredMode]);
+    const idChanged = prevTaskIdRef.current !== task.id;
+    const versionChanged = prevUpdatedAtRef.current !== task.updatedAt;
+    prevTaskIdRef.current = task.id;
+    prevUpdatedAtRef.current = task.updatedAt;
+    if (idChanged) {
+      modeDirtyRef.current = false;
+    }
+    if (idChanged || versionChanged) {
+      setGoal(task.goal);
+      setCriteriaRows(task.criteria);
+      setNetwork(task.network);
+    }
+    if (idChanged || (versionChanged && !modeDirtyRef.current) || (!modeDirtyRef.current && task.state === 'draft')) {
+      setMode(task.state !== 'draft' ? task.mode : preferredMode);
+    }
+  }, [task.id, task.updatedAt, task.state, task.goal, criteriaKey, task.mode, task.network, preferredMode]);
 
   const cleanCriteria = (rows: string[]) => rows.map((s) => s.trim()).filter(Boolean);
   const form = (m = mode, rows = criteriaRows): PlanInput => ({
@@ -116,11 +131,13 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
 
   const clickStart = async () => {
     setError(null);
+    const chosenMode = mode;
     try {
       await savePromiseRef.current?.catch(() => undefined);
-      const saved = await studio().savePlan(projectId, task.id, form());
+      const saved = await studio().savePlan(projectId, task.id, form(chosenMode));
+      modeDirtyRef.current = false;
       onChanged(saved);
-      if (mode === 'full_trust') setShowTrust(true); // 完全信任：每个任务都要重新确认，偏好不能跳过
+      if (chosenMode === 'full_trust') setShowTrust(true); // 完全信任：每个任务都要重新确认，偏好不能跳过
       else onChanged(await studio().startTask(projectId, task.id, false));
     } catch (e) { fail(e); }
   };
@@ -154,6 +171,7 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
     try { onChanged(await studio().startTask(projectId, task.id, true)); } catch (e) { fail(e); }
   };
   const cancelTrust = async () => {
+    modeDirtyRef.current = false;
     setMode('standard');
     const p = studio().savePlan(projectId, task.id, form('standard'));
     savePromiseRef.current = p;
@@ -276,7 +294,10 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
                   name="mode"
                   data-testid="mode-standard"
                   checked={mode === 'standard'}
-                  onChange={() => setMode('standard')}
+                  onChange={() => {
+                    modeDirtyRef.current = true;
+                    setMode('standard');
+                  }}
                 />
                 <span>
                   <strong>{COPY.standardTitle}</strong>
@@ -345,7 +366,10 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
                   name="mode"
                   data-testid="mode-full-trust"
                   checked={mode === 'full_trust'}
-                  onChange={() => setMode('full_trust')}
+                  onChange={() => {
+                    modeDirtyRef.current = true;
+                    setMode('full_trust');
+                  }}
                 />
                 <span>
                   <strong>{COPY.fullTrustTitle}</strong>
