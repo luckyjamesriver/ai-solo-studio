@@ -880,7 +880,12 @@ export function SettingsPage({
             </div>
           </section>
 
-          <section className="box" aria-labelledby="sub-cli-h" data-testid="settings-subscription-clis">
+          <section
+            className="box"
+            aria-labelledby="sub-cli-h"
+            style={{ gridColumn: '1 / -1' }}
+            data-testid="settings-subscription-clis"
+          >
             <h2 id="sub-cli-h">本机订阅 CLI 执行者（风险自担）</h2>
             <p className="muted" style={{ marginTop: 0 }}>
               默认仅接入 Codex 与上方官方 API Key。如你已有本机订阅工具并了解对应服务条款与隔离边界，可手动阅读并确认风险后接入。
@@ -888,7 +893,7 @@ export function SettingsPage({
             </p>
             <div className="stack" style={{ gap: '10px', marginTop: '10px' }}>
               {(aiSettings?.subscriptionClis ?? []).length === 0 ? (
-                <p className="muted">暂未载入本机订阅 CLI 目录。</p>
+                <p className="muted">{!aiSettings ? '正在检测本机订阅 CLI 状态…' : '暂未载入本机订阅 CLI 目录。'}</p>
               ) : (
                 (aiSettings?.subscriptionClis ?? []).map((s: SubscriptionCliView) => (
                   <div
@@ -1059,10 +1064,14 @@ export function SettingsPage({
                   <strong>隔离边界：</strong>
                   {subModalItem.isolationHonesty}
                 </p>
-                <label className="row" style={{ marginTop: '12px', gap: '8px', alignItems: 'flex-start', cursor: 'pointer' }}>
+                <label
+                  className="row"
+                  style={{ marginTop: '12px', gap: '8px', alignItems: 'flex-start', flexWrap: 'nowrap', cursor: 'pointer' }}
+                >
                   <input
                     type="checkbox"
                     data-testid="subscription-risk-ack"
+                    style={{ width: 'auto', flex: '0 0 auto', marginTop: '4px' }}
                     checked={subRiskChecked}
                     onChange={(e) => setSubRiskChecked(e.target.checked)}
                   />

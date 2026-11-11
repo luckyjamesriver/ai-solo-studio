@@ -25,6 +25,7 @@ const stage5bShotDir = process.env.E2E_STAGE5B_SHOT_DIR;
 const stage6ShotDir = process.env.E2E_STAGE6_SHOT_DIR;
 const stage7ShotDir = process.env.E2E_STAGE7_SHOT_DIR;
 const stage8aShotDir = process.env.E2E_STAGE8A_SHOT_DIR;
+const stage8bShotDir = process.env.E2E_STAGE8B_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -121,6 +122,12 @@ const stage7Shot = async (page: Page, name: string) => {
 const stage8aShot = async (page: Page, name: string) => {
   if (!stage8aShotDir) return;
   const target = path.join(stage8aShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
+const stage8bShot = async (page: Page, name: string) => {
+  if (!stage8bShotDir) return;
+  const target = path.join(stage8bShotDir, `${name}.png`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
@@ -667,7 +674,7 @@ describe('施工模式界面', () => {
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
     expect(r.forgedProject).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'deleteProviderProfile', 'detectEnvironment', 'discardTask', 'editReworkPermissions', 'exportExternalTask', 'fetchProviderModels', 'getAcceptanceView', 'getAiSettings', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getProjectRoles', 'getSaveHistory', 'getTask', 'getWorkbench', 'importExternalReport', 'initProject', 'listOpenProjects', 'listProviderCatalog', 'listProviderProfiles', 'listTasks', 'modifyDiscussionRequirements', 'onSaveProgress', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealHandoff', 'revealProject', 'reworkConflictTask', 'reworkExternalTask', 'reworkTask', 'saveAiRoles', 'saveAndTestProvider', 'saveClaudeKey', 'saveDefaultExecutor', 'savePlan', 'saveProjectBrief', 'saveProjectExecutor', 'saveProjectRoles', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'setTaskExecutor', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoFromHistory', 'undoSave']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'deleteProviderProfile', 'detectEnvironment', 'disableSubscriptionCli', 'discardTask', 'editReworkPermissions', 'enableSubscriptionCli', 'exportExternalTask', 'fetchProviderModels', 'getAcceptanceView', 'getAiSettings', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getProjectRoles', 'getSaveHistory', 'getTask', 'getWorkbench', 'importExternalReport', 'initProject', 'listOpenProjects', 'listProviderCatalog', 'listProviderProfiles', 'listSubscriptionClis', 'listTasks', 'modifyDiscussionRequirements', 'onSaveProgress', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealHandoff', 'revealProject', 'reworkConflictTask', 'reworkExternalTask', 'reworkTask', 'saveAiRoles', 'saveAndTestProvider', 'saveClaudeKey', 'saveDefaultExecutor', 'savePlan', 'saveProjectBrief', 'saveProjectExecutor', 'saveProjectRoles', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'setTaskExecutor', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoFromHistory', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
@@ -3082,6 +3089,280 @@ describe('阶段 8A · 多 AI API 执行者接入、连接测试、工具执行�
     await a.page.getByTestId('tab-tasks').click();
     await newTask(a.page, '删除执行者后禁止直接开工的任务');
     expect(await a.page.getByTestId('executor-info').innerText()).toContain('未设置');
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('plan-error').waitFor();
+    expect(await a.page.getByTestId('plan-error').innerText()).toContain('当前执行者未设置');
+  });
+});
+
+describe('阶段 8B：本地订阅制 CLI 知情自担风险接入 E2E（Claude Code / Antigravity / Cursor）', () => {
+  it('默认不自动启用，逐一弹窗确认风险，通过 ACP 完成任务副本修改与越界拦截，停用后回退 unset', async () => {
+    const fakeBin = mk('s8b-bin');
+    const installBin = (name: string, mjsBody: string) => {
+      const mjs = path.join(fakeBin, `${name}.mjs`);
+      const sh = path.join(fakeBin, name);
+      fs.writeFileSync(mjs, mjsBody, 'utf8');
+      fs.writeFileSync(sh, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(mjs)} "$@"\n`, {
+        mode: 0o755,
+      });
+    };
+
+    installBin(
+      'claude',
+      `import fs from 'node:fs';
+import path from 'node:path';
+const args = process.argv.slice(2);
+if (args[0] === '--version') {
+  console.log('2.1.319 (Claude Code)');
+  process.exit(0);
+}
+if (args[0] === 'auth' && args[1] === 'status') {
+  console.log(JSON.stringify({ loggedIn: true, authMethod: 'oauth' }));
+  process.exit(0);
+}
+if ('ANTHROPIC_API_KEY' in process.env) {
+  console.error('ANTHROPIC_API_KEY must be stripped');
+  process.exit(2);
+}
+for (const flag of ['--safe-mode', '--restricted', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence']) {
+  if (!args.includes(flag)) {
+    console.error('Missing safe flag: ' + flag);
+    process.exit(2);
+  }
+}
+fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<h1>由 Claude Code 本机订阅完成</h1>\\n', 'utf8');
+console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Claude Code 完成更新' }] } }));
+console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'ok' }));
+process.exit(0);
+`,
+    );
+
+    installBin(
+      'agy',
+      `import fs from 'node:fs';
+import path from 'node:path';
+import readline from 'node:readline';
+const args = process.argv.slice(2);
+if (args[0] === '--version') {
+  console.log('1.5.3');
+  process.exit(0);
+}
+if (args[0] === 'models') {
+  console.log('gemini-2.5-pro');
+  process.exit(0);
+}
+if ('ANTHROPIC_API_KEY' in process.env || 'OPENAI_API_KEY' in process.env) {
+  console.error('API keys must be stripped');
+  process.exit(2);
+}
+if (!args.includes('acp') || !args.includes('--sandbox') || !args.includes('--include-default-customizations=false')) {
+  console.error('Missing safe ACP args: ' + JSON.stringify(args));
+  process.exit(2);
+}
+if (args.some((x) => /yolo|trust|dangerously/i.test(x))) {
+  console.error('Forbidden bypass flag');
+  process.exit(2);
+}
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+const pending = new Map();
+const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+let promptReqId = null;
+rl.on('line', (line) => {
+  if (!line.trim()) return;
+  const msg = JSON.parse(line);
+  if ('id' in msg && !msg.method) {
+    const p = pending.get(msg.id);
+    if (p) { pending.delete(msg.id); p(msg.result); }
+    return;
+  }
+  if (msg.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: false } } });
+    return;
+  }
+  if (msg.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-agy-e2e' } });
+    return;
+  }
+  if (msg.method === 'session/prompt') {
+    promptReqId = msg.id;
+    const reqPerm = (rpcId, params) => new Promise((resolve) => {
+      pending.set(rpcId, resolve);
+      send({ jsonrpc: '2.0', id: rpcId, method: 'session/request_permission', params });
+    });
+    (async () => {
+      const r1 = await reqPerm(100, {
+        sessionId: 'sess-agy-e2e',
+        toolCall: { toolCallId: 'tc_oob', title: 'Write /etc/evil.txt', kind: 'edit', locations: [{ path: '/etc/evil.txt' }] },
+        options: [{ optionId: 'allow-once', kind: 'allow-once' }, { optionId: 'reject-once', kind: 'reject-once' }],
+      });
+      if (r1?.outcome?.optionId !== 'reject-once') throw new Error('Expected reject-once for OOB edit');
+      const r2 = await reqPerm(101, {
+        sessionId: 'sess-agy-e2e',
+        toolCall: { toolCallId: 'tc_ok', title: 'Write index.html', kind: 'edit', locations: [{ path: path.join(process.cwd(), 'index.html') }] },
+        options: [{ optionId: 'allow-once', kind: 'allow-once' }, { optionId: 'reject-once', kind: 'reject-once' }],
+      });
+      if (r2?.outcome?.optionId !== 'allow-once') throw new Error('Expected allow-once inside worktree');
+      fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<h1>由 Antigravity 本机订阅完成</h1>\\n', 'utf8');
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: 'sess-agy-e2e',
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '已完成首页修改并核验拒绝越界操作。' } },
+        },
+      });
+      send({ jsonrpc: '2.0', id: promptReqId, result: { stopReason: 'end_turn' } });
+      setTimeout(() => process.exit(0), 20);
+    })().catch((e) => { console.error(e); process.exit(3); });
+  }
+});
+`,
+    );
+
+    installBin(
+      'agent',
+      `const args = process.argv.slice(2);
+if (args[0] === '--version') {
+  console.log('2026.11.05');
+  process.exit(0);
+}
+if (args[0] === 'status') {
+  console.log(JSON.stringify({ status: 'unauthenticated', isAuthenticated: false }));
+  process.exit(0);
+}
+process.exit(0);
+`,
+    );
+
+    const data = mk('s8b-e2e-data');
+    const proj = gitProject('stage8b-sub-cli-site', {
+      'index.html': '<h1>初始首页</h1>\n',
+    });
+
+    const a = await launch(data, {
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
+      ANTHROPIC_API_KEY: 'sk-parent-should-be-stripped',
+      OPENAI_API_KEY: 'sk-openai-should-be-stripped',
+    });
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await a.page.getByTestId('onboarding-continue').click();
+    await a.page.getByTestId('workbench').waitFor();
+
+    // 1. 打开设置 → 本机订阅 CLI 默认不自动启用，Cursor 识别为未登录
+    await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId('settings-subscription-clis').waitFor();
+    await a.page.getByTestId('sub-cli-open-claude_cli').waitFor();
+    expect(await a.page.getByTestId('sub-cli-open-agy').isVisible()).toBe(true);
+    expect(await a.page.getByTestId('sub-cli-card-cursor').innerText()).toContain('未登录');
+    const initSelectHtml = await a.page.getByTestId('global-role-executor').innerHTML();
+    expect(initSelectHtml).not.toContain('sub:agy');
+    expect(initSelectHtml).not.toContain('sub:claude_cli');
+    await a.page.getByTestId('settings-subscription-clis').scrollIntoViewIfNeeded();
+    await stage8bShot(a.page, '01-settings-sub-clis-initial');
+
+    // 2. 填写模型后打开 Antigravity 风险弹窗：未勾选确认前禁止点击确认
+    await a.page.getByTestId('sub-cli-model-agy').fill('gemini-2.5-pro');
+    await a.page.getByTestId('sub-cli-open-agy').click();
+    await a.page.getByTestId('subscription-risk-dialog').waitFor();
+    expect(await a.page.getByTestId('subscription-risk-confirm').isDisabled()).toBe(true);
+    await stage8bShot(a.page, '02-risk-modal-agy');
+
+    await a.page.getByTestId('subscription-risk-ack').check();
+    expect(await a.page.getByTestId('subscription-risk-confirm').isDisabled()).toBe(false);
+    await stage8bShot(a.page, '03-risk-modal-checked');
+
+    await a.page.getByTestId('subscription-risk-confirm').click();
+    await expect_(a.page.getByTestId('subscription-risk-dialog')).toHaveCount(0);
+    await a.page.getByTestId('sub-cli-disable-agy').waitFor();
+    expect(await a.page.getByTestId('sub-cli-card-agy').innerText()).toContain('已启用（风险自担）');
+
+    // Cursor 虽勾选确认但未登录，弹窗内如实提示未登录并阻止启用
+    await a.page.getByTestId('sub-cli-open-cursor').click();
+    await a.page.getByTestId('subscription-risk-dialog').waitFor();
+    await a.page.getByTestId('subscription-risk-ack').check();
+    await a.page.getByTestId('subscription-risk-confirm').click();
+    await a.page.getByTestId('subscription-risk-error').waitFor();
+    expect(await a.page.getByTestId('subscription-risk-error').innerText()).toContain('尚未登录');
+    await a.page.getByTestId('subscription-risk-cancel').click();
+    await expect_(a.page.getByTestId('subscription-risk-dialog')).toHaveCount(0);
+
+    // 再启用 Claude Code，并把 Antigravity 设为全局默认执行者
+    await a.page.getByTestId('sub-cli-model-claude_cli').fill('sonnet');
+    await a.page.getByTestId('sub-cli-open-claude_cli').click();
+    await a.page.getByTestId('subscription-risk-dialog').waitFor();
+    await a.page.getByTestId('subscription-risk-ack').check();
+    await a.page.getByTestId('subscription-risk-confirm').click();
+    await expect_(a.page.getByTestId('subscription-risk-dialog')).toHaveCount(0);
+    await a.page.getByTestId('sub-cli-disable-claude_cli').waitFor();
+
+    await a.page.getByTestId('sub-cli-set-default-agy').click();
+    await a.page.waitForFunction(
+      () => (document.querySelector('[data-testid="global-role-executor"]') as HTMLSelectElement | null)?.value === 'sub:agy',
+    );
+    await a.page.getByTestId('sub-cli-card-agy').scrollIntoViewIfNeeded();
+    await stage8bShot(a.page, '04-settings-sub-clis-enabled');
+
+    // 3. 外发说明动态列出已启用的订阅 CLI 与风控说明
+    await a.page.getByTestId('tab-settings-disclosure').click();
+    await a.page.getByRole('button', { name: '查看外发说明' }).click();
+    await a.page.getByTestId('disclosure').waitFor();
+    const discText = await a.page.getByTestId('disclosure').innerText();
+    expect(discText).toContain('Antigravity（本机订阅）');
+    expect(discText).toContain('Claude Code（本机订阅）');
+    expect(discText).toContain('本机订阅 CLI（风险自担');
+    await stage8bShot(a.page, '05-disclosure-subscription-cli');
+    await acceptDisclosure(a.page);
+
+    // 4. 打开项目 → #04-plan 查看执行者选项与诚实隔离提示，并启动 Antigravity ACP 施工
+    await stubDialog(a.app, proj);
+    await a.page.getByTestId('nav-open-project').click();
+    await a.page.getByTestId('project').waitFor();
+
+    await newTask(a.page, '用 Antigravity 订阅更新首页标题');
+    expect(await a.page.getByTestId('executor-info').innerText()).toContain('Antigravity CLI · gemini-2.5-pro（本机订阅）');
+    await a.page.getByTestId('plan-executor-honesty').waitFor();
+    const honestyText = await a.page.getByTestId('plan-executor-honesty').innerText();
+    expect(honestyText).toContain('拒绝副本外写操作');
+    await a.page.getByTestId('plan-executor-honesty').scrollIntoViewIfNeeded();
+    await stage8bShot(a.page, '06-plan-subscription-selector-honesty');
+
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    expect(await a.page.getByTestId('changes').innerText()).toContain('由 Antigravity 本机订阅完成');
+    await a.page.getByTestId('denied').waitFor();
+    const deniedText = await a.page.getByTestId('denied').innerText();
+    expect(deniedText).toContain('想修改任务副本以外的位置，已拦下');
+    expect(deniedText).not.toContain('/etc/evil.txt');
+    expect(fs.readFileSync(path.join(proj, 'index.html'), 'utf8')).toContain('初始首页');
+    await stage8bShot(a.page, '07-acceptance-acp-blocked');
+
+    // 逐条确认已拦下操作，再完成验收与保存
+    for (;;) {
+      const ackBtns = a.page.locator('[data-testid="denied"] button:not([disabled])');
+      if ((await ackBtns.count()) === 0) break;
+      await ackBtns.first().click();
+      await a.page.waitForTimeout(100);
+    }
+    await confirmThenSave(a.page);
+    expect(fs.readFileSync(path.join(proj, 'index.html'), 'utf8')).toContain('由 Antigravity 本机订阅完成');
+
+    // 5. 停用 Antigravity → 全局默认安全回退「未设置」，新建任务拒绝启动
+    await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId('sub-cli-disable-agy').click();
+    await a.page.waitForFunction(
+      () => (document.querySelector('[data-testid="global-role-executor"]') as HTMLSelectElement | null)?.value === 'unset',
+    );
+    await a.page.getByTestId('global-executor-problem').waitFor();
+    expect(await a.page.getByTestId('global-executor-problem').innerText()).toContain('未设置');
+    await a.page.getByTestId('global-executor-problem').scrollIntoViewIfNeeded();
+    await stage8bShot(a.page, '08-settings-disabled-unset');
+
+    await a.page.getByTestId('nav-workbench').click();
+    await a.page.getByTestId('workbench').waitFor();
+    await a.page.getByRole('button', { name: 'stage8b-sub-cli-site' }).first().click();
+    await a.page.getByTestId('project').waitFor();
+    await a.page.getByTestId('tab-tasks').click();
+    await newTask(a.page, '停用订阅 CLI 后禁止启动的任务');
     await a.page.getByTestId('start-button').click();
     await a.page.getByTestId('plan-error').waitFor();
     expect(await a.page.getByTestId('plan-error').innerText()).toContain('当前执行者未设置');
