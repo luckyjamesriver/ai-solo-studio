@@ -99,10 +99,10 @@ describe('阶段 8C · 脱离 Codex 的独立沙箱检查运行器（Seatbelt �
     });
     expect(missingRun.status).toBe('unavailable');
 
-    // 未通过 fullTrust 记录确认门禁时，禁止走完全信任放行
+    // 未通过 fullTrust 记录确认门禁时，禁止走完全信任放行（以模拟 macOS 二进制隔离平台差异）
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-s8c-gate-'));
     cleanDirs.push(dir);
-    const runner = new SeatbeltSandboxRunner();
+    const runner = new SeatbeltSandboxRunner({ platform: 'darwin', command: process.execPath });
     const noRecords: FullTrustRecords = { get: async () => null };
     const deniedFullTrust = await runner.runCommand({
       cwd: dir,
