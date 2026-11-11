@@ -123,9 +123,16 @@ export interface PendingPermission {
   risk: RiskAssessment;
 }
 
+export interface ResolvedExecutor {
+  executor: Executor;
+  sandboxRunner?: SandboxCommandRunner;
+}
+
 export interface RunnerOptions {
   repo: string;
   executor: Executor;
+  /** 按执行者编号动态构造执行体（缺省退回 executor；允许非 Codex 执行体独立携带沙箱运行器） */
+  resolveExecutor?: (executorId?: string) => Promise<ResolvedExecutor>;
   autoApprove?: AutoApproveRule;
   timeoutMs?: number;
   /** 测试中可关闭检查 */
@@ -148,6 +155,7 @@ export interface RunnerOptions {
 export class TaskRunner extends EventEmitter {
   readonly store: TaskStore;
   private runs = new Map<string, ExecutorRun>();
+  private taskSandboxes = new Map<string, SandboxCommandRunner | undefined>();
   /** start() 已进入、尚未结束的任务；停止请求只要落在这个窗口内就必须生效。 */
   private starting = new Set<string>();
   /** 在执行体登记之前收到的停止请求 */
@@ -159,6 +167,32 @@ export class TaskRunner extends EventEmitter {
       throw new Error('关闭自动检查的选项仅限测试使用');
     }
     this.store = new TaskStore(opts.repo, opts.storeOptions);
+  }
+
+  private async pickExecutorForTask(preferredId?: string): Promise<ResolvedExecutor> {
+    if (this.opts.resolveExecutor) return this.opts.resolveExecutor(preferredId);
+    return {
+      executor: this.opts.executor,
+      ...(this.opts.sandboxRunner ?? this.opts.executor.sandboxRunner
+        ? { sandboxRunner: this.opts.sandboxRunner ?? this.opts.executor.sandboxRunner }
+        : {}),
+    };
+  }
+
+  private async sandboxForTask(t: Task): Promise<SandboxCommandRunner | undefined> {
+    if (this.opts.sandboxRunner) return this.opts.sandboxRunner;
+    if (this.taskSandboxes.has(t.id)) return this.taskSandboxes.get(t.id);
+    if (this.opts.resolveExecutor) {
+      try {
+        const picked = await this.opts.resolveExecutor(t.executorId);
+        const sr = picked.sandboxRunner ?? picked.executor.sandboxRunner;
+        this.taskSandboxes.set(t.id, sr);
+        return sr;
+      } catch {
+        return undefined;
+      }
+    }
+    return this.opts.executor.sandboxRunner;
   }
 
   private log(task: Task, kind: TimelineEntry['kind'], text: string, source?: 'host') {
@@ -187,15 +221,26 @@ export class TaskRunner extends EventEmitter {
     return t;
   }
 
-  async create(request: string): Promise<Task> {
+  async create(request: string, initialExecutor?: { id: string; displayName: string }): Promise<Task> {
     if (!(await G.isRepo(this.opts.repo))) throw new Error('项目还不是 Git 仓库，请先在向导中初始化。');
     const now = new Date().toISOString();
+    let executorId = initialExecutor?.id ?? this.opts.executor.id;
+    let executorName = initialExecutor?.displayName ?? this.opts.executor.displayName;
+    if (!initialExecutor && this.opts.resolveExecutor) {
+      try {
+        const picked = await this.pickExecutorForTask();
+        executorId = picked.executor.id;
+        executorName = picked.executor.displayName;
+      } catch {
+        // 允许在尚未配置执行者时先创建草稿任务与开展讨论
+      }
+    }
     const task: Task = {
       id: TaskStore.newId(),
       request,
       state: 'draft',
-      executorId: this.opts.executor.id,
-      executorName: this.opts.executor.displayName,
+      executorId,
+      executorName,
       criteria: [],
       denied: [],
       deniedAcks: [],
@@ -208,6 +253,23 @@ export class TaskRunner extends EventEmitter {
     this.log(task, 'state', '创建任务');
     await this.persist(task);
     return task;
+  }
+
+  /** 允许用户在未开工阶段为当前任务单独指定执行者。 */
+  async setTaskExecutor(id: string, executorId: string, executorName: string): Promise<Task> {
+    const t = await this.load(id);
+    if (!['draft', 'clarifying', 'planned', 'approved'].includes(t.state)) {
+      throw new Error('当前阶段不能切换执行者，请等待本轮结束或新建任务。');
+    }
+    t.executorId = executorId;
+    t.executorName = executorName;
+    if (t.state === 'approved') {
+      t.state = 'planned';
+      t.reapproveNotice = '已更换本次任务的执行者，请重新确认后再开工。';
+    }
+    this.log(t, 'state', `指定执行者：${executorName}`);
+    await this.persist(t);
+    return t;
   }
 
   async setPlan(id: string, input: Omit<Plan, 'capabilities'> & { capabilities?: Partial<Capabilities> }): Promise<Task> {
@@ -296,9 +358,13 @@ export class TaskRunner extends EventEmitter {
       const r = await validateExtraDir(d, { repo: this.opts.repo, worktree: t.worktree.path });
       if (!r.ok) throw new Error(`不能让 AI 修改“${d}”：${r.reason}`);
     }
+    const picked = await this.pickExecutorForTask(t.executorId);
+    const activeExecutor = picked.executor;
+    const activeSandbox = this.opts.sandboxRunner ?? picked.sandboxRunner ?? activeExecutor.sandboxRunner;
+    this.taskSandboxes.set(t.id, activeSandbox);
     t.executionKind = 'internal';
-    t.executorId = this.opts.executor.id;
-    t.executorName = this.opts.executor.displayName;
+    t.executorId = activeExecutor.id;
+    t.executorName = activeExecutor.displayName;
     // 报告绑定 Git 状态：记录开始时的主线 HEAD、工作树路径与其 HEAD
     t.gitStart = {
       mainHeadAtStart: await G.headSha(this.opts.repo),
@@ -344,7 +410,7 @@ export class TaskRunner extends EventEmitter {
     t.denied = [];
     t.deniedAcks = [];
     const liveDenied: DeniedOperation[] = [];
-    const run = this.opts.executor.start({
+    const run = activeExecutor.start({
       cwd: t.worktree.path,
       prompt: effectivePrompt,
       timeoutMs: this.opts.timeoutMs ?? 20 * 60_000,
@@ -743,8 +809,9 @@ export class TaskRunner extends EventEmitter {
     let checks: CheckResult[] = [];
     let checkProofs: StoredCheckProof[] = [];
     if (this.opts.runChecks !== false) {
+      const checkSandbox = await this.sandboxForTask(t);
       for (const name of ['build', 'test'] as const) {
-        const c = await runCheck(wt.path, name, this.opts.sandboxRunner ?? this.opts.executor.sandboxRunner, {
+        const c = await runCheck(wt.path, name, checkSandbox, {
           authorizedDigest: t.checkAuth?.digest,
           ...(t.plan?.capabilities ? { capabilities: t.plan.capabilities } : {}),
           taskId: t.id,
@@ -1328,7 +1395,7 @@ export class TaskRunner extends EventEmitter {
             failed: [],
           };
     }
-    return runProjectChecks(trialPath, this.opts.sandboxRunner ?? this.opts.executor.sandboxRunner, {
+    return runProjectChecks(trialPath, await this.sandboxForTask(t), {
       authorizedDigest: t.checkAuth?.digest,
       ...(t.plan?.capabilities ? { capabilities: t.plan.capabilities } : {}),
       taskId: t.id,
