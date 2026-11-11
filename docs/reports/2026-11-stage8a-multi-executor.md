@@ -121,4 +121,7 @@
 - `npm run test:e2e`：**Test Files 1 passed (1) · Tests 52 passed (52)**（无跳过、无失败；含 Stage 8A 新增端到端用例与全部 Stage 1～7 回归）
 
 ### GitHub Actions 双平台 CI
-- 待推送 `rebuild` 并通过 `ubuntu-latest` 与 `macos-latest` 后补全具体 run 链接与耗时。
+- 代码及报告首推 run [`43020433400`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/43020433400)（提交 [`4ee5444`](https://github.com/luckyjamesriver/ai-solo-studio/commit/4ee5444)）：
+  - **`test (ubuntu-latest)`**：`success`（1m 22s，`npm run typecheck`、`npm test`、`npm run build` 全绿）
+  - **`test (macos-latest)`**：`success`（10m 51s，`npm run typecheck`、`npm test`、`npm run build`、`Electron end-to-end (macOS)` 包含阶段 8A 在内的全量 52 项 E2E 全绿）
+
