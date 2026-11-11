@@ -1,5 +1,6 @@
 import type { ApiProviderPreset } from '../executor/api/catalog.js';
 import type { SubscriptionCliId } from '../executor/cli/subscriptions.js';
+import type { StandaloneSandboxStatus } from '../executor/sandbox/index.js';
 import { DEFAULT_CLAUDE_API_MODEL } from '../thinking/claude-api.js';
 import { AppStore, type AppStoreOptions } from './app-store.js';
 import type { ClaudeKeyStatus } from './claude-key.js';
@@ -85,6 +86,7 @@ export interface GlobalAiSettingsView {
   verifiedExecutors?: VerifiedExecutorOption[];
   defaultExecutor?: string;
   executorProblem?: string | null;
+  standaloneSandbox?: StandaloneSandboxStatus;
 }
 
 export interface ProjectRolesView {

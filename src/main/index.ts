@@ -6,7 +6,9 @@ import { resolveHostTools, resolveTool } from '../core/env/path.js';
 import { validateProjectPath } from '../core/env/project-path.js';
 import { runHealthCheck, type HealthReport } from '../core/env/health.js';
 import * as G from '../core/git/git.js';
+import type { SandboxCommandRunner } from '../core/checks/scripts.js';
 import type { DetectResult } from '../core/executor/types.js';
+import { createStandaloneSandboxRunner, type StandaloneSandboxResult } from '../core/executor/sandbox/index.js';
 import { CodexExecutor, VERIFIED_CODEX_VERSION } from '../core/executor/adapters/codex.js';
 import { ApiAgentExecutor } from '../core/executor/adapters/api-agent.js';
 import { ClaudeCodeExecutor } from '../core/executor/adapters/claude-code.js';
@@ -97,6 +99,25 @@ const TOOLS = ['git', 'node', 'npm', 'codex'] as const;
 
 const SUB_PROBE_TTL_MS = 30_000;
 const subProbeCache = new Map<SubscriptionCliId, { resolvedPath: string; at: number; detect: DetectResult }>();
+let standaloneSandboxCache: Promise<StandaloneSandboxResult> | null = null;
+
+function getStandaloneSandbox(): Promise<StandaloneSandboxResult> {
+  if (!standaloneSandboxCache) standaloneSandboxCache = createStandaloneSandboxRunner();
+  return standaloneSandboxCache;
+}
+
+async function resolveNonCodexSandboxRunner(
+  codexPath: string,
+  hasCodexTool: boolean,
+): Promise<SandboxCommandRunner | undefined> {
+  const standalone = await getStandaloneSandbox();
+  if (standalone.runner) return standalone.runner;
+  if (hasCodexTool) {
+    const codexAvail = await detectCodexAvailability(codexPath);
+    if (codexAvail.available) return new CodexExecutor({ command: codexPath }).sandboxRunner;
+  }
+  return undefined;
+}
 
 async function probeSubscriptionCli(
   cliId: SubscriptionCliId,
@@ -157,11 +178,12 @@ async function getVerifiedExecutorsForMain(explicitCodexCmd?: string, onlyIfEnab
 }
 
 async function getGlobalAiView(): Promise<GlobalAiSettingsView> {
-  const [{ codex, profiles, subscriptions, verified }, claudeKey, roles, defaultExecutor] = await Promise.all([
+  const [{ codex, profiles, subscriptions, verified }, claudeKey, roles, defaultExecutor, standalone] = await Promise.all([
     getVerifiedExecutorsForMain(),
     claudeKeyStore().status(),
     aiSettingsStore().getGlobalRoles(),
     aiSettingsStore().getDefaultExecutor(),
+    getStandaloneSandbox(),
   ]);
   let executorProblem: string | null = null;
   if (defaultExecutor === 'unset') {
@@ -185,6 +207,7 @@ async function getGlobalAiView(): Promise<GlobalAiSettingsView> {
     verifiedExecutors: verified,
     defaultExecutor,
     executorProblem,
+    standaloneSandbox: standalone.status,
   };
 }
 
@@ -248,10 +271,12 @@ async function createController(dir: string): Promise<TaskController> {
   setSupplementalPath(found.supplementalDirs);
   const codexPath = found.tools.codex?.path ?? 'codex';
   const devPersonalEnabled = !app.isPackaged && process.env[DEV_PERSONAL_ENV] === '1';
+  const standalone = await getStandaloneSandbox();
   return new TaskController({
     repo: dir,
     makeExecutor: () => new CodexExecutor({ command: codexPath }),
     getVerifiedExecutors: async () => (await getVerifiedExecutorsForMain(codexPath, true)).verified,
+    ...(standalone.runner ? { fallbackSandboxRunner: standalone.runner } : {}),
     resolveExecutor: async (executorId?: string) => {
       const target = executorId ?? (await aiSettingsStore().getDefaultExecutor());
       if (target === 'unset') {
@@ -274,26 +299,25 @@ async function createController(dir: string): Promise<TaskController> {
         const foundTool = await resolveTool(spec.binaryName, {});
         const command = foundTool?.path ?? spec.binaryName;
         const model = typeof rec.model === 'string' && rec.model.trim() ? rec.model.trim() : undefined;
-        const codexAvail = found.tools.codex ? await detectCodexAvailability(codexPath) : { available: false };
-        const sandboxExec = codexAvail.available ? new CodexExecutor({ command: codexPath }) : null;
+        const sandboxRunner = await resolveNonCodexSandboxRunner(codexPath, !!found.tools.codex);
         const executor =
           cliIdRaw === 'claude_cli'
             ? new ClaudeCodeExecutor({
                 command,
                 model,
                 riskGate: store,
-                ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+                ...(sandboxRunner ? { sandboxRunner } : {}),
               })
             : new AcpExecutor({
                 cliId: cliIdRaw,
                 command,
                 model,
                 riskGate: store,
-                ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+                ...(sandboxRunner ? { sandboxRunner } : {}),
               });
         return {
           executor,
-          ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+          ...(sandboxRunner ? { sandboxRunner } : {}),
         };
       }
       if (!target.startsWith('api:')) {
@@ -304,8 +328,7 @@ async function createController(dir: string): Promise<TaskController> {
       if (!profile || !profile.executorReady) {
         throw new Error('所选 API 执行者不可用或尚未通过连接测试，请前往「设置 → AI 与角色」重新验证连接。');
       }
-      const codexAvail = found.tools.codex ? await detectCodexAvailability(codexPath) : { available: false };
-      const sandboxExec = codexAvail.available ? new CodexExecutor({ command: codexPath }) : null;
+      const sandboxRunner = await resolveNonCodexSandboxRunner(codexPath, !!found.tools.codex);
       return {
         executor: new ApiAgentExecutor({
           id: target,
@@ -316,9 +339,9 @@ async function createController(dir: string): Promise<TaskController> {
           model: profile.model,
           requiresKey: profile.requiresKey,
           getSecret: () => providerProfileStore().getSecret(profileId),
-          ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+          ...(sandboxRunner ? { sandboxRunner } : {}),
         }),
-        ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+        ...(sandboxRunner ? { sandboxRunner } : {}),
       };
     },
     makeThinkers: (preset) => {
@@ -472,6 +495,7 @@ async function openValidated(input: string): Promise<OpenResult> {
 
 async function health(): Promise<HealthReport & { firstRun?: boolean }> {
   subProbeCache.clear();
+  standaloneSandboxCache = null;
   const appStore = new AppStore(dataDir(), STORE_OPTS);
   if (onboardingInSession === null) {
     onboardingInSession = !(await appStore.isEnvOnboardingDone());

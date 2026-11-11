@@ -22,7 +22,7 @@ import {
   type ViewContext,
 } from '../acceptance/view.js';
 import { TaskRunner, type ResolvedExecutor } from '../task/runner.js';
-import { detectScripts } from '../checks/scripts.js';
+import { detectScripts, type SandboxCommandRunner } from '../checks/scripts.js';
 import { resolveCapabilities } from '../capabilities/model.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
 import type { Executor } from '../executor/types.js';
@@ -108,6 +108,8 @@ export interface ControllerOptions {
   makeThinkerByProvider?: (provider: AiProviderId, model?: string) => Thinker;
   /** 动态按执行者编号构造真实 Executor（含 API Agent 与独立沙箱运行器） */
   resolveExecutor?: (executorId?: string) => Promise<ResolvedExecutor>;
+  /** 当选定非 Codex 执行体或外部交接时使用的独立受限检查沙箱兜底（阶段 8C） */
+  fallbackSandboxRunner?: SandboxCommandRunner;
   /** 获取当前已通过连接测试的全部可用执行者列表 */
   getVerifiedExecutors?: () => Promise<VerifiedExecutorOption[]>;
   /** 保存前检查进度推送事件回调（主进程向渲染层推送实时步骤状态） */
@@ -139,6 +141,7 @@ export class TaskController {
         repo: this.o.repo,
         executor: this.o.makeExecutor(),
         ...(this.o.resolveExecutor ? { resolveExecutor: this.o.resolveExecutor } : {}),
+        ...(this.o.fallbackSandboxRunner ? { fallbackSandboxRunner: this.o.fallbackSandboxRunner } : {}),
         ...(this.o.storeOptions ? { storeOptions: this.o.storeOptions } : {}),
       });
       this.runner.on('save_progress', (ev: SaveProgressEvent) => {

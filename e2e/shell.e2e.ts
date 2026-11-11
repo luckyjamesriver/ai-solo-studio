@@ -26,6 +26,7 @@ const stage6ShotDir = process.env.E2E_STAGE6_SHOT_DIR;
 const stage7ShotDir = process.env.E2E_STAGE7_SHOT_DIR;
 const stage8aShotDir = process.env.E2E_STAGE8A_SHOT_DIR;
 const stage8bShotDir = process.env.E2E_STAGE8B_SHOT_DIR;
+const stage8cShotDir = process.env.E2E_STAGE8C_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -128,6 +129,12 @@ const stage8aShot = async (page: Page, name: string) => {
 const stage8bShot = async (page: Page, name: string) => {
   if (!stage8bShotDir) return;
   const target = path.join(stage8bShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
+const stage8cShot = async (page: Page, name: string) => {
+  if (!stage8cShotDir) return;
+  const target = path.join(stage8cShotDir, `${name}.png`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
@@ -3366,5 +3373,219 @@ process.exit(0);
     await a.page.getByTestId('start-button').click();
     await a.page.getByTestId('plan-error').waitFor();
     expect(await a.page.getByTestId('plan-error').innerText()).toContain('当前执行者未设置');
+  });
+});
+
+describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）', () => {
+  it('未安装或未登录 Codex 时，设置页如实展示独立受限检查可用，DeepSeek API 执行并自动跑通 build/test 后直接已检查保存', async () => {
+    const DS_KEY = 'sk-deepseek-stage8c-standalone-9999';
+    let turn = 0;
+    const dsSrv = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c) => chunks.push(c as Buffer));
+      req.on('end', () => {
+        if (req.headers.authorization !== `Bearer ${DS_KEY}`) {
+          res.writeHead(401, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'invalid api key' } }));
+          return;
+        }
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {
+          model?: string;
+          tools?: { function?: { name?: string } }[];
+        };
+        res.writeHead(200, { 'content-type': 'application/json' });
+        if ((body.tools ?? []).some((t) => t.function?.name === 'PING_TOOL')) {
+          res.end(
+            JSON.stringify({
+              model: body.model,
+              choices: [
+                {
+                  message: {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [{ id: 'tc_ping', type: 'function', function: { name: 'PING_TOOL', arguments: '{}' } }],
+                  },
+                  finish_reason: 'tool_calls',
+                },
+              ],
+            }),
+          );
+          return;
+        }
+        if ((body.tools ?? []).some((t) => t.function?.name === 'write_file')) {
+          turn += 1;
+          if (turn === 1) {
+            res.end(
+              JSON.stringify({
+                model: body.model,
+                choices: [
+                  {
+                    message: {
+                      role: 'assistant',
+                      content: null,
+                      tool_calls: [
+                        {
+                          id: 'tc_fix_add',
+                          type: 'function',
+                          function: {
+                            name: 'write_file',
+                            arguments: JSON.stringify({
+                              path: 'app.mjs',
+                              content: 'export const add = (a, b) => a + b;\n',
+                            }),
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: 'tool_calls',
+                  },
+                ],
+              }),
+            );
+            return;
+          }
+          res.end(
+            JSON.stringify({
+              model: body.model,
+              choices: [{ message: { role: 'assistant', content: '已完成 app.mjs 修复。' }, finish_reason: 'stop' }],
+            }),
+          );
+          return;
+        }
+        res.end(
+          JSON.stringify({
+            model: body.model,
+            choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+          }),
+        );
+      });
+    });
+    await new Promise<void>((r) => dsSrv.listen(0, '127.0.0.1', () => r()));
+    servers.push(dsSrv);
+    const dsOrigin = `http://127.0.0.1:${(dsSrv.address() as { port: number }).port}`;
+
+    const proj = gitProject('stage8c-standalone-checks', {
+      'app.mjs': 'export const add = (a, b) => a - b;\n',
+      'app.test.mjs': `import test from 'node:test';\nimport assert from 'node:assert';\nimport { add } from './app.mjs';\ntest('standalone sandbox test passes', () => assert.equal(add(3, 4), 7));\n`,
+      'package.json': JSON.stringify({
+        name: 'stage8c-standalone-checks',
+        scripts: {
+          build: 'node --check app.mjs',
+          test: 'node --test app.test.mjs',
+        },
+      }),
+    });
+    const data = mk('s8c-e2e-data');
+    const a = await launch(data);
+    await acceptDisclosure(a.page);
+
+    // 显式封死本机 Codex 探针与 Codex 沙箱，验证 Stage 8C 全程完全不依赖 Codex
+    await a.app.evaluate(
+      async (_el, { dsTarget, codexThinkerUrl, codexThinkerPath, codexExecUrl, codexExecPath }) => {
+        const origFetch = globalThis.fetch.bind(globalThis);
+        globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+          if (url.startsWith('https://api.deepseek.com')) {
+            return origFetch(`${dsTarget}${url.slice('https://api.deepseek.com'.length)}`, init);
+          }
+          return origFetch(input, init);
+        }) as typeof fetch;
+
+        const { createRequire } = process.getBuiltinModule('module');
+        const reqT = createRequire(codexThinkerUrl);
+        const { CodexThinker } = reqT(codexThinkerPath);
+        CodexThinker.prototype.detect = async () => ({
+          available: false,
+          note: 'Codex 未安装（Stage 8C 独立验证）',
+        });
+
+        const reqE = createRequire(codexExecUrl);
+        const { CodexExecutor } = reqE(codexExecPath);
+        CodexExecutor.prototype.detect = async () => ({
+          installed: false,
+          loggedIn: 'no',
+          note: 'Codex 未安装（Stage 8C 独立验证）',
+        });
+        CodexExecutor.prototype.start = () => {
+          throw new Error('Stage 8C test must not execute CodexExecutor');
+        };
+        CodexExecutor.prototype.execInSandbox = async () => {
+          throw new Error('Stage 8C test must not use Codex sandboxRunner');
+        };
+      },
+      {
+        dsTarget: dsOrigin,
+        codexThinkerUrl: distUrl('thinking/codex.js'),
+        codexThinkerPath: fileURLToPath(distUrl('thinking/codex.js')),
+        codexExecUrl: distUrl('executor/adapters/codex.js'),
+        codexExecPath: fileURLToPath(distUrl('executor/adapters/codex.js')),
+      },
+    );
+
+    await a.page.getByRole('button', { name: '重新检查' }).click();
+    await a.page.waitForFunction(
+      () => document.querySelector('ul.env li[data-id="codex"]')?.getAttribute('data-overall') === 'fail',
+    );
+    await a.page.getByTestId('onboarding-continue').click();
+    await a.page.getByTestId('workbench').waitFor();
+
+    // 1. 设置页：Codex 不可用，同时“独立受限检查环境”可用，测通并设为默认执行者 DeepSeek API
+    await a.page.getByTestId('nav-settings').click();
+    await a.page.waitForFunction(
+      () =>
+        !!document.querySelector('[data-testid="ai-status-check-runner"]') &&
+        !!document.querySelector('[data-testid="ai-status-codex"]')?.textContent?.includes('不可用'),
+    );
+    expect(await a.page.getByTestId('ai-status-codex').innerText()).toMatch(/未安装|不可用/);
+    expect(await a.page.getByTestId('check-runner-tag').innerText()).toContain('可用');
+    expect(await a.page.getByTestId('ai-status-check-runner').innerText()).toContain('不依赖 Codex');
+    await stage8cShot(a.page, '01-settings-standalone-check-runner');
+
+    await a.page.getByTestId('provider-preset-select').selectOption('deepseek');
+    await a.page.getByTestId('provider-secret-input').fill(DS_KEY);
+    await a.page.getByTestId('provider-save-test').click();
+    await a.page.getByTestId('provider-form-notice').waitFor();
+    const setDefaultBtn = a.page.getByRole('button', { name: '设为默认执行者' }).first();
+    await setDefaultBtn.waitFor();
+    await setDefaultBtn.click();
+    await a.page.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="global-role-executor"]') as HTMLSelectElement | null;
+      return !!el && el.value.startsWith('api:');
+    });
+
+    // 2. 打开包含真实 package.json (build/test) 的项目，使用 DeepSeek 运行 → 独立沙箱自动跑通两项检查
+    await stubDialog(a.app, proj);
+    await a.page.getByTestId('nav-open-project').click();
+    await a.page.getByTestId('project').waitFor();
+
+    await newTask(a.page, '用 DeepSeek 修复 add 函数并由独立沙箱检查通过');
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+
+    const factsText = await a.page.getByTestId('facts').innerText();
+    expect(factsText).toContain('通过');
+    expect(factsText).not.toContain('未检查');
+    await stage8cShot(a.page, '02-acceptance-standalone-checks-passed');
+
+    // 3. 点进检查依据页（#08-evidence）：证明实际在“沙箱环境”执行并记录具体测试用例
+    await a.page.getByTestId('proof-link-test').click();
+    await a.page.getByTestId('proof-page').waitFor();
+    const proofText = await a.page.getByTestId('proof-page').innerText();
+    expect(proofText).toContain('沙箱环境');
+    expect(proofText).toContain('standalone sandbox test passes');
+    await stage8cShot(a.page, '03-proof-standalone-sandbox');
+    await a.page.getByTestId('proof-back-button').click();
+    await a.page.getByTestId('result').waitFor();
+
+    // 4. 验收确认后直接保存（不经 unchecked-confirm-panel！）→ 四步试检查全部通过并直接写入主项目
+    await confirmStep1(a.page);
+    await a.page.getByTestId('confirm-overall').click();
+    await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled);
+    await a.page.getByTestId('save-button').click();
+    await a.page.waitForSelector('[data-testid="save-result-panel"][data-outcome="saved"]', { timeout: 30_000 });
+    expect(await a.page.getByTestId('unchecked-confirm-panel').count()).toBe(0);
+    await stage8cShot(a.page, '04-save-result-checked-direct');
+
+    expect(fs.readFileSync(path.join(proj, 'app.mjs'), 'utf8')).toBe('export const add = (a, b) => a + b;\n');
   });
 });

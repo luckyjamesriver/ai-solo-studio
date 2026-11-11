@@ -36,7 +36,7 @@ export const SUBSCRIPTION_CLI_CATALOG: readonly SubscriptionCliSpec[] = [
     ],
     officialAlternative: '官方合规替代：在上方「常用 AI API 执行者接入」中选择 Anthropic（Claude API）并填写 API Key。',
     isolationHonesty:
-      '通过官方安全受限参数将文件工具收敛至任务副本并禁用外部脚本运行，但无法像 Codex 那样单独列出或按条目阻断本机读取路径；未配备单独检查沙箱时，保存验收仍须经你手动确认未检查。',
+      '通过官方安全受限参数将文件工具收敛至任务副本并禁用外部脚本运行，但无法像 Codex 那样单独列出或按条目阻断本机读取路径；若当前系统未配备独立受限检查环境，保存验收仍须经你手动确认未检查。',
     suggestedModels: ['sonnet', 'opus', 'haiku'],
   },
   {
@@ -53,7 +53,7 @@ export const SUBSCRIPTION_CLI_CATALOG: readonly SubscriptionCliSpec[] = [
     ],
     officialAlternative: '官方合规替代：在上方「常用 AI API 执行者接入」中选择 Google Gemini API 并填写 API Key。',
     isolationHonesty:
-      '使用命令行自带终端约束并拒绝副本外写操作，但无法按操作系统目录白名单拦截所有读取位置；未配备 Codex 沙箱时无法自动运行项目构建与测试脚本。',
+      '使用命令行自带终端约束并拒绝副本外写操作，但无法按操作系统目录白名单拦截所有读取位置；若当前系统未配备独立受限检查环境，保存前无法自动运行项目构建与测试脚本。',
     suggestedModels: [],
   },
   {

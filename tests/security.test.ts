@@ -1272,4 +1272,27 @@ describe('安全基线（防回归）', () => {
       expect(main).toMatch(/ipcMain\.handle\('subscriptions:testAndEnable'[\s\S]*?obj\.riskAck === true/);
     });
   });
+
+  describe('阶段 8C：脱离 Codex 的独立沙箱检查运行器安全边界（只增不减）', () => {
+    it('SeatbeltSandboxRunner 绝不使用 shell: true 或未受控的 fullTrust；缺失/非 macOS 一律返回 unavailable；buildFullTrustMode 先于放行调用', () => {
+      const sbSrc = stripComments(read('src/core/executor/sandbox/seatbelt.ts'));
+      expect(sbSrc).not.toMatch(/shell:\s*true/);
+      expect(sbSrc).toContain('sensitiveFallbackList');
+      expect(sbSrc).toContain('await buildFullTrustMode(');
+      expect(sbSrc).toContain('(deny default)');
+      expect(sbSrc).toContain('(deny network*)');
+      expect(sbSrc).toContain('isDotGitPath');
+      expect(sbSrc).toMatch(/status:\s*'unavailable'/);
+      // 门禁位置：buildFullTrustMode 必须先于 buildSeatbeltProfile(..., fullTrust)
+      const runStart = sbSrc.indexOf('async runCommand(');
+      expect(runStart).toBeGreaterThan(-1);
+      const runBody = sbSrc.slice(runStart);
+      expect(runBody.indexOf('buildFullTrustMode(')).toBeGreaterThan(-1);
+      expect(runBody.indexOf('buildFullTrustMode(')).toBeLessThan(runBody.indexOf('buildSeatbeltProfile('));
+
+      const factorySrc = stripComments(read('src/core/executor/sandbox/index.ts'));
+      expect(factorySrc).toMatch(/platform !== 'darwin'/);
+      expect(factorySrc).toMatch(/available:\s*false/);
+    });
+  });
 });

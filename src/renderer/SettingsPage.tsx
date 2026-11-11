@@ -412,6 +412,20 @@ export function SettingsPage({
                 {!effectiveKey?.configured ? '未设置' : claudeAvailable ? '可用' : '不可用'}
               </span>
             </div>
+            {aiSettings?.standaloneSandbox && (
+              <div className="item" data-testid="ai-status-check-runner">
+                <div className="grow">
+                  <strong>独立受限检查环境</strong>
+                  <div className="muted">{aiSettings.standaloneSandbox.detail}</div>
+                </div>
+                <span
+                  className={aiSettings.standaloneSandbox.available ? 'tag ok' : 'tag warn'}
+                  data-testid="check-runner-tag"
+                >
+                  {aiSettings.standaloneSandbox.label}
+                </span>
+              </div>
+            )}
 
             <form onSubmit={handleSaveKey} noValidate style={{ marginTop: '12px' }} data-testid="claude-key-form">
               <label htmlFor={keyInputId}>

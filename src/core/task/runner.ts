@@ -142,6 +142,8 @@ export interface RunnerOptions {
    * 两者都没有时，检查结果为“未检查”，绝不在宿主上直接运行。
    */
   sandboxRunner?: SandboxCommandRunner;
+  /** 当所选执行体（如 API / 本地订阅 CLI / 外部交接）未自带沙箱或 Codex 未安装时的独立受限检查沙箱兜底（阶段 8C） */
+  fallbackSandboxRunner?: SandboxCommandRunner;
   /** 启动核对用的进程探测（测试里可替换；缺省探测真实进程） */
   processProbe?: ProcessProbe;
   /** 记录库的打开选项（数据目录所在卷检查、租约等待时间；主进程里传入，测试里缺省） */
@@ -183,17 +185,25 @@ export class TaskRunner extends EventEmitter {
     if (this.opts.sandboxRunner) return this.opts.sandboxRunner;
     if (this.taskSandboxes.has(t.id)) return this.taskSandboxes.get(t.id);
     if (this.opts.resolveExecutor) {
+      if (t.executorId === 'external' && this.opts.fallbackSandboxRunner) {
+        this.taskSandboxes.set(t.id, this.opts.fallbackSandboxRunner);
+        return this.opts.fallbackSandboxRunner;
+      }
       const lookupId = !t.executorId || t.executorId === 'external' || t.executorId === 'unset' ? 'codex' : t.executorId;
       try {
         const picked = await this.opts.resolveExecutor(lookupId);
-        const sr = picked.sandboxRunner ?? picked.executor.sandboxRunner ?? this.opts.executor.sandboxRunner;
+        const sr =
+          picked.sandboxRunner ??
+          picked.executor.sandboxRunner ??
+          this.opts.fallbackSandboxRunner ??
+          this.opts.executor.sandboxRunner;
         this.taskSandboxes.set(t.id, sr);
         return sr;
       } catch {
-        return this.opts.executor.sandboxRunner;
+        return this.opts.fallbackSandboxRunner ?? this.opts.executor.sandboxRunner;
       }
     }
-    return this.opts.executor.sandboxRunner;
+    return this.opts.fallbackSandboxRunner ?? this.opts.executor.sandboxRunner;
   }
 
   private log(task: Task, kind: TimelineEntry['kind'], text: string, source?: 'host') {
