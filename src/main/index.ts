@@ -97,7 +97,7 @@ const subscriptionCliStore = () => new SubscriptionCliStore(dataDir(), STORE_OPT
 const aiSettingsStore = () => new AiSettingsStore(dataDir(), STORE_OPTS);
 const TOOLS = ['git', 'node', 'npm', 'codex'] as const;
 
-const SUB_PROBE_TTL_MS = 30_000;
+const SUB_PROBE_TTL_MS = 5 * 60_000;
 const subProbeCache = new Map<SubscriptionCliId, { resolvedPath: string; at: number; detect: DetectResult }>();
 let standaloneSandboxCache: Promise<StandaloneSandboxResult> | null = null;
 

@@ -56,6 +56,7 @@ export function App() {
 
   const mountedRef = useRef(true);
   const refreshSeqRef = useRef<Record<string, number>>({});
+  const aiSettingsSeqRef = useRef(0);
   const userNavigatedRef = useRef(false);
 
   const navigate = useCallback((next: AppScreen) => {
@@ -66,15 +67,16 @@ export function App() {
   }, []);
 
   const refreshAiSettings = useCallback(() => {
+    const seq = ++aiSettingsSeqRef.current;
     studio()
       .getAiSettings()
       .then((s) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || aiSettingsSeqRef.current !== seq) return;
         setAiSettings(s);
         setClaudeKey(s.claudeKey);
       })
       .catch((e: Error) => {
-        if (mountedRef.current) setError(e.message);
+        if (mountedRef.current && aiSettingsSeqRef.current === seq) setError(e.message);
       });
   }, []);
 
@@ -256,8 +258,9 @@ export function App() {
   };
 
   const handleSaveAiRoles = async (chief: string, reviewer: string, model: string): Promise<GlobalAiSettingsView> => {
+    const seq = ++aiSettingsSeqRef.current;
     const updated = await studio().saveAiRoles(chief, reviewer, model);
-    if (mountedRef.current) {
+    if (mountedRef.current && aiSettingsSeqRef.current === seq) {
       setAiSettings(updated);
       setClaudeKey(updated.claudeKey);
     }
@@ -281,8 +284,9 @@ export function App() {
   };
 
   const handleDeleteProviderProfile = async (id: string) => {
+    const seq = ++aiSettingsSeqRef.current;
     const updated = await studio().deleteProviderProfile(id);
-    if (mountedRef.current) {
+    if (mountedRef.current && aiSettingsSeqRef.current === seq) {
       setAiSettings(updated);
       refreshDisclosure();
     }
@@ -290,8 +294,9 @@ export function App() {
   };
 
   const handleSaveDefaultExecutor = async (id: string) => {
+    const seq = ++aiSettingsSeqRef.current;
     const updated = await studio().saveDefaultExecutor(id);
-    if (mountedRef.current) {
+    if (mountedRef.current && aiSettingsSeqRef.current === seq) {
       setAiSettings(updated);
       refreshDisclosure();
     }
@@ -308,8 +313,9 @@ export function App() {
   };
 
   const handleDisableSubscriptionCli = async (id: string) => {
+    const seq = ++aiSettingsSeqRef.current;
     const updated = await studio().disableSubscriptionCli(id);
-    if (mountedRef.current) {
+    if (mountedRef.current && aiSettingsSeqRef.current === seq) {
       setAiSettings(updated);
       refreshDisclosure();
     }
