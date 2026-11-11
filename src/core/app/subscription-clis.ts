@@ -11,11 +11,9 @@ import type { DetectResult } from '../executor/types.js';
 
 const RECORD_ID = 'subscription-clis';
 
-interface StoredSubscriptionEntry {
+export interface StoredSubscriptionEntry extends RiskGateRecord {
   enabled: boolean;
   model?: string;
-  riskAcknowledgedAt?: string;
-  acknowledgedRiskVersion?: number;
   lastVerifiedAt?: string;
 }
 
@@ -87,7 +85,7 @@ export class SubscriptionCliStore implements SubscriptionRiskGate {
     return out;
   }
 
-  async getRiskRecord(cliId: SubscriptionCliId): Promise<RiskGateRecord | null> {
+  async getRiskRecord(cliId: SubscriptionCliId): Promise<StoredSubscriptionEntry | null> {
     const map = await this.readMap();
     return map[cliId] ?? null;
   }

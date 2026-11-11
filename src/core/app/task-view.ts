@@ -18,6 +18,7 @@ import {
   type TaskClassification,
 } from './task-state-view.js';
 import type { VerifiedExecutorOption } from './ai-settings.js';
+import { findSubscriptionCliSpec } from '../executor/cli/subscriptions.js';
 
 /**
  * 给渲染层看的任务视图：只含大白话与必要事实。
@@ -147,6 +148,8 @@ export interface TaskView {
   model?: string;
   /** 执行者与模型完整文案（如 "Codex · gpt-5" 或 "Codex"） */
   executorText: string;
+  /** 若当前选定执行者为本机订阅 CLI 等特殊模式，向计划确认页展示诚实隔离边界说明 */
+  executorNotice?: string | null;
   /** 当前施工/验收轮次（从 1 开始） */
   round: number;
   /** 外部执行交接信息（导出给外部工具后存在） */
@@ -455,6 +458,9 @@ export function buildTaskView(
       ? undefined
       : (task.model ?? (modelFromTimeline && modelFromTimeline !== '未知' ? modelFromTimeline : undefined));
   const executorText = model && !executorName.includes(model) ? `${executorName} · ${model}` : executorName;
+  const subCliId = task.executorId?.startsWith('sub:') ? task.executorId.slice(4) : null;
+  const subSpec = subCliId ? findSubscriptionCliSpec(subCliId) : undefined;
+  const executorNotice = subSpec ? subSpec.isolationHonesty : null;
 
   const handoff: HandoffView | null = task.handoff
     ? {
@@ -515,6 +521,7 @@ export function buildTaskView(
     executorName,
     model,
     executorText,
+    ...(executorNotice ? { executorNotice } : {}),
     round: task.currentRound ?? (task.rounds?.length ? Math.max(...task.rounds.map((r) => r.round)) : 1),
     handoff,
     saveCheckText: task.saveRecord ? (task.saveRecord.checked === true ? '检查通过' : '未检查') : null,

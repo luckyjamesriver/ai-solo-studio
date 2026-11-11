@@ -1,24 +1,29 @@
 import type { ApiProviderPreset } from '../executor/api/catalog.js';
+import type { SubscriptionCliId } from '../executor/cli/subscriptions.js';
 import { DEFAULT_CLAUDE_API_MODEL } from '../thinking/claude-api.js';
 import { AppStore, type AppStoreOptions } from './app-store.js';
 import type { ClaudeKeyStatus } from './claude-key.js';
 import type { ProviderProfileView } from './provider-profiles.js';
+import type { SubscriptionCliView } from './subscription-clis.js';
 
 export type AiProviderId = 'codex' | 'claude';
 export type ChiefRoleChoice = AiProviderId | 'unset';
 export type ReviewerRoleChoice = AiProviderId | 'none' | 'unset';
 export type ProjectRoleMode = 'global' | 'custom';
-export type ExecutorChoice = 'codex' | `api:${string}` | 'unset';
+export type ExecutorChoice = 'codex' | `api:${string}` | `sub:${string}` | 'unset';
 
 export interface VerifiedExecutorOption {
-  id: 'codex' | `api:${string}`;
+  id: 'codex' | `api:${string}` | `sub:${SubscriptionCliId}`;
   label: string;
-  kind: 'codex' | 'api';
+  kind: 'codex' | 'api' | 'subscription';
+  cliId?: SubscriptionCliId;
   presetId?: string;
   presetName?: string;
   model?: string;
   endpointOrigin?: string;
   officialEndpoint: boolean;
+  isolationSummary?: string;
+  riskAcknowledgedAt?: string;
 }
 
 export interface EffectiveExecutorResult {
@@ -76,6 +81,7 @@ export interface GlobalAiSettingsView {
   availableClaudeModels: string[];
   executorPresets?: readonly ApiProviderPreset[];
   providerProfiles?: ProviderProfileView[];
+  subscriptionClis?: SubscriptionCliView[];
   verifiedExecutors?: VerifiedExecutorOption[];
   defaultExecutor?: string;
   executorProblem?: string | null;
@@ -387,7 +393,9 @@ export class AiSettingsStore {
       throw new Error(
         id === 'codex'
           ? 'Codex 尚未就绪（未安装或未登录），请先在终端登录 Codex 或选用已测通的 API 执行者。'
-          : '所选 API 执行者尚未通过连接测试或不支持工具调用，请先在下方测试通过后再设为执行者。',
+          : id.startsWith('sub:')
+            ? '所选本机订阅 CLI 尚未确认风险说明并启用（或未安装/未登录），请先在下方「本机订阅 CLI 执行者（风险自担）」完成启用后再设为执行者。'
+            : '所选 API 执行者尚未通过连接测试或不支持工具调用，请先在下方测试通过后再设为执行者。',
       );
     }
     await this.app.update('ai-executor', {}, () => ({ executor: id, updatedAt: new Date().toISOString() }), 'ai-executor-save');
@@ -475,6 +483,29 @@ export class AiSettingsStore {
     }
   }
 
+  /** 当某条本机订阅 CLI 执行者被停用后，引用它的全局/项目执行者回退为 unset。 */
+  async onSubscriptionDisabled(cliId: SubscriptionCliId): Promise<void> {
+    const target = `sub:${cliId}`;
+    const def = await this.getDefaultExecutor();
+    if (def === target) {
+      await this.app.update('ai-executor', {}, () => ({ executor: 'unset', updatedAt: new Date().toISOString() }), 'ai-executor-sub-disabled');
+    }
+    const map = await this.readProjectExecutorMap();
+    let changed = false;
+    const nextMap: Record<string, ProjectExecutorConfig> = {};
+    for (const [k, v] of Object.entries(map)) {
+      if (v.mode === 'custom' && v.executor === target) {
+        changed = true;
+        nextMap[k] = { mode: 'custom', executor: 'unset' };
+      } else {
+        nextMap[k] = v;
+      }
+    }
+    if (changed) {
+      await this.app.update('project-ai-executors', {}, () => ({ projects: nextMap }), 'project-ai-executor-sub-disabled');
+    }
+  }
+
   async resolveEffectiveExecutor(
     projectRoot: string,
     verified: VerifiedExecutorOption[],
@@ -486,7 +517,7 @@ export class AiSettingsStore {
     let label = hit?.label ?? (id === 'codex' ? 'Codex' : id === 'unset' ? '未设置' : id);
     let problem: string | null = null;
     if (id === 'unset') {
-      problem = '执行者已回退为「未设置」（原配置已删除），请先在设置中重新指定执行者。';
+      problem = '执行者已回退为「未设置」（原配置已删除或已停用），请先在设置中重新指定执行者。';
     } else if (!hit) {
       problem = `当前选定的执行者（${label}）尚未就绪或未通过连接测试，请前往「设置 → AI 与角色」检查后再开工。`;
     }
@@ -503,6 +534,7 @@ export class AiSettingsStore {
 export function buildVerifiedExecutorOptions(
   codexAvailable: boolean,
   profiles: ProviderProfileView[],
+  subscriptions: SubscriptionCliView[] = [],
 ): VerifiedExecutorOption[] {
   const out: VerifiedExecutorOption[] = [];
   if (codexAvailable) {
@@ -524,6 +556,19 @@ export function buildVerifiedExecutorOptions(
       model: p.model,
       endpointOrigin: p.endpointOrigin,
       officialEndpoint: p.officialEndpoint,
+    });
+  }
+  for (const s of subscriptions) {
+    if (!s.executorReady) continue;
+    out.push({
+      id: `sub:${s.id}`,
+      label: s.model ? `${s.name} · ${s.model}（本机订阅）` : s.displayName,
+      kind: 'subscription',
+      cliId: s.id,
+      model: s.model || undefined,
+      officialEndpoint: true,
+      isolationSummary: s.isolationHonesty,
+      riskAcknowledgedAt: s.riskAcknowledgedAt ?? undefined,
     });
   }
   return out;

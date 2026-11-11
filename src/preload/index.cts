@@ -26,6 +26,9 @@ const api = {
   saveAndTestProvider: (input: ProviderSaveInput) => ipcRenderer.invoke('providers:saveAndTest', input),
   deleteProviderProfile: (id: string) => ipcRenderer.invoke('providers:delete', id),
   saveDefaultExecutor: (id: string) => ipcRenderer.invoke('settings:saveDefaultExecutor', id),
+  listSubscriptionClis: () => ipcRenderer.invoke('subscriptions:list'),
+  enableSubscriptionCli: (input: SubscriptionEnableInput) => ipcRenderer.invoke('subscriptions:testAndEnable', input),
+  disableSubscriptionCli: (id: string) => ipcRenderer.invoke('subscriptions:disable', id),
   getProjectRoles: (projectId: string) => ipcRenderer.invoke('project:getRoles', projectId),
   saveProjectRoles: (projectId: string, mode: string, chief: string, reviewer: string) => ipcRenderer.invoke('project:saveRoles', projectId, mode, chief, reviewer),
   saveProjectExecutor: (projectId: string, mode: string, id: string) => ipcRenderer.invoke('project:saveExecutor', projectId, mode, id),
@@ -121,6 +124,12 @@ interface ProviderSaveInput {
   endpoint: string;
   model: string;
   secret?: string;
+}
+
+interface SubscriptionEnableInput {
+  cliId: string;
+  riskAck: boolean;
+  model?: string;
 }
 
 interface SaveProgressEvent {

@@ -6,8 +6,16 @@ import { resolveHostTools, resolveTool } from '../core/env/path.js';
 import { validateProjectPath } from '../core/env/project-path.js';
 import { runHealthCheck, type HealthReport } from '../core/env/health.js';
 import * as G from '../core/git/git.js';
+import type { DetectResult } from '../core/executor/types.js';
 import { CodexExecutor, VERIFIED_CODEX_VERSION } from '../core/executor/adapters/codex.js';
 import { ApiAgentExecutor } from '../core/executor/adapters/api-agent.js';
+import { ClaudeCodeExecutor } from '../core/executor/adapters/claude-code.js';
+import { AcpExecutor } from '../core/executor/adapters/acp.js';
+import {
+  findSubscriptionCliSpec,
+  isSubscriptionCliId,
+  type SubscriptionCliId,
+} from '../core/executor/cli/subscriptions.js';
 import { API_PROVIDER_CATALOG, findProviderPreset, normalizeApiEndpoint } from '../core/executor/api/catalog.js';
 import { fetchProviderModels } from '../core/executor/api/client.js';
 import { ClaudeApiThinker } from '../core/thinking/claude-api.js';
@@ -22,6 +30,7 @@ import {
   PROVIDER_PROFILE_ID_RE,
   type SaveProviderProfileInput,
 } from '../core/app/provider-profiles.js';
+import { SubscriptionCliStore } from '../core/app/subscription-clis.js';
 import {
   AiSettingsStore,
   buildSameAiNotice,
@@ -82,8 +91,47 @@ const safeStorageVault: SecretVault = {
 };
 const claudeKeyStore = () => new ClaudeKeyStore(dataDir(), safeStorageVault, STORE_OPTS);
 const providerProfileStore = () => new ProviderProfileStore(dataDir(), safeStorageVault, STORE_OPTS);
+const subscriptionCliStore = () => new SubscriptionCliStore(dataDir(), STORE_OPTS);
 const aiSettingsStore = () => new AiSettingsStore(dataDir(), STORE_OPTS);
 const TOOLS = ['git', 'node', 'npm', 'codex'] as const;
+
+const SUB_PROBE_TTL_MS = 30_000;
+const subProbeCache = new Map<SubscriptionCliId, { resolvedPath: string; at: number; detect: DetectResult }>();
+
+async function probeSubscriptionCli(
+  cliId: SubscriptionCliId,
+  opts: { model?: string; refresh?: boolean; onlyIfEnabled?: boolean } = {},
+): Promise<DetectResult> {
+  const spec = findSubscriptionCliSpec(cliId);
+  if (!spec) return { installed: false, loggedIn: 'unknown', note: '未知工具' };
+  const store = subscriptionCliStore();
+  if (opts.onlyIfEnabled) {
+    const rec = await store.getRiskRecord(cliId);
+    if (!rec?.enabled || rec.acknowledgedRiskVersion !== spec.riskVersion || !rec.riskAcknowledgedAt) {
+      return { installed: false, loggedIn: 'unknown', note: '尚未启用' };
+    }
+  }
+  const foundTool = await resolveTool(spec.binaryName, {});
+  if (!foundTool) {
+    subProbeCache.delete(cliId);
+    return {
+      installed: false,
+      loggedIn: 'no',
+      note: `未在本机找到 ${spec.binaryName} 命令，请先安装并登录官方 CLI`,
+    };
+  }
+  const cached = !opts.refresh ? subProbeCache.get(cliId) : undefined;
+  if (cached && cached.resolvedPath === foundTool.path && Date.now() - cached.at < SUB_PROBE_TTL_MS) {
+    return cached.detect;
+  }
+  const exec =
+    cliId === 'claude_cli'
+      ? new ClaudeCodeExecutor({ command: foundTool.path, model: opts.model, riskGate: store })
+      : new AcpExecutor({ cliId, command: foundTool.path, model: opts.model, riskGate: store });
+  const detect = await exec.detect();
+  subProbeCache.set(cliId, { resolvedPath: foundTool.path, at: Date.now(), detect });
+  return detect;
+}
 
 async function detectCodexAvailability(explicitCommand?: string): Promise<{ available: boolean; note?: string }> {
   try {
@@ -94,20 +142,22 @@ async function detectCodexAvailability(explicitCommand?: string): Promise<{ avai
   }
 }
 
-async function getVerifiedExecutorsForMain(explicitCodexCmd?: string) {
-  const [codex, profiles] = await Promise.all([
+async function getVerifiedExecutorsForMain(explicitCodexCmd?: string, onlyIfEnabled = false) {
+  const [codex, profiles, subscriptions] = await Promise.all([
     detectCodexAvailability(explicitCodexCmd),
     providerProfileStore().listProfiles(),
+    subscriptionCliStore().listViews((cliId) => probeSubscriptionCli(cliId, { onlyIfEnabled })),
   ]);
   return {
     codex,
     profiles,
-    verified: buildVerifiedExecutorOptions(codex.available, profiles),
+    subscriptions,
+    verified: buildVerifiedExecutorOptions(codex.available, profiles, subscriptions),
   };
 }
 
 async function getGlobalAiView(): Promise<GlobalAiSettingsView> {
-  const [{ codex, profiles, verified }, claudeKey, roles, defaultExecutor] = await Promise.all([
+  const [{ codex, profiles, subscriptions, verified }, claudeKey, roles, defaultExecutor] = await Promise.all([
     getVerifiedExecutorsForMain(),
     claudeKeyStore().status(),
     aiSettingsStore().getGlobalRoles(),
@@ -115,7 +165,7 @@ async function getGlobalAiView(): Promise<GlobalAiSettingsView> {
   ]);
   let executorProblem: string | null = null;
   if (defaultExecutor === 'unset') {
-    executorProblem = '默认执行者已回退为「未设置」（原配置已删除），请重新选择已测通的执行者。';
+    executorProblem = '默认执行者已回退为「未设置」（原配置已删除或已停用），请重新选择已测通的执行者。';
   } else if (defaultExecutor !== 'codex' && !verified.some((v) => v.id === defaultExecutor)) {
     executorProblem = '当前默认执行者不可用或尚未通过连接测试，请重新测试连接或更换默认执行者。';
   }
@@ -131,6 +181,7 @@ async function getGlobalAiView(): Promise<GlobalAiSettingsView> {
     availableClaudeModels: SUGGESTED_CLAUDE_MODELS,
     executorPresets: API_PROVIDER_CATALOG,
     providerProfiles: profiles,
+    subscriptionClis: subscriptions,
     verifiedExecutors: verified,
     defaultExecutor,
     executorProblem,
@@ -200,14 +251,50 @@ async function createController(dir: string): Promise<TaskController> {
   return new TaskController({
     repo: dir,
     makeExecutor: () => new CodexExecutor({ command: codexPath }),
-    getVerifiedExecutors: async () => (await getVerifiedExecutorsForMain(codexPath)).verified,
+    getVerifiedExecutors: async () => (await getVerifiedExecutorsForMain(codexPath, true)).verified,
     resolveExecutor: async (executorId?: string) => {
       const target = executorId ?? (await aiSettingsStore().getDefaultExecutor());
       if (target === 'unset') {
-        throw new Error('当前执行者未设置（原 API 配置已删除），请先在「设置 → AI 与角色」重新选择执行者。');
+        throw new Error('当前执行者未设置（原配置已删除或已停用），请先在「设置 → AI 与角色」重新选择执行者。');
       }
       if (!target || target === 'codex') {
         return { executor: new CodexExecutor({ command: codexPath }) };
+      }
+      if (target.startsWith('sub:')) {
+        const cliIdRaw = target.slice(4);
+        if (!isSubscriptionCliId(cliIdRaw)) {
+          throw new Error(`未知的本机订阅 CLI 标识：${target}`);
+        }
+        const store = subscriptionCliStore();
+        const rec = await store.getRiskRecord(cliIdRaw);
+        const spec = findSubscriptionCliSpec(cliIdRaw)!;
+        if (!rec?.enabled || !rec.riskAcknowledgedAt || rec.acknowledgedRiskVersion !== spec.riskVersion) {
+          throw new Error(`「${spec.name}」尚未确认风险说明并启用，请前往「设置 → AI 与角色」先完成风险确认。`);
+        }
+        const foundTool = await resolveTool(spec.binaryName, {});
+        const command = foundTool?.path ?? spec.binaryName;
+        const model = typeof rec.model === 'string' && rec.model.trim() ? rec.model.trim() : undefined;
+        const codexAvail = found.tools.codex ? await detectCodexAvailability(codexPath) : { available: false };
+        const sandboxExec = codexAvail.available ? new CodexExecutor({ command: codexPath }) : null;
+        const executor =
+          cliIdRaw === 'claude_cli'
+            ? new ClaudeCodeExecutor({
+                command,
+                model,
+                riskGate: store,
+                ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+              })
+            : new AcpExecutor({
+                cliId: cliIdRaw,
+                command,
+                model,
+                riskGate: store,
+                ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+              });
+        return {
+          executor,
+          ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+        };
       }
       if (!target.startsWith('api:')) {
         throw new Error(`未知的执行者标识：${target}`);
@@ -384,6 +471,7 @@ async function openValidated(input: string): Promise<OpenResult> {
 }
 
 async function health(): Promise<HealthReport & { firstRun?: boolean }> {
+  subProbeCache.clear();
   const appStore = new AppStore(dataDir(), STORE_OPTS);
   if (onboardingInSession === null) {
     onboardingInSession = !(await appStore.isEnvOnboardingDone());
@@ -411,17 +499,28 @@ async function health(): Promise<HealthReport & { firstRun?: boolean }> {
 }
 
 async function disclosure() {
-  const [codex, keyStatus, profiles] = await Promise.all([
+  const [codex, keyStatus, profiles, subscriptions] = await Promise.all([
     resolveTool('codex', {}),
     claudeKeyStore().status().catch(() => ({ configured: false, available: false })),
     providerProfileStore().listProfiles().catch(() => []),
+    subscriptionCliStore()
+      .listViews((cliId) => probeSubscriptionCli(cliId, { onlyIfEnabled: true }))
+      .catch(() => []),
   ]);
-  const apiServices = profiles
-    .filter((p) => p.available)
-    .map((p) => ({
-      name: `${p.presetName}（${p.endpointOrigin}）`,
-      role: p.executorReady ? '担任后台执行者，读取并修改你指定任务副本中的文件' : '已配置 API 连接（支持对话/思考）',
-    }));
+  const apiServices = [
+    ...profiles
+      .filter((p) => p.available)
+      .map((p) => ({
+        name: `${p.presetName}（${p.endpointOrigin}）`,
+        role: p.executorReady ? '担任后台执行者，读取并修改你指定任务副本中的文件' : '已配置 API 连接（支持对话/思考）',
+      })),
+    ...subscriptions
+      .filter((s) => s.enabled)
+      .map((s) => ({
+        name: s.displayName,
+        role: `本机订阅 CLI（风险自担${s.model ? `，模型 ${s.model}` : ''}）：担任后台执行者，读取并修改你指定任务副本中的文件；按本机登录账号额度计费`,
+      })),
+  ];
   const content = buildDisclosure({
     codexInstalled: !!codex,
     claudeApiConfigured: keyStatus.configured && keyStatus.available,
@@ -586,6 +685,28 @@ ipcMain.handle('providers:delete', async (_e, id: unknown) => {
 ipcMain.handle('settings:saveDefaultExecutor', async (_e, id: unknown) => {
   const { verified } = await getVerifiedExecutorsForMain();
   await aiSettingsStore().saveDefaultExecutor(id, verified);
+  return getGlobalAiView();
+});
+ipcMain.handle('subscriptions:list', () =>
+  subscriptionCliStore().listViews((cliId) => probeSubscriptionCli(cliId)),
+);
+ipcMain.handle('subscriptions:testAndEnable', async (_e, input: unknown) => {
+  const obj = (input ?? {}) as Record<string, unknown>;
+  const cliId = typeof obj.cliId === 'string' ? obj.cliId : '';
+  const riskAck = obj.riskAck === true;
+  const model = typeof obj.model === 'string' ? obj.model : undefined;
+  subProbeCache.delete(cliId as SubscriptionCliId);
+  return subscriptionCliStore().testAndEnable(
+    { cliId, riskAck, ...(model ? { model } : {}) },
+    (id) => probeSubscriptionCli(id, { refresh: true }),
+  );
+});
+ipcMain.handle('subscriptions:disable', async (_e, id: unknown) => {
+  const cliId = typeof id === 'string' ? id : '';
+  if (isSubscriptionCliId(cliId)) subProbeCache.delete(cliId);
+  await subscriptionCliStore().disable(cliId, (disabledId) =>
+    aiSettingsStore().onSubscriptionDisabled(disabledId),
+  );
   return getGlobalAiView();
 });
 

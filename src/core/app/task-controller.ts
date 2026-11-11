@@ -259,7 +259,12 @@ export class TaskController {
   async setTaskExecutor(id: unknown, executorId: unknown): Promise<TaskView> {
     const tid = this.checkArg(TASK_ID, id);
     if (this.active.has(tid)) throw new Error('只有未开工的任务才能切换执行者。');
-    if (typeof executorId !== 'string' || (executorId !== 'codex' && !/^api:[a-z0-9_-]{1,48}$/.test(executorId))) {
+    if (
+      typeof executorId !== 'string' ||
+      (executorId !== 'codex' &&
+        !/^api:[a-z0-9_-]{1,48}$/.test(executorId) &&
+        !/^sub:(?:claude_cli|agy|cursor)$/.test(executorId))
+    ) {
       throw new Error('无效的执行者编号。');
     }
     const verified = this.o.getVerifiedExecutors ? await this.o.getVerifiedExecutors() : [];

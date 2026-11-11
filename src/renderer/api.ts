@@ -101,6 +101,12 @@ export type {
 } from '../core/app/ai-settings.js';
 export type { ApiProtocol, ApiProviderPreset, BuiltinApiProviderId } from '../core/executor/api/catalog.js';
 export type { ProviderProfileView, SaveProviderProfileResult } from '../core/app/provider-profiles.js';
+export type { SubscriptionCliId } from '../core/executor/cli/subscriptions.js';
+export type {
+  SubscriptionCliView,
+  SubscriptionEnableInput,
+  SubscriptionEnableResult,
+} from '../core/app/subscription-clis.js';
 export type { DiscussionView, DiscussionPreset } from '../core/app/discussion-service.js';
 export type {
   BasisStatus,
@@ -124,6 +130,11 @@ import type { ClaudeKeySaveResult, ClaudeKeyStatus } from '../core/app/claude-ke
 import type { GlobalAiSettingsView, ProjectRolesView } from '../core/app/ai-settings.js';
 import type { ApiProviderPreset } from '../core/executor/api/catalog.js';
 import type { ProviderProfileView, SaveProviderProfileResult } from '../core/app/provider-profiles.js';
+import type {
+  SubscriptionCliView,
+  SubscriptionEnableInput,
+  SubscriptionEnableResult,
+} from '../core/app/subscription-clis.js';
 import type { ProjectBriefInput as BriefIn, ProjectBriefView as BriefView } from '../core/thinking/flow/index.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
 import type { SaveProgressEvent } from '../core/task/model.js';
@@ -209,6 +220,9 @@ interface StudioApi {
   saveAndTestProvider(input: { id?: string; presetId: string; label?: string; endpoint: string; model: string; secret?: string }): Promise<SaveProviderProfileResult>;
   deleteProviderProfile(id: string): Promise<GlobalAiSettingsView>;
   saveDefaultExecutor(id: string): Promise<GlobalAiSettingsView>;
+  listSubscriptionClis(): Promise<SubscriptionCliView[]>;
+  enableSubscriptionCli(input: SubscriptionEnableInput): Promise<SubscriptionEnableResult>;
+  disableSubscriptionCli(id: string): Promise<GlobalAiSettingsView>;
 }
 
 declare global {

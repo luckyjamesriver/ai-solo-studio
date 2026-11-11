@@ -298,6 +298,24 @@ export function App() {
     return updated;
   };
 
+  const handleEnableSubscriptionCli = async (input: { cliId: string; riskAck: boolean; model?: string }) => {
+    const res = await studio().enableSubscriptionCli(input);
+    if (res.ok && mountedRef.current) {
+      refreshAiSettings();
+      refreshDisclosure();
+    }
+    return res;
+  };
+
+  const handleDisableSubscriptionCli = async (id: string) => {
+    const updated = await studio().disableSubscriptionCli(id);
+    if (mountedRef.current) {
+      setAiSettings(updated);
+      refreshDisclosure();
+    }
+    return updated;
+  };
+
   const handleFetchProviderModels = async (input: {
     presetId: string;
     endpoint: string;
@@ -547,6 +565,8 @@ export function App() {
             onDeleteProviderProfile={handleDeleteProviderProfile}
             onSaveDefaultExecutor={handleSaveDefaultExecutor}
             onFetchProviderModels={handleFetchProviderModels}
+            onEnableSubscriptionCli={handleEnableSubscriptionCli}
+            onDisableSubscriptionCli={handleDisableSubscriptionCli}
           />
         )}
       </div>

@@ -10,6 +10,9 @@ import type {
   ProviderProfileView,
   ReviewerRoleChoice,
   SaveProviderProfileResult,
+  SubscriptionCliView,
+  SubscriptionEnableInput,
+  SubscriptionEnableResult,
 } from './api.js';
 import { HealthList } from './HealthList.js';
 import { COPY } from './copy.js';
@@ -110,6 +113,8 @@ export function SettingsPage({
   onDeleteProviderProfile,
   onSaveDefaultExecutor,
   onFetchProviderModels,
+  onEnableSubscriptionCli,
+  onDisableSubscriptionCli,
 }: {
   tab: SettingsTab;
   disc: DisclosureState | null;
@@ -139,6 +144,8 @@ export function SettingsPage({
     secret?: string;
     savedId?: string;
   }) => Promise<{ ok: boolean; models?: string[]; message?: string }>;
+  onEnableSubscriptionCli?: (input: SubscriptionEnableInput) => Promise<SubscriptionEnableResult>;
+  onDisableSubscriptionCli?: (id: string) => Promise<GlobalAiSettingsView>;
 }) {
   const uid = useId();
   const keyInputId = `${uid}-claude-secret`;
@@ -169,6 +176,13 @@ export function SettingsPage({
   const [modelsBusy, setModelsBusy] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
   const [providerNotice, setProviderNotice] = useState<string | null>(null);
+
+  const [subModels, setSubModels] = useState<Record<string, string>>({});
+  const [subModalItem, setSubModalItem] = useState<SubscriptionCliView | null>(null);
+  const [subRiskChecked, setSubRiskChecked] = useState(false);
+  const [subBusyId, setSubBusyId] = useState<string | null>(null);
+  const [subError, setSubError] = useState<string | null>(null);
+  const [subNotice, setSubNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!providerEndpoint && selectedPreset?.defaultEndpoint) {
@@ -865,6 +879,248 @@ export function SettingsPage({
               )}
             </div>
           </section>
+
+          <section className="box" aria-labelledby="sub-cli-h" data-testid="settings-subscription-clis">
+            <h2 id="sub-cli-h">本机订阅 CLI 执行者（风险自担）</h2>
+            <p className="muted" style={{ marginTop: 0 }}>
+              默认仅接入 Codex 与上方官方 API Key。如你已有本机订阅工具并了解对应服务条款与隔离边界，可手动阅读并确认风险后接入。
+              绝不会自动开启，也不会读取或导出外部工具账号凭证。
+            </p>
+            <div className="stack" style={{ gap: '10px', marginTop: '10px' }}>
+              {(aiSettings?.subscriptionClis ?? []).length === 0 ? (
+                <p className="muted">暂未载入本机订阅 CLI 目录。</p>
+              ) : (
+                (aiSettings?.subscriptionClis ?? []).map((s: SubscriptionCliView) => (
+                  <div
+                    key={s.id}
+                    className="box"
+                    style={{ padding: '10px 12px' }}
+                    data-testid={`sub-cli-card-${s.id}`}
+                  >
+                    <div className="row sb" style={{ gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div className="row" style={{ gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <strong>{s.name}</strong>
+                        <span className={s.executorReady ? 'tag' : 'tag warn'}>{s.statusLabel}</span>
+                        {s.version && <span className="muted">v{s.version.replace(/^v/i, '')}</span>}
+                        {s.enabled && s.riskAcknowledgedAt && (
+                          <span className="muted">
+                            风险确认于 {new Date(s.riskAcknowledgedAt).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                      <div className="row" style={{ gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        {!s.enabled ? (
+                          <button
+                            type="button"
+                            className="secondary"
+                            data-testid={`sub-cli-open-${s.id}`}
+                            disabled={subBusyId === s.id || !onEnableSubscriptionCli}
+                            onClick={() => {
+                              setSubError(null);
+                              setSubNotice(null);
+                              setSubRiskChecked(false);
+                              setSubModalItem(s);
+                            }}
+                          >
+                            阅读风险并启用…
+                          </button>
+                        ) : (
+                          <>
+                            {onSaveDefaultExecutor && s.executorReady && (
+                              <button
+                                type="button"
+                                className="secondary"
+                                data-testid={`sub-cli-set-default-${s.id}`}
+                                disabled={aiSettings?.defaultExecutor === `sub:${s.id}` || roleBusy}
+                                onClick={async () => {
+                                  rolesDirtyRef.current = false;
+                                  setSubError(null);
+                                  setRoleError(null);
+                                  try {
+                                    const updated = await onSaveDefaultExecutor(`sub:${s.id}`);
+                                    setExecutorDraft(updated.defaultExecutor ?? `sub:${s.id}`);
+                                    setSubNotice(`已将全局默认执行者切换为「${s.displayName}」。`);
+                                  } catch (err) {
+                                    setSubError(err instanceof Error ? err.message : '设置默认执行者失败');
+                                  }
+                                }}
+                              >
+                                {aiSettings?.defaultExecutor === `sub:${s.id}` ? '当前默认' : '设为默认执行者'}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="secondary"
+                              data-testid={`sub-cli-retest-${s.id}`}
+                              disabled={subBusyId === s.id || !onEnableSubscriptionCli}
+                              onClick={async () => {
+                                if (!onEnableSubscriptionCli) return;
+                                setSubBusyId(s.id);
+                                setSubError(null);
+                                setSubNotice(null);
+                                try {
+                                  const res = await onEnableSubscriptionCli({
+                                    cliId: s.id,
+                                    riskAck: true,
+                                    model: (subModels[s.id] ?? s.model).trim() || undefined,
+                                  });
+                                  if (!res.ok) setSubError(res.message);
+                                  else setSubNotice(res.message);
+                                } catch (err) {
+                                  setSubError(err instanceof Error ? err.message : '检测失败');
+                                } finally {
+                                  setSubBusyId(null);
+                                }
+                              }}
+                            >
+                              {subBusyId === s.id ? '检测中…' : '重新检测'}
+                            </button>
+                            <button
+                              type="button"
+                              className="link"
+                              data-testid={`sub-cli-disable-${s.id}`}
+                              disabled={subBusyId === s.id || !onDisableSubscriptionCli}
+                              onClick={async () => {
+                                if (!onDisableSubscriptionCli) return;
+                                rolesDirtyRef.current = false;
+                                setSubBusyId(s.id);
+                                setSubError(null);
+                                setSubNotice(null);
+                                try {
+                                  const updated = await onDisableSubscriptionCli(s.id);
+                                  setExecutorDraft(updated.defaultExecutor ?? 'unset');
+                                  setSubNotice(`已停用「${s.name}」；若原本选为默认执行者已回退为「未设置」。`);
+                                } catch (err) {
+                                  setSubError(err instanceof Error ? err.message : '停用失败');
+                                } finally {
+                                  setSubBusyId(null);
+                                }
+                              }}
+                            >
+                              停用
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <p className="muted" style={{ margin: '6px 0 0' }}>
+                      {s.detail}
+                    </p>
+                    <p className="muted" style={{ margin: '4px 0 0' }}>
+                      {s.isolationHonesty}
+                    </p>
+                    <div className="row" style={{ gap: '8px', alignItems: 'center', marginTop: '8px', flexWrap: 'wrap' }}>
+                      <label htmlFor={`${uid}-sub-model-${s.id}`} className="muted">
+                        模型（选填）
+                      </label>
+                      <input
+                        id={`${uid}-sub-model-${s.id}`}
+                        type="text"
+                        data-testid={`sub-cli-model-${s.id}`}
+                        style={{ minWidth: '180px', maxWidth: '280px' }}
+                        value={subModels[s.id] ?? s.model}
+                        placeholder={s.suggestedModels.length ? s.suggestedModels.join(' / ') : '默认使用本机配置'}
+                        onChange={(e) => setSubModels((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+              {subError && !subModalItem && (
+                <p className="error" data-testid="subscription-cli-error">
+                  {subError}
+                </p>
+              )}
+              {subNotice && (
+                <p className="muted" data-testid="subscription-cli-notice">
+                  {subNotice}
+                </p>
+              )}
+            </div>
+          </section>
+
+          {subModalItem && (
+            <div className="overlay">
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="sub-risk-h"
+                className="dialog"
+                data-testid="subscription-risk-dialog"
+              >
+                <h2 id="sub-risk-h">{subModalItem.riskTitle}</h2>
+                <p className="notice">{subModalItem.officialAlternative}</p>
+                <ul>
+                  {subModalItem.riskBullets.map((b) => (
+                    <li key={b}>{b}</li>
+                  ))}
+                </ul>
+                <p className="muted" style={{ marginTop: '8px' }}>
+                  <strong>隔离边界：</strong>
+                  {subModalItem.isolationHonesty}
+                </p>
+                <label className="row" style={{ marginTop: '12px', gap: '8px', alignItems: 'flex-start', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    data-testid="subscription-risk-ack"
+                    checked={subRiskChecked}
+                    onChange={(e) => setSubRiskChecked(e.target.checked)}
+                  />
+                  <span>我已阅读并理解上述条款冲突与隔离边界，自愿启用「{subModalItem.name}」并自行承担账号与额度风险</span>
+                </label>
+                {subError && (
+                  <p className="error" style={{ marginTop: '8px' }} data-testid="subscription-risk-error">
+                    {subError}
+                  </p>
+                )}
+                <div className="row" style={{ marginTop: '12px', gap: '8px' }}>
+                  <button
+                    type="button"
+                    data-testid="subscription-risk-confirm"
+                    disabled={!subRiskChecked || subBusyId === subModalItem.id}
+                    onClick={async () => {
+                      if (!onEnableSubscriptionCli) return;
+                      setSubBusyId(subModalItem.id);
+                      setSubError(null);
+                      setSubNotice(null);
+                      try {
+                        const res = await onEnableSubscriptionCli({
+                          cliId: subModalItem.id,
+                          riskAck: subRiskChecked,
+                          model: (subModels[subModalItem.id] ?? subModalItem.model).trim() || undefined,
+                        });
+                        if (!res.ok) {
+                          setSubError(res.message);
+                          return;
+                        }
+                        setSubModalItem(null);
+                        setSubRiskChecked(false);
+                        setSubNotice(res.message);
+                      } catch (err) {
+                        setSubError(err instanceof Error ? err.message : '启用失败');
+                      } finally {
+                        setSubBusyId(null);
+                      }
+                    }}
+                  >
+                    {subBusyId === subModalItem.id ? '检测并启用中…' : '确认风险，检测并启用'}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    data-testid="subscription-risk-cancel"
+                    onClick={() => {
+                      setSubModalItem(null);
+                      setSubRiskChecked(false);
+                      setSubError(null);
+                    }}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : tab === 'disclosure' ? (
         <section className="box" aria-labelledby="out-h">

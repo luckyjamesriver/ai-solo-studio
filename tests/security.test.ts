@@ -282,9 +282,10 @@ describe('安全基线（防回归）', () => {
     // 阶段 6（提交②+③）：新增 reworkConflictTask、getSaveHistory 与 undoFromHistory
     // 阶段 7（提交①+②）：新增 exportExternalTask、importExternalReport、revealHandoff 与 reworkExternalTask
     // 阶段 8A（ADR 0010）：新增 listProviderCatalog、listProviderProfiles、fetchProviderModels、saveAndTestProvider、deleteProviderProfile、saveDefaultExecutor、saveProjectExecutor 与 setTaskExecutor
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'listProviderCatalog', 'listProviderProfiles', 'fetchProviderModels', 'saveAndTestProvider', 'deleteProviderProfile', 'saveDefaultExecutor', 'getProjectRoles', 'saveProjectRoles', 'saveProjectExecutor', 'listTasks', 'createTask', 'getTask', 'setTaskExecutor', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'exportExternalTask', 'importExternalReport', 'revealHandoff', 'stopTask', 'continueTask', 'reworkTask', 'reworkExternalTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'reworkConflictTask', 'getSaveHistory', 'undoFromHistory', 'revealProject']);
-    expect(entries).toHaveLength(70);
-    const SHAPES = ['', 'id: string', 'secret: string', 'input: ProviderModelFetchInput', 'input: ProviderSaveInput', 'chief: string, reviewer: string, model: string', 'projectId: string', 'projectId: string, brief: ProjectBriefInput', 'projectId: string, mode: string, chief: string, reviewer: string', 'projectId: string, mode: string, id: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, executorId: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string', 'projectId: string, id: string, preset: string', 'projectId: string, id: string, service: string, allow: boolean', 'projectId: string, id: string, edits: RequirementEditInput[]', 'projectId: string, id: string, choice: string, note: string', 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string', 'projectId: string, id: string, decision: string', 'projectId: string, id: string, newRequest: string', 'projectId: string, id: string, target: string, message: string', 'projectId: string, id: string, target: string'];
+    // 阶段 8B（ADR 0010）：新增 listSubscriptionClis、enableSubscriptionCli、disableSubscriptionCli
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'listProviderCatalog', 'listProviderProfiles', 'fetchProviderModels', 'saveAndTestProvider', 'deleteProviderProfile', 'saveDefaultExecutor', 'listSubscriptionClis', 'enableSubscriptionCli', 'disableSubscriptionCli', 'getProjectRoles', 'saveProjectRoles', 'saveProjectExecutor', 'listTasks', 'createTask', 'getTask', 'setTaskExecutor', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'exportExternalTask', 'importExternalReport', 'revealHandoff', 'stopTask', 'continueTask', 'reworkTask', 'reworkExternalTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'reworkConflictTask', 'getSaveHistory', 'undoFromHistory', 'revealProject']);
+    expect(entries).toHaveLength(73);
+    const SHAPES = ['', 'id: string', 'secret: string', 'input: ProviderModelFetchInput', 'input: ProviderSaveInput', 'input: SubscriptionEnableInput', 'chief: string, reviewer: string, model: string', 'projectId: string', 'projectId: string, brief: ProjectBriefInput', 'projectId: string, mode: string, chief: string, reviewer: string', 'projectId: string, mode: string, id: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, executorId: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string', 'projectId: string, id: string, preset: string', 'projectId: string, id: string, service: string, allow: boolean', 'projectId: string, id: string, edits: RequirementEditInput[]', 'projectId: string, id: string, choice: string, note: string', 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string', 'projectId: string, id: string, decision: string', 'projectId: string, id: string, newRequest: string', 'projectId: string, id: string, target: string, message: string', 'projectId: string, id: string, target: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
       expect(e.params, `${e.name} 不得有路径类参数`).not.toMatch(/\b(?:path|paths|dir|dirs|folder|file|filename|cwd|url)\b\s*:/i);
@@ -304,6 +305,10 @@ describe('安全基线（防回归）', () => {
       expect(body, `${typeName} 定义缺失`).toMatch(/endpoint: string/);
       expect(body, `${typeName} 不得含路径或 url 字段`).not.toMatch(/path|dir|folder|file|cwd|url/i);
     }
+    const subInputBody = /interface SubscriptionEnableInput \{([\s\S]*?)\}/.exec(preload)?.[1] ?? '';
+    expect(subInputBody, 'SubscriptionEnableInput 定义缺失').toMatch(/cliId: string/);
+    expect(subInputBody).toMatch(/riskAck: boolean/);
+    expect(subInputBody).not.toMatch(/path|dir|folder|file|cwd|url/i);
     // 每个 IPC 通道在主进程中都有处理函数，且主进程处理函数的参数形态同样固定
     const main = read('src/main/index.ts');
     for (const e of entries) expect(main, e.channel).toContain(`ipcMain.handle('${e.channel}'`);
@@ -491,6 +496,9 @@ describe('安全基线（防回归）', () => {
         saveAndTestProvider: 'input: ProviderSaveInput',
         deleteProviderProfile: 'id: string',
         saveDefaultExecutor: 'id: string',
+        listSubscriptionClis: '',
+        enableSubscriptionCli: 'input: SubscriptionEnableInput',
+        disableSubscriptionCli: 'id: string',
         getProjectRoles: 'projectId: string',
         saveProjectRoles: 'projectId: string, mode: string, chief: string, reviewer: string',
         saveProjectExecutor: 'projectId: string, mode: string, id: string',
@@ -1226,6 +1234,42 @@ describe('安全基线（防回归）', () => {
       expect(nextProfileDecl).toContain('hasSecret,');
       expect(nextProfileDecl).not.toMatch(/cipherB64|secretToTest/);
       expect(pStore).not.toMatch(/return\s*\{\s*ok:[^;]*\bcipherB64\b/);
+    });
+  });
+
+  describe('阶段 8B：本地订阅制 CLI 知情自担风险接入安全边界（只增不减）', () => {
+    it('外部交接导出路径（exportExternalTask / handoff）仍绝不接触任何订阅 CLI 适配器；适配器和门禁强制要求 riskAck === true 且剔除 API Key', () => {
+      const handoffFiles = sources.filter(([f]) => f.includes(`${path.sep}thinking${path.sep}handoff${path.sep}`));
+      expect(handoffFiles.length).toBeGreaterThan(0);
+      for (const [f, s] of handoffFiles) {
+        const clean = stripComments(s);
+        expect(clean, f).not.toMatch(/claude-code|adapters\/acp|subscriptions|child_process|\bspawn\(/);
+      }
+
+      const claudeSrc = stripComments(read('src/core/executor/adapters/claude-code.ts'));
+      const claudeStart = claudeSrc.slice(claudeSrc.indexOf('start(opts: StartOptions): ExecutorRun'));
+      expect(claudeStart.indexOf('requireRiskAcknowledged')).toBeGreaterThan(-1);
+      expect(claudeStart.indexOf('requireRiskAcknowledged')).toBeLessThan(claudeStart.indexOf('spawn('));
+      expect(claudeSrc).toContain('ANTHROPIC_API_KEY');
+      expect(claudeSrc).toContain('--safe-mode');
+      expect(claudeSrc).toContain('--restricted');
+      expect(claudeSrc).toContain('--strict-mcp-config');
+      expect(claudeSrc).not.toMatch(/allow-dangerously|bypassPermissions|dangerously-skip|--trust\b|--yolo/);
+
+      const acpSrc = stripComments(read('src/core/executor/adapters/acp.ts'));
+      const acpStart = acpSrc.slice(acpSrc.indexOf('start(opts: StartOptions): ExecutorRun'));
+      expect(acpStart.indexOf('requireRiskAcknowledged')).toBeGreaterThan(-1);
+      expect(acpStart.indexOf('requireRiskAcknowledged')).toBeLessThan(acpStart.indexOf('spawn('));
+      expect(acpSrc).toContain('OPENAI_API_KEY');
+      expect(acpSrc).toContain('CURSOR_API_KEY');
+      expect(acpSrc).toContain('sensitiveFallbackList');
+      expect(acpSrc).toContain('reject-once');
+      expect(acpSrc).not.toMatch(/allow-dangerously|bypassPermissions|dangerously-skip|--trust\b|--yolo/);
+
+      const subStoreSrc = stripComments(read('src/core/app/subscription-clis.ts'));
+      expect(subStoreSrc).toMatch(/testAndEnable[\s\S]*?input\.riskAck !== true/);
+      expect(subStoreSrc).not.toMatch(/cipherB64|\bpassword\b|\btoken\b|\brefreshToken\b/i);
+      expect(main).toMatch(/ipcMain\.handle\('subscriptions:testAndEnable'[\s\S]*?obj\.riskAck === true/);
     });
   });
 });

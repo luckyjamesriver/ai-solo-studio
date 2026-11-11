@@ -408,6 +408,11 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
                     </select>
                   </div>
                 )}
+              {task.executorNotice && (
+                <p className="notice" data-testid="plan-executor-honesty">
+                  {task.executorNotice}
+                </p>
+              )}
               <div className="checks" data-testid="checks-plan">
                 <strong>{COPY.checksTitle}</strong>
                 {task.checks.length > 0 ? (
