@@ -272,7 +272,7 @@ export function ProjectBoard({
       )}
 
       {tab === 'settings' && (
-        <section className="grid" data-testid="project-settings" aria-label={COPY.boardTabSettings}>
+        <section className="settings-grid" data-testid="project-settings" aria-label={COPY.boardTabSettings}>
           <div className="box" data-testid="project-settings-brief">
             {briefView?.readOnly ? (
               <>

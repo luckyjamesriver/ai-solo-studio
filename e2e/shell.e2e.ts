@@ -3539,6 +3539,57 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
     expect(await a.page.getByTestId('ai-status-codex').innerText()).toMatch(/未安装|不可用/);
     expect(await a.page.getByTestId('check-runner-tag').innerText()).toContain('可用');
     expect(await a.page.getByTestId('ai-status-check-runner').innerText()).toContain('不依赖 Codex');
+
+    // 布局自检（普通桌面与宽屏）：两列卡片撑满主内容区、与下方通栏右端对齐、密码框同款样式且绝不溢出卡片
+    const assertSettingsLayout = async () => {
+      const boxCheck = await a.page.evaluate(() => {
+        const conn = document.querySelector('[data-testid="settings-ai-connections"]')?.getBoundingClientRect();
+        const roles = document.querySelector('[data-testid="settings-default-roles"]')?.getBoundingClientRect();
+        const api = document.querySelector('[data-testid="settings-api-providers"]')?.getBoundingClientRect();
+        const keyInput = document.querySelector('[data-testid="claude-key-input"]') as HTMLElement | null;
+        const modelInput = document.querySelector('[data-testid="global-claude-model"]') as HTMLElement | null;
+        const secretInput = document.querySelector('[data-testid="provider-secret-input"]') as HTMLElement | null;
+        if (!conn || !roles || !api || !keyInput || !modelInput || !secretInput) return null;
+        const kr = keyInput.getBoundingClientRect();
+        const sr = secretInput.getBoundingClientRect();
+        return {
+          conn,
+          roles,
+          api,
+          kr,
+          sr,
+          keyRadius: getComputedStyle(keyInput).borderRadius,
+          modelRadius: getComputedStyle(modelInput).borderRadius,
+        };
+      });
+      expect(boxCheck).not.toBeNull();
+      const b = boxCheck!;
+      expect(Math.abs(b.conn.top - b.roles.top)).toBeLessThanOrEqual(2);
+      expect(Math.abs(b.conn.width - b.roles.width)).toBeLessThanOrEqual(2);
+      expect(b.roles.left).toBeGreaterThanOrEqual(b.conn.right);
+      expect(Math.abs(b.roles.right - b.api.right)).toBeLessThanOrEqual(2);
+      expect(b.kr.right).toBeLessThanOrEqual(b.conn.right - 8);
+      expect(b.sr.right).toBeLessThanOrEqual(b.api.right - 8);
+      expect(b.kr.height).toBeGreaterThanOrEqual(32);
+      expect(b.keyRadius).toBe(b.modelRadius);
+    };
+    await assertSettingsLayout();
+    const prevWinSize = await a.app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (!win) return null;
+      const [w = 1280, h = 840] = win.getSize();
+      win.setSize(1920, 1080);
+      return { w, h };
+    });
+    await a.page.waitForTimeout(80);
+    await assertSettingsLayout();
+    if (prevWinSize) {
+      await a.app.evaluate(({ BrowserWindow }, sz) => {
+        BrowserWindow.getAllWindows()[0]?.setSize(sz.w, sz.h);
+      }, prevWinSize);
+      await a.page.waitForTimeout(80);
+    }
+
     await stage8cShot(a.page, '01-settings-standalone-check-runner');
 
     await a.page.getByTestId('provider-preset-select').selectOption('deepseek');

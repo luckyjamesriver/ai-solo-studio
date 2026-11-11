@@ -382,7 +382,7 @@ export function SettingsPage({
       </div>
 
       {tab === 'ai' ? (
-        <div className="grid">
+        <div className="settings-grid">
           <section className="box" aria-labelledby="ai-conn-h" data-testid="settings-ai-connections">
             <h2 id="ai-conn-h">已接入的 AI</h2>
             <div className="item" data-testid="ai-status-codex">
@@ -449,7 +449,7 @@ export function SettingsPage({
                     setSecretDraft(e.target.value);
                     if (keyError) setKeyError(null);
                   }}
-                  style={{ flex: 1, minWidth: '220px' }}
+                  style={{ flex: '1 1 200px', minWidth: 0 }}
                 />
                 <button type="submit" className="btn pri" disabled={keyBusy} data-testid="claude-key-save">
                   {keyBusy ? '验证中…' : '验证并保存'}
@@ -636,7 +636,7 @@ export function SettingsPage({
                     setRoleError(null);
                     setRoleNotice(null);
                   }}
-                  style={{ minWidth: '180px' }}
+                  style={{ minWidth: 0 }}
                 />
                 <datalist id={modelListId}>
                   {(aiSettings?.availableClaudeModels ?? ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']).map((m) => (
@@ -683,9 +683,8 @@ export function SettingsPage({
           </section>
 
           <section
-            className="box"
+            className="box settings-span-all"
             aria-labelledby="api-providers-h"
-            style={{ gridColumn: '1 / -1' }}
             data-testid="settings-api-providers"
           >
             <h2 id="api-providers-h">常用 AI API 执行者接入</h2>
@@ -747,7 +746,7 @@ export function SettingsPage({
                       setProviderEndpoint(e.target.value);
                       setProviderError(null);
                     }}
-                    style={{ flex: '1 1 240px' }}
+                    style={{ flex: '1 1 240px', minWidth: 0 }}
                   />
                   <input
                     type="text"
@@ -761,7 +760,7 @@ export function SettingsPage({
                       setProviderModel(e.target.value);
                       setProviderError(null);
                     }}
-                    style={{ flex: '1 1 200px' }}
+                    style={{ flex: '1 1 200px', minWidth: 0 }}
                   />
                   <datalist id={providerModelListId}>
                     {[...new Set([...(selectedPreset?.suggestedModels ?? []), ...fetchedModels])].map((m) => (
@@ -795,7 +794,7 @@ export function SettingsPage({
                       setProviderSecret(e.target.value);
                       setProviderError(null);
                     }}
-                    style={{ flex: 1, minWidth: '220px' }}
+                    style={{ flex: '1 1 200px', minWidth: 0 }}
                   />
                   <button
                     type="submit"
@@ -895,9 +894,8 @@ export function SettingsPage({
           </section>
 
           <section
-            className="box"
+            className="box settings-span-all"
             aria-labelledby="sub-cli-h"
-            style={{ gridColumn: '1 / -1' }}
             data-testid="settings-subscription-clis"
           >
             <h2 id="sub-cli-h">本机订阅 CLI 执行者（风险自担）</h2>
@@ -1036,7 +1034,7 @@ export function SettingsPage({
                         id={`${uid}-sub-model-${s.id}`}
                         type="text"
                         data-testid={`sub-cli-model-${s.id}`}
-                        style={{ minWidth: '180px', maxWidth: '280px' }}
+                        style={{ flex: '0 1 280px', minWidth: 0, maxWidth: '100%' }}
                         value={subModels[s.id] ?? s.model}
                         placeholder={s.suggestedModels.length ? s.suggestedModels.join(' / ') : '默认使用本机配置'}
                         onChange={(e) => setSubModels((prev) => ({ ...prev, [s.id]: e.target.value }))}

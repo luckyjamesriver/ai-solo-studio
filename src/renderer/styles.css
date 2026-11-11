@@ -266,6 +266,20 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: var(--space-grid);
 }
+.grid > * { min-width: 0; }
+
+/* 设置与项目设置统一为两列卡片栅格（避免与 span 1 / -1 的通栏区块混用 auto-fit 导致首行被压缩） */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-grid);
+  align-items: start;
+}
+.settings-grid > * { min-width: 0; }
+.settings-span-all { grid-column: 1 / -1; }
+@media (max-width: 780px) {
+  .settings-grid { grid-template-columns: minmax(0, 1fr); }
+}
 
 .lane {
   background: var(--color-surface-subtle);
@@ -433,9 +447,10 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 
 .row { display: flex; gap: var(--space-section); align-items: center; flex-wrap: wrap; }
 .sb { justify-content: space-between; }
-.grow { flex: 1; min-width: 200px; }
+.grow { flex: 1 1 180px; min-width: 0; }
 
 .box {
+  min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: var(--space-card-y) var(--space-card-x);
@@ -459,7 +474,13 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .tag.ok { border-color: var(--color-ok); color: var(--color-ok); }
 
 /* 表单与列表 */
-textarea, input[type="text"], select {
+textarea,
+input[type="text"],
+input[type="password"],
+input[type="search"],
+input[type="url"],
+input[type="email"],
+select {
   font-family: var(--font-ui);
   font-size: var(--text-body);
   padding: 6px 8px;
@@ -467,13 +488,37 @@ textarea, input[type="text"], select {
   border-radius: var(--radius-sm);
   background: var(--color-bg);
   color: var(--color-ink);
+  max-width: 100%;
+  min-width: 0;
 }
-textarea, input[type="text"] {
+input[type="text"],
+input[type="password"],
+input[type="search"],
+input[type="url"],
+input[type="email"],
+select {
+  min-height: 34px;
+}
+textarea,
+input[type="text"],
+input[type="password"],
+input[type="search"],
+input[type="url"],
+input[type="email"] {
   display: block;
   width: 100%;
   margin-top: 4px;
 }
 label { display: block; margin-top: 8px; }
+.row > label,
+.item label { margin-top: 0; }
+.row > input[type="text"],
+.row > input[type="password"],
+.row > input[type="search"],
+.row > input[type="url"],
+.row > input[type="email"] {
+  margin-top: 0;
+}
 label.check, label.choice { display: flex; gap: 8px; align-items: flex-start; }
 fieldset {
   border: 1px solid var(--color-border);
