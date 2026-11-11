@@ -10,7 +10,9 @@
   2. `829f087` `feat(executor): add ACP executor adapter for Antigravity and Cursor CLI`
   3. `527e413` `feat(subscription): integrate subscription CLIs into settings, disclosure, controller and UI`
   4. `25b4f6c` `test(e2e): add Stage 8B subscription CLI end-to-end test and UI screenshots`
-  5. （本报告与 CI 实证提交）
+  5. `eb240d4` `docs(report): add Stage 8B subscription CLIs completion report`
+  6. `03b3e92` `fix(ui): preserve PlanCard mode selection across unchanged task refreshes`
+  7. （本报告双平台 CI 实证回填提交）
 
 ---
 
@@ -148,7 +150,7 @@
 
 ---
 
-## 五、本地验证实测记录
+## 五、本地验证实测记录（`03b3e92` 最终代码提交后）
 
 1. `npm run typecheck`：通过（0 报错）。
 2. `npx vitest run --maxWorkers=2`：共 53 个测试文件——**41 个测试文件（633 条单测）全部通过**；其余 12 个 `tests/integration/*.real.test.ts`（38 条）按既有门控跳过（需显式 `STUDIO_REAL_CODEX=1` 等真实联调开关），其中阶段 8B 新增测试文件：
@@ -157,10 +159,13 @@
    - `tests/stage8b-controller.test.ts`：3/3 通过
    - `tests/security.test.ts`：60/60 通过
 3. `npm run smoke`：`build:core` + `build:renderer` 构建通过，Electron CDP 检查 `document.title`、隔离边界与 74 个 `window.studio` 暴露键名全部 `PASS`。
-4. `npm run test:e2e`（`vitest run -c vitest.e2e.config.ts`）：首次全量运行中阶段 4 曾出现 1 次 `confirm-c0` 超时；单独复测阶段 4 通过（14.7s），随后重跑完整 53 项 E2E 全量集合 **53/53 全部通过**（含第 53 项阶段 8B E2E 完整闭环）。
+4. `npm run test:e2e`（`vitest run -c vitest.e2e.config.ts`）：在 `03b3e92` 修复 `PlanCard.tsx` 受同版本 `refreshProjectTasks` 刷新覆写模式选择的竞态后，全套 **53/53 E2E 测试全部通过**（含第 53 项阶段 8B E2E 完整闭环）。
 
 ---
 
 ## 六、双平台 CI 结果
 
-待推送 `rebuild` 后回填 `ubuntu-latest` 与 `macos-latest` 实际运行链接与结论。
+- 首轮推送（Commit `eb240d4`，Run [`43044031931`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/43044031931)）：`test (ubuntu-latest)` 通过；`test (macos-latest)` 中新增的阶段 8B 全部通过，但「放弃：二次确认」因 `PlanCard.tsx` 直接把 `task.criteria` 数组引用放进 `useEffect` 依赖导致后台刷新重置 `full_trust` 单选而漏弹 `trust-ack` 超时（已在 `03b3e92` 修复）。
+- 修复后双平台通过实证（Commit `03b3e92`，Run [`43048309111`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/43048309111)）：
+  - `test (ubuntu-latest)`：[`success`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/43048309111/job/130618165773)（`typecheck` + `npm test` + `build`）
+  - `test (macos-latest)`：[`success`](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/43048309111/job/130618166133)（`typecheck` + `npm test` + `build` + `Electron end-to-end (macOS)` 全套 53 项通过）
