@@ -7,6 +7,9 @@ import { validateProjectPath } from '../core/env/project-path.js';
 import { runHealthCheck, type HealthReport } from '../core/env/health.js';
 import * as G from '../core/git/git.js';
 import { CodexExecutor, VERIFIED_CODEX_VERSION } from '../core/executor/adapters/codex.js';
+import { ApiAgentExecutor } from '../core/executor/adapters/api-agent.js';
+import { API_PROVIDER_CATALOG, findProviderPreset, normalizeApiEndpoint } from '../core/executor/api/catalog.js';
+import { fetchProviderModels } from '../core/executor/api/client.js';
 import { ClaudeApiThinker } from '../core/thinking/claude-api.js';
 import { ClaudeCliThinker, DEV_PERSONAL_ENV } from '../core/thinking/claude-cli.js';
 import { CodexThinker } from '../core/thinking/codex.js';
@@ -15,8 +18,14 @@ import { DisclosureStore, buildDisclosure } from '../core/app/disclosure.js';
 import { AppStore } from '../core/app/app-store.js';
 import { ClaudeKeyStore, type SecretVault } from '../core/app/claude-key.js';
 import {
+  ProviderProfileStore,
+  PROVIDER_PROFILE_ID_RE,
+  type SaveProviderProfileInput,
+} from '../core/app/provider-profiles.js';
+import {
   AiSettingsStore,
   buildSameAiNotice,
+  buildVerifiedExecutorOptions,
   SUGGESTED_CLAUDE_MODELS,
   type GlobalAiSettingsView,
 } from '../core/app/ai-settings.js';
@@ -72,6 +81,7 @@ const safeStorageVault: SecretVault = {
   },
 };
 const claudeKeyStore = () => new ClaudeKeyStore(dataDir(), safeStorageVault, STORE_OPTS);
+const providerProfileStore = () => new ProviderProfileStore(dataDir(), safeStorageVault, STORE_OPTS);
 const aiSettingsStore = () => new AiSettingsStore(dataDir(), STORE_OPTS);
 const TOOLS = ['git', 'node', 'npm', 'codex'] as const;
 
@@ -84,12 +94,31 @@ async function detectCodexAvailability(explicitCommand?: string): Promise<{ avai
   }
 }
 
+async function getVerifiedExecutorsForMain(explicitCodexCmd?: string) {
+  const [codex, profiles] = await Promise.all([
+    detectCodexAvailability(explicitCodexCmd),
+    providerProfileStore().listProfiles(),
+  ]);
+  return {
+    codex,
+    profiles,
+    verified: buildVerifiedExecutorOptions(codex.available, profiles),
+  };
+}
+
 async function getGlobalAiView(): Promise<GlobalAiSettingsView> {
-  const [codex, claudeKey, roles] = await Promise.all([
-    detectCodexAvailability(),
+  const [{ codex, profiles, verified }, claudeKey, roles, defaultExecutor] = await Promise.all([
+    getVerifiedExecutorsForMain(),
     claudeKeyStore().status(),
     aiSettingsStore().getGlobalRoles(),
+    aiSettingsStore().getDefaultExecutor(),
   ]);
+  let executorProblem: string | null = null;
+  if (defaultExecutor === 'unset') {
+    executorProblem = '默认执行者已回退为「未设置」（原配置已删除），请重新选择已测通的执行者。';
+  } else if (defaultExecutor !== 'codex' && !verified.some((v) => v.id === defaultExecutor)) {
+    executorProblem = '当前默认执行者不可用或尚未通过连接测试，请重新测试连接或更换默认执行者。';
+  }
   return {
     codex: {
       available: codex.available,
@@ -100,6 +129,11 @@ async function getGlobalAiView(): Promise<GlobalAiSettingsView> {
     roles,
     sameAiNotice: buildSameAiNotice(roles.chief, roles.reviewer),
     availableClaudeModels: SUGGESTED_CLAUDE_MODELS,
+    executorPresets: API_PROVIDER_CATALOG,
+    providerProfiles: profiles,
+    verifiedExecutors: verified,
+    defaultExecutor,
+    executorProblem,
   };
 }
 
@@ -166,6 +200,40 @@ async function createController(dir: string): Promise<TaskController> {
   return new TaskController({
     repo: dir,
     makeExecutor: () => new CodexExecutor({ command: codexPath }),
+    getVerifiedExecutors: async () => (await getVerifiedExecutorsForMain(codexPath)).verified,
+    resolveExecutor: async (executorId?: string) => {
+      const target = executorId ?? (await aiSettingsStore().getDefaultExecutor());
+      if (target === 'unset') {
+        throw new Error('当前执行者未设置（原 API 配置已删除），请先在「设置 → AI 与角色」重新选择执行者。');
+      }
+      if (!target || target === 'codex') {
+        return { executor: new CodexExecutor({ command: codexPath }) };
+      }
+      if (!target.startsWith('api:')) {
+        throw new Error(`未知的执行者标识：${target}`);
+      }
+      const profileId = target.slice(4);
+      const profile = await providerProfileStore().getProfile(profileId);
+      if (!profile || !profile.executorReady) {
+        throw new Error('所选 API 执行者不可用或尚未通过连接测试，请前往「设置 → AI 与角色」重新验证连接。');
+      }
+      const codexAvail = found.tools.codex ? await detectCodexAvailability(codexPath) : { available: false };
+      const sandboxExec = codexAvail.available ? new CodexExecutor({ command: codexPath }) : null;
+      return {
+        executor: new ApiAgentExecutor({
+          id: target,
+          displayName: `${profile.label}（API）`,
+          presetId: profile.presetId,
+          protocol: profile.protocol,
+          endpoint: profile.endpoint,
+          model: profile.model,
+          requiresKey: profile.requiresKey,
+          getSecret: () => providerProfileStore().getSecret(profileId),
+          ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+        }),
+        ...(sandboxExec ? { sandboxRunner: sandboxExec.sandboxRunner } : {}),
+      };
+    },
     makeThinkers: (preset) => {
       if (preset === 'dev-personal') {
         if (!devPersonalEnabled) throw new Error('未启用开发者预设（STUDIO_DEV_PERSONAL_CLAUDE=1）。');
@@ -343,12 +411,22 @@ async function health(): Promise<HealthReport & { firstRun?: boolean }> {
 }
 
 async function disclosure() {
-  const codex = await resolveTool('codex', {});
-  const keyStatus = await claudeKeyStore().status().catch(() => ({ configured: false, available: false }));
+  const [codex, keyStatus, profiles] = await Promise.all([
+    resolveTool('codex', {}),
+    claudeKeyStore().status().catch(() => ({ configured: false, available: false })),
+    providerProfileStore().listProfiles().catch(() => []),
+  ]);
+  const apiServices = profiles
+    .filter((p) => p.available)
+    .map((p) => ({
+      name: `${p.presetName}（${p.endpointOrigin}）`,
+      role: p.executorReady ? '担任后台执行者，读取并修改你指定任务副本中的文件' : '已配置 API 连接（支持对话/思考）',
+    }));
   const content = buildDisclosure({
     codexInstalled: !!codex,
     claudeApiConfigured: keyStatus.configured && keyStatus.available,
     devPersonalClaude: process.env[DEV_PERSONAL_ENV] === '1' && !app.isPackaged,
+    apiServices,
   });
   return { content, accepted: await disclosureStore().get() };
 }
@@ -420,6 +498,8 @@ ipcMain.handle('project:getBrief', (_e, projectId: unknown) => controllerFor(pro
 ipcMain.handle('project:saveBrief', (_e, projectId: unknown, brief: unknown) => controllerFor(projectId).saveProjectBrief(brief));
 ipcMain.handle('project:getRoles', (_e, projectId: unknown) => controllerFor(projectId).getProjectRoles());
 ipcMain.handle('project:saveRoles', (_e, projectId: unknown, mode: unknown, chief: unknown, reviewer: unknown) => controllerFor(projectId).saveProjectRoles(mode, chief, reviewer));
+ipcMain.handle('project:saveExecutor', (_e, projectId: unknown, mode: unknown, id: unknown) => controllerFor(projectId).saveProjectExecutor(mode, id));
+ipcMain.handle('tasks:setExecutor', (_e, projectId: unknown, id: unknown, executorId: unknown) => controllerFor(projectId).setTaskExecutor(id, executorId));
 ipcMain.handle('project:init', async (_e, consent: unknown): Promise<OpenResult> => {
   const target = pendingInit;
   pendingInit = null;
@@ -457,6 +537,55 @@ ipcMain.handle('settings:saveAiRoles', async (_e, chief: unknown, reviewer: unkn
       claudeAvailable: claudeKey.configured && claudeKey.available,
     },
   );
+  return getGlobalAiView();
+});
+
+async function handleFetchModels(raw: unknown) {
+  const obj = (raw ?? {}) as Record<string, unknown>;
+  const presetId = typeof obj.presetId === 'string' ? obj.presetId : '';
+  const preset = findProviderPreset(presetId);
+  if (!preset) return { ok: false, message: '未识别的服务商。' };
+  const endpointRaw = typeof obj.endpoint === 'string' && obj.endpoint.trim() ? obj.endpoint : preset.defaultEndpoint;
+  const norm = normalizeApiEndpoint(endpointRaw);
+  if (!norm.ok) return { ok: false, message: norm.reason };
+  let secret: string | null = typeof obj.secret === 'string' && obj.secret.trim() ? obj.secret.trim() : null;
+  if (!secret && typeof obj.savedId === 'string' && PROVIDER_PROFILE_ID_RE.test(obj.savedId)) {
+    secret = await providerProfileStore().getSecret(obj.savedId).catch(() => null);
+  }
+  return fetchProviderModels({ protocol: preset.protocol, endpoint: norm.endpoint, secret });
+}
+
+async function handleSaveProvider(raw: unknown) {
+  const obj = (raw ?? {}) as Record<string, unknown>;
+  if (typeof obj.presetId !== 'string' || typeof obj.model !== 'string') {
+    throw new Error('无效的服务商配置参数。');
+  }
+  const secret = typeof obj.secret === 'string' ? obj.secret : undefined;
+  if (secret && secret.length > 512) throw new Error('API Key 长度超出限制。');
+  const input: SaveProviderProfileInput = {
+    presetId: obj.presetId as SaveProviderProfileInput['presetId'],
+    model: obj.model,
+    ...(typeof obj.id === 'string' && obj.id ? { id: obj.id } : {}),
+    ...(typeof obj.label === 'string' && obj.label ? { label: obj.label } : {}),
+    ...(typeof obj.endpoint === 'string' ? { endpoint: obj.endpoint } : {}),
+    ...(secret !== undefined ? { secret } : {}),
+  };
+  return providerProfileStore().saveAndTest(input);
+}
+
+ipcMain.handle('providers:catalog', () => API_PROVIDER_CATALOG);
+ipcMain.handle('providers:list', () => providerProfileStore().listProfiles());
+ipcMain.handle('providers:models', (_e, input: unknown) => handleFetchModels(input));
+ipcMain.handle('providers:saveAndTest', (_e, input: unknown) => handleSaveProvider(input));
+ipcMain.handle('providers:delete', async (_e, id: unknown) => {
+  await providerProfileStore().deleteProfile(typeof id === 'string' ? id : '', (pid) =>
+    aiSettingsStore().onProviderProfileDeleted(pid),
+  );
+  return getGlobalAiView();
+});
+ipcMain.handle('settings:saveDefaultExecutor', async (_e, id: unknown) => {
+  const { verified } = await getVerifiedExecutorsForMain();
+  await aiSettingsStore().saveDefaultExecutor(id, verified);
   return getGlobalAiView();
 });
 

@@ -183,7 +183,10 @@ describe('阶段 5b 提交④：AI 接入与角色设置、优先级覆盖、同
     );
     expect(htmlSettings).toContain('未经独立评审');
     expect(htmlSettings).toContain('data-testid="global-role-executor"');
-    expect(htmlSettings).not.toMatch(/<select[^>]*executor/i);
+    // Stage 8A / ADR 0010：执行者下拉只列出经连接测试通过的执行者，未验证的 Claude 思考者不得出现在执行者选项里
+    const execSelectHtml = /<select[^>]*data-testid="global-role-executor"[\s\S]*?<\/select>/.exec(htmlSettings)?.[0] ?? '';
+    expect(execSelectHtml).toContain('Codex（本机）');
+    expect(execSelectHtml).not.toMatch(/value="claude"/);
 
     const claudeFake = scripted({}, {}, { id: 'claude-api', service: 'Anthropic' });
     const codexFake = scripted({}, {}, { id: 'codex', service: 'OpenAI（ChatGPT / Codex）' });

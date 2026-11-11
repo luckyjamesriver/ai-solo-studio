@@ -367,6 +367,47 @@ export function PlanCard({ projectId, task, preferredMode, onChanged }: { projec
                 <span className="muted">执行者与检查</span>
                 <span className="muted" data-testid="executor-info">执行者：{task.executorText}</span>
               </div>
+              {['draft', 'clarifying', 'planned', 'approved'].includes(task.state) &&
+                (task.availableExecutors?.length ?? 0) > 0 && (
+                  <div className="row sb" style={{ gap: '8px' }}>
+                    <label htmlFor={`plan-exec-${task.id}`} className="muted">
+                      切换本次执行者
+                    </label>
+                    <select
+                      id={`plan-exec-${task.id}`}
+                      aria-label="本次任务执行者"
+                      data-testid="plan-executor-select"
+                      value={task.executorId ?? 'codex'}
+                      onChange={async (e) => {
+                        setError(null);
+                        try {
+                          const updated = await studio().setTaskExecutor(projectId, task.id, e.target.value);
+                          onChanged(updated);
+                        } catch (err) {
+                          fail(err);
+                        }
+                      }}
+                    >
+                      {task.executorId === 'unset' && (
+                        <option value="unset" disabled>
+                          未设置（原配置已删）
+                        </option>
+                      )}
+                      {task.executorId &&
+                        task.executorId !== 'unset' &&
+                        !task.availableExecutors!.some((x) => x.id === task.executorId) && (
+                          <option value={task.executorId} disabled>
+                            {task.executorText}（当前不可用）
+                          </option>
+                        )}
+                      {task.availableExecutors!.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               <div className="checks" data-testid="checks-plan">
                 <strong>{COPY.checksTitle}</strong>
                 {task.checks.length > 0 ? (

@@ -17,6 +17,7 @@ import {
   type DiscussionClassifyHint,
   type TaskClassification,
 } from './task-state-view.js';
+import type { VerifiedExecutorOption } from './ai-settings.js';
 
 /**
  * 给渲染层看的任务视图：只含大白话与必要事实。
@@ -136,7 +137,11 @@ export interface TaskView {
   reconciled: string | null;
   result: ResultView | null;
   diagnostics: string[];
-  /** 执行者名称（来自实际运行记录或任务配置，如 Codex / 模拟执行体） */
+  /** 执行者编号（如 codex / api:xxx） */
+  executorId?: string;
+  /** 当前全局/本机所有已测通的可选执行者（供计划确认页切换） */
+  availableExecutors?: VerifiedExecutorOption[];
+  /** 执行者名称（来自实际运行记录或任务配置，如 Codex / DeepSeek · deepseek-chat（API）） */
   executorName: string;
   /** 执行模型（来自实际运行记录，如 gpt-5 / gpt-4o） */
   model?: string;
@@ -374,7 +379,14 @@ function formatShortTime(iso: string): string {
 
 export function buildTaskView(
   task: Task,
-  opts: { scripts: ('build' | 'test')[]; running: boolean; worktreeChanges?: FileChange[]; discussion?: DiscussionClassifyHint; handoffContent?: string },
+  opts: {
+    scripts: ('build' | 'test')[];
+    running: boolean;
+    worktreeChanges?: FileChange[];
+    discussion?: DiscussionClassifyHint;
+    handoffContent?: string;
+    availableExecutors?: VerifiedExecutorOption[];
+  },
 ): TaskView {
   const caps = task.plan?.capabilities;
   const aiMessages = task.timeline.filter((e) => e.kind === 'message' && !isHost(e)).map((e) => e.text);
@@ -442,7 +454,7 @@ export function buildTaskView(
     task.executionKind === 'external' || task.executorId === 'external'
       ? undefined
       : (task.model ?? (modelFromTimeline && modelFromTimeline !== '未知' ? modelFromTimeline : undefined));
-  const executorText = model ? `${executorName} · ${model}` : executorName;
+  const executorText = model && !executorName.includes(model) ? `${executorName} · ${model}` : executorName;
 
   const handoff: HandoffView | null = task.handoff
     ? {
@@ -498,6 +510,8 @@ export function buildTaskView(
     running: opts.running,
     reconciled: task.reconciled ? `已核对：${task.reconciled.note}` : null,
     result,
+    ...(task.executorId ? { executorId: task.executorId } : {}),
+    ...(opts.availableExecutors ? { availableExecutors: opts.availableExecutors } : {}),
     executorName,
     model,
     executorText,

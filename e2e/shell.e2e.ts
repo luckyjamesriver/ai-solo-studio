@@ -660,7 +660,7 @@ describe('施工模式界面', () => {
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
     expect(r.forgedProject).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'detectEnvironment', 'discardTask', 'editReworkPermissions', 'exportExternalTask', 'getAcceptanceView', 'getAiSettings', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getProjectRoles', 'getSaveHistory', 'getTask', 'getWorkbench', 'importExternalReport', 'initProject', 'listOpenProjects', 'listTasks', 'modifyDiscussionRequirements', 'onSaveProgress', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealHandoff', 'revealProject', 'reworkConflictTask', 'reworkExternalTask', 'reworkTask', 'saveAiRoles', 'saveClaudeKey', 'savePlan', 'saveProjectBrief', 'saveProjectRoles', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoFromHistory', 'undoSave']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'deleteProviderProfile', 'detectEnvironment', 'discardTask', 'editReworkPermissions', 'exportExternalTask', 'fetchProviderModels', 'getAcceptanceView', 'getAiSettings', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getProjectRoles', 'getSaveHistory', 'getTask', 'getWorkbench', 'importExternalReport', 'initProject', 'listOpenProjects', 'listProviderCatalog', 'listProviderProfiles', 'listTasks', 'modifyDiscussionRequirements', 'onSaveProgress', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealHandoff', 'revealProject', 'reworkConflictTask', 'reworkExternalTask', 'reworkTask', 'saveAiRoles', 'saveAndTestProvider', 'saveClaudeKey', 'saveDefaultExecutor', 'savePlan', 'saveProjectBrief', 'saveProjectExecutor', 'saveProjectRoles', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'setTaskExecutor', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoFromHistory', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
@@ -2093,8 +2093,10 @@ describe('阶段 5b：项目简介、Claude API Key 与 AI 角色配置（E2E）
     await a.page.getByTestId('nav-settings').click();
     await a.page.getByTestId('settings-ai-connections').waitFor();
     expect(await a.page.getByTestId('claude-key-tag').innerText()).toBe('未设置');
-    expect(await a.page.getByTestId('global-role-executor').innerText()).toContain('Codex');
-    expect(await a.page.locator('select[data-testid*="executor"]').count()).toBe(0);
+    const execOptions = await a.page.locator('[data-testid="global-role-executor"] option').allInnerTexts();
+    expect(execOptions.join('\n')).toContain('Codex');
+    expect(execOptions).toHaveLength(1);
+    expect(await a.page.getByTestId('global-role-executor').inputValue()).toBe('codex');
     await stage5bShot(a.page, '03-settings-unset');
 
     // 选择未接入的 Claude 作为首席 → 出现未接入提示且禁止保存

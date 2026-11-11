@@ -89,6 +89,7 @@ export type { ClaudeKeySaveResult, ClaudeKeyStatus, ClaudeKeyValidationCategory 
 export type {
   AiProviderId,
   ChiefRoleChoice,
+  EffectiveExecutorResult,
   EffectiveRolesResult,
   GlobalAiRoles,
   GlobalAiSettingsView,
@@ -96,7 +97,10 @@ export type {
   ProjectRoleMode,
   ProjectRolesView,
   ReviewerRoleChoice,
+  VerifiedExecutorOption,
 } from '../core/app/ai-settings.js';
+export type { ApiProtocol, ApiProviderPreset, BuiltinApiProviderId } from '../core/executor/api/catalog.js';
+export type { ProviderProfileView, SaveProviderProfileResult } from '../core/app/provider-profiles.js';
 export type { DiscussionView, DiscussionPreset } from '../core/app/discussion-service.js';
 export type {
   BasisStatus,
@@ -118,6 +122,8 @@ export type {
 } from '../core/thinking/flow/index.js';
 import type { ClaudeKeySaveResult, ClaudeKeyStatus } from '../core/app/claude-key.js';
 import type { GlobalAiSettingsView, ProjectRolesView } from '../core/app/ai-settings.js';
+import type { ApiProviderPreset } from '../core/executor/api/catalog.js';
+import type { ProviderProfileView, SaveProviderProfileResult } from '../core/app/provider-profiles.js';
 import type { ProjectBriefInput as BriefIn, ProjectBriefView as BriefView } from '../core/thinking/flow/index.js';
 import type { UserAcceptanceView } from '../core/acceptance/view.js';
 import type { SaveProgressEvent } from '../core/task/model.js';
@@ -135,6 +141,7 @@ interface StudioApi {
   listTasks(projectId: string): Promise<{ tasks: TaskView[]; preferredMode: 'standard' | 'full_trust' }>;
   createTask(projectId: string, request: string): Promise<TaskView>;
   getTask(projectId: string, id: string): Promise<TaskView>;
+  setTaskExecutor(projectId: string, id: string, executorId: string): Promise<TaskView>;
   savePlan(projectId: string, id: string, plan: PlanInput): Promise<TaskView>;
   addExtraDir(projectId: string, id: string): Promise<AddDirResult>;
   removeExtraDir(projectId: string, id: string, key: string): Promise<TaskView>;
@@ -187,6 +194,7 @@ interface StudioApi {
   saveProjectBrief(projectId: string, brief: BriefIn): Promise<BriefView>;
   getProjectRoles(projectId: string): Promise<ProjectRolesView>;
   saveProjectRoles(projectId: string, mode: string, chief: string, reviewer: string): Promise<ProjectRolesView>;
+  saveProjectExecutor(projectId: string, mode: string, id: string): Promise<ProjectRolesView>;
   initProject(consent: boolean): Promise<OpenResult>;
   getDisclosure(): Promise<DisclosureState>;
   acceptDisclosure(): Promise<DisclosureState>;
@@ -195,6 +203,12 @@ interface StudioApi {
   deleteClaudeKey(): Promise<ClaudeKeyStatus>;
   getAiSettings(): Promise<GlobalAiSettingsView>;
   saveAiRoles(chief: string, reviewer: string, model: string): Promise<GlobalAiSettingsView>;
+  listProviderCatalog(): Promise<readonly ApiProviderPreset[]>;
+  listProviderProfiles(): Promise<ProviderProfileView[]>;
+  fetchProviderModels(input: { presetId: string; endpoint: string; secret?: string; savedId?: string }): Promise<{ ok: boolean; models?: string[]; message?: string }>;
+  saveAndTestProvider(input: { id?: string; presetId: string; label?: string; endpoint: string; model: string; secret?: string }): Promise<SaveProviderProfileResult>;
+  deleteProviderProfile(id: string): Promise<GlobalAiSettingsView>;
+  saveDefaultExecutor(id: string): Promise<GlobalAiSettingsView>;
 }
 
 declare global {

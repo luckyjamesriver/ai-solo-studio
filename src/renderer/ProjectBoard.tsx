@@ -65,6 +65,7 @@ export function ProjectBoard({
   const [roleMode, setRoleMode] = useState<ProjectRoleMode>('global');
   const [roleChief, setRoleChief] = useState<ChiefRoleChoice>('codex');
   const [roleReviewer, setRoleReviewer] = useState<ReviewerRoleChoice>('none');
+  const [roleExecutor, setRoleExecutor] = useState<string>('codex');
   const [rolesBusy, setRolesBusy] = useState(false);
   const [rolesError, setRolesError] = useState<string | null>(null);
   const [rolesSavedNotice, setRolesSavedNotice] = useState<string | null>(null);
@@ -92,6 +93,7 @@ export function ProjectBoard({
         setRoleMode(rv.mode);
         setRoleChief(rv.chief);
         setRoleReviewer(rv.reviewer);
+        setRoleExecutor(rv.projectExecutor ?? rv.effectiveExecutor?.id ?? 'codex');
       })
       .catch((e: Error) => {
         if (!cancelled) setRolesError(e.message);
@@ -320,16 +322,20 @@ export function ProjectBoard({
             {(() => {
               const roleName = (c: ChiefRoleChoice | ReviewerRoleChoice) =>
                 c === 'claude' ? 'Claude' : c === 'codex' ? 'Codex' : c === 'none' ? '不复核' : '未设置';
-              const needUnset = roleMode === 'custom' && (roleChief === 'unset' || roleReviewer === 'unset');
+              const needUnset = roleMode === 'custom' && (roleChief === 'unset' || roleReviewer === 'unset' || roleExecutor === 'unset');
               const needClaude = roleMode === 'custom' && (roleChief === 'claude' || roleReviewer === 'claude') && !rolesView?.claudeAvailable;
               const needCodex = roleMode === 'custom' && (roleChief === 'codex' || roleReviewer === 'codex') && !rolesView?.codexAvailable;
+              const execOptions = rolesView?.verifiedExecutors ?? [];
+              const execUnready = roleMode === 'custom' && execOptions.length > 0 && roleExecutor !== 'unset' && !execOptions.some((o) => o.id === roleExecutor);
               const unconnectedWarn = needUnset
-                ? '存在「未设置」的角色（可能已删除 Key），请重新选择后再保存。'
-                : needClaude
-                  ? 'Claude 尚未接入（未配置可用 API Key），请先在全局「设置 → AI 与角色」接入后再保存。'
-                  : needCodex
-                    ? 'Codex 尚未接入或未登录，请先在终端登录 Codex 后再保存。'
-                    : null;
+                ? '存在「未设置」的角色（可能已删除密钥），请重新选择后再保存。'
+                : execUnready
+                  ? '所选执行者尚未就绪或未通过连接测试，请前往全局「设置 → AI 与角色」检查后再保存。'
+                  : needClaude
+                    ? 'Claude 尚未接入（未配置可用 API 密钥），请先在全局「设置 → AI 与角色」接入后再保存。'
+                    : needCodex
+                      ? 'Codex 尚未接入或未登录，请先在终端登录 Codex 后再保存。'
+                      : null;
               const sameAiNotice =
                 roleMode === 'custom' && (roleChief === 'codex' || roleChief === 'claude') && roleChief === roleReviewer
                   ? `「首席」与「复核」均选择了 ${roleName(roleChief)}：将按单思考者模式运行，并标记「未经独立评审」。`
@@ -341,11 +347,15 @@ export function ProjectBoard({
                 setRolesSavedNotice(null);
                 setRolesBusy(true);
                 try {
-                  const next = await studio().saveProjectRoles(project.id, roleMode, roleChief, roleReviewer);
+                  let next = await studio().saveProjectRoles(project.id, roleMode, roleChief, roleReviewer);
+                  if (execOptions.some((o) => o.id === roleExecutor) || roleMode === 'global') {
+                    next = await studio().saveProjectExecutor(project.id, roleMode, roleExecutor);
+                  }
                   setRolesView(next);
                   setRoleMode(next.mode);
                   setRoleChief(next.chief);
                   setRoleReviewer(next.reviewer);
+                  setRoleExecutor(next.projectExecutor ?? next.effectiveExecutor?.id ?? 'codex');
                   setRolesSavedNotice('本项目 AI 角色设置已保存（已开始的讨论线程不受影响）。');
                 } catch (err) {
                   setRolesError(err instanceof Error ? err.message : String(err));
@@ -381,7 +391,8 @@ export function ProjectBoard({
                   {roleMode === 'global' && rolesView && (
                     <p className="muted" style={{ marginTop: '8px' }} data-testid="project-role-inherited">
                       当前沿用全局设置：首席 {roleName(rolesView.globalRoles.chief)} · 复核{' '}
-                      {roleName(rolesView.globalRoles.reviewer)} · 执行 Codex
+                      {roleName(rolesView.globalRoles.reviewer)} · 执行{' '}
+                      {rolesView.effectiveExecutor?.label ?? 'Codex'}
                     </p>
                   )}
 
@@ -444,11 +455,40 @@ export function ProjectBoard({
 
                       <div className="item">
                         <div className="grow">
-                          <strong>执行</strong> <span className="muted">· 每个任务一个（目前仅支持 Codex）</span>
+                          <label htmlFor={`proj-executor-${project.id}`}>
+                            <strong>执行</strong> <span className="muted">· 动手修改代码（仅可选连接测试通过的执行者）</span>
+                          </label>
                         </div>
-                        <span data-testid="project-role-executor" className="tag">
-                          Codex（固定）
-                        </span>
+                        <select
+                          id={`proj-executor-${project.id}`}
+                          aria-label="项目执行者"
+                          data-testid="project-role-executor"
+                          value={roleExecutor}
+                          onChange={(e) => {
+                            setRoleExecutor(e.target.value);
+                            setRolesError(null);
+                            setRolesSavedNotice(null);
+                          }}
+                        >
+                          {roleExecutor === 'unset' && (
+                            <option value="unset" disabled>
+                              未设置（请重新选择）
+                            </option>
+                          )}
+                          {roleExecutor !== 'unset' && !execOptions.some((o) => o.id === roleExecutor) && (
+                            <option value={roleExecutor} disabled>
+                              {rolesView?.effectiveExecutor?.label ?? roleExecutor}（未就绪）
+                            </option>
+                          )}
+                          {execOptions.length === 0 && (
+                            <option value="codex">Codex（本机）</option>
+                          )}
+                          {execOptions.map((opt) => (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     </>
                   )}

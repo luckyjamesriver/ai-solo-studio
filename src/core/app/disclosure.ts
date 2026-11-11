@@ -28,6 +28,8 @@ export interface DisclosureInput {
   claudeApiConfigured?: boolean;
   /** 开发者自用的 Claude 思考者是否可用（打包版永远为 false） */
   devPersonalClaude: boolean;
+  /** 用户已在设置中连接测试通过的其它 AI API 服务 */
+  apiServices?: DisclosureService[];
 }
 
 /** 按“当前可用的执行体与思考者”列出服务名。 */
@@ -36,6 +38,11 @@ export function buildDisclosure(input: DisclosureInput): DisclosureContent {
   if (input.codexInstalled) services.push({ name: 'OpenAI（Codex）', role: '动手修改你的项目（施工），也可担任方案评审者' });
   if (input.claudeApiConfigured) services.push({ name: 'Anthropic', role: '在讨论阶段担任思考者（拆解需求、起草或评审方案）' });
   if (input.devPersonalClaude) services.push({ name: 'Anthropic（Claude，开发者自用模式）', role: '起草和整理方案（规划）' });
+  for (const s of input.apiServices ?? []) {
+    if (!services.some((x) => x.name === s.name && x.role === s.role)) {
+      services.push(s);
+    }
+  }
   return {
     version: DISCLOSURE_VERSION,
     services,

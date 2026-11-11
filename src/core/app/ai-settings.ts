@@ -1,11 +1,38 @@
+import type { ApiProviderPreset } from '../executor/api/catalog.js';
 import { DEFAULT_CLAUDE_API_MODEL } from '../thinking/claude-api.js';
 import { AppStore, type AppStoreOptions } from './app-store.js';
 import type { ClaudeKeyStatus } from './claude-key.js';
+import type { ProviderProfileView } from './provider-profiles.js';
 
 export type AiProviderId = 'codex' | 'claude';
 export type ChiefRoleChoice = AiProviderId | 'unset';
 export type ReviewerRoleChoice = AiProviderId | 'none' | 'unset';
 export type ProjectRoleMode = 'global' | 'custom';
+export type ExecutorChoice = 'codex' | `api:${string}` | 'unset';
+
+export interface VerifiedExecutorOption {
+  id: 'codex' | `api:${string}`;
+  label: string;
+  kind: 'codex' | 'api';
+  presetId?: string;
+  presetName?: string;
+  model?: string;
+  endpointOrigin?: string;
+  officialEndpoint: boolean;
+}
+
+export interface EffectiveExecutorResult {
+  source: 'project' | 'global';
+  sourceLabel: string;
+  id: string;
+  label: string;
+  problem: string | null;
+}
+
+export interface ProjectExecutorConfig {
+  mode: ProjectRoleMode;
+  executor: string;
+}
 
 export interface GlobalAiRoles {
   chief: ChiefRoleChoice;
@@ -47,6 +74,11 @@ export interface GlobalAiSettingsView {
   roles: GlobalAiRoles;
   sameAiNotice: string | null;
   availableClaudeModels: string[];
+  executorPresets?: readonly ApiProviderPreset[];
+  providerProfiles?: ProviderProfileView[];
+  verifiedExecutors?: VerifiedExecutorOption[];
+  defaultExecutor?: string;
+  executorProblem?: string | null;
 }
 
 export interface ProjectRolesView {
@@ -58,6 +90,10 @@ export interface ProjectRolesView {
   codexAvailable: boolean;
   claudeAvailable: boolean;
   sameAiNotice: string | null;
+  executorMode?: ProjectRoleMode;
+  projectExecutor?: string;
+  effectiveExecutor?: EffectiveExecutorResult;
+  verifiedExecutors?: VerifiedExecutorOption[];
 }
 
 export const DEFAULT_GLOBAL_AI_ROLES: GlobalAiRoles = {
@@ -330,4 +366,165 @@ export class AiSettingsStore {
       problem,
     };
   }
+
+  async getDefaultExecutor(): Promise<string> {
+    const raw = await this.app.read('ai-executor');
+    if (raw && typeof raw.executor === 'string' && raw.executor.trim()) {
+      return raw.executor.trim();
+    }
+    return 'codex';
+  }
+
+  async saveDefaultExecutor(
+    executorId: unknown,
+    verified: VerifiedExecutorOption[],
+  ): Promise<string> {
+    if (typeof executorId !== 'string' || !executorId.trim()) {
+      throw new Error('请选择一个已验证的执行者。');
+    }
+    const id = executorId.trim();
+    if (!verified.some((v) => v.id === id)) {
+      throw new Error(
+        id === 'codex'
+          ? 'Codex 尚未就绪（未安装或未登录），请先在终端登录 Codex 或选用已测通的 API 执行者。'
+          : '所选 API 执行者尚未通过连接测试或不支持工具调用，请先在下方测试通过后再设为执行者。',
+      );
+    }
+    await this.app.update('ai-executor', {}, () => ({ executor: id, updatedAt: new Date().toISOString() }), 'ai-executor-save');
+    return id;
+  }
+
+  private async readProjectExecutorMap(): Promise<Record<string, ProjectExecutorConfig>> {
+    const raw = await this.app.read('project-ai-executors');
+    const projects = raw?.projects;
+    if (!projects || typeof projects !== 'object' || Array.isArray(projects)) return {};
+    const out: Record<string, ProjectExecutorConfig> = {};
+    for (const [k, v] of Object.entries(projects as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+      const cfg = v as Record<string, unknown>;
+      out[k] = {
+        mode: cfg.mode === 'custom' ? 'custom' : 'global',
+        executor: typeof cfg.executor === 'string' && cfg.executor.trim() ? cfg.executor.trim() : 'codex',
+      };
+    }
+    return out;
+  }
+
+  async getProjectExecutor(projectRoot: string): Promise<ProjectExecutorConfig> {
+    const map = await this.readProjectExecutorMap();
+    if (map[projectRoot]) return map[projectRoot]!;
+    return { mode: 'global', executor: await this.getDefaultExecutor() };
+  }
+
+  async saveProjectExecutor(
+    projectRoot: string,
+    mode: unknown,
+    executorId: unknown,
+    verified: VerifiedExecutorOption[],
+  ): Promise<ProjectExecutorConfig> {
+    if (mode !== 'global' && mode !== 'custom') {
+      throw new Error('无效的执行者来源设置，请选择「跟随全局设置」或「本项目单独设置」。');
+    }
+    let nextExec = await this.getDefaultExecutor();
+    if (mode === 'custom') {
+      if (typeof executorId !== 'string' || !executorId.trim()) {
+        throw new Error('请为本项目选择一个已通过连接测试的执行者。');
+      }
+      nextExec = executorId.trim();
+      if (!verified.some((v) => v.id === nextExec)) {
+        throw new Error('所选执行者尚未连接测试通过，不能指定为本项目执行者。');
+      }
+    }
+    const next: ProjectExecutorConfig = { mode, executor: nextExec };
+    await this.app.update(
+      'project-ai-executors',
+      {},
+      (cur) => ({
+        projects: {
+          ...((cur.projects && typeof cur.projects === 'object' && !Array.isArray(cur.projects)
+            ? cur.projects
+            : {}) as Record<string, unknown>),
+          [projectRoot]: next,
+        },
+      }),
+      'project-ai-executor-save',
+    );
+    return next;
+  }
+
+  /** 当某条 API 服务商配置被删除后，引用它的全局/项目执行者回退为 unset。 */
+  async onProviderProfileDeleted(profileId: string): Promise<void> {
+    const target = `api:${profileId}`;
+    const def = await this.getDefaultExecutor();
+    if (def === target) {
+      await this.app.update('ai-executor', {}, () => ({ executor: 'unset', updatedAt: new Date().toISOString() }), 'ai-executor-deleted');
+    }
+    const map = await this.readProjectExecutorMap();
+    let changed = false;
+    const nextMap: Record<string, ProjectExecutorConfig> = {};
+    for (const [k, v] of Object.entries(map)) {
+      if (v.mode === 'custom' && v.executor === target) {
+        changed = true;
+        nextMap[k] = { mode: 'custom', executor: 'unset' };
+      } else {
+        nextMap[k] = v;
+      }
+    }
+    if (changed) {
+      await this.app.update('project-ai-executors', {}, () => ({ projects: nextMap }), 'project-ai-executor-deleted');
+    }
+  }
+
+  async resolveEffectiveExecutor(
+    projectRoot: string,
+    verified: VerifiedExecutorOption[],
+  ): Promise<EffectiveExecutorResult> {
+    const [def, proj] = await Promise.all([this.getDefaultExecutor(), this.getProjectExecutor(projectRoot)]);
+    const useProj = proj.mode === 'custom';
+    const id = useProj ? proj.executor : def;
+    const hit = verified.find((v) => v.id === id);
+    let label = hit?.label ?? (id === 'codex' ? 'Codex' : id === 'unset' ? '未设置' : id);
+    let problem: string | null = null;
+    if (id === 'unset') {
+      problem = '执行者已回退为「未设置」（原配置已删除），请先在设置中重新指定执行者。';
+    } else if (!hit) {
+      problem = `当前选定的执行者（${label}）尚未就绪或未通过连接测试，请前往「设置 → AI 与角色」检查后再开工。`;
+    }
+    return {
+      source: useProj ? 'project' : 'global',
+      sourceLabel: useProj ? '本项目单独设置' : '跟随全局设置',
+      id,
+      label,
+      problem,
+    };
+  }
+}
+
+export function buildVerifiedExecutorOptions(
+  codexAvailable: boolean,
+  profiles: ProviderProfileView[],
+): VerifiedExecutorOption[] {
+  const out: VerifiedExecutorOption[] = [];
+  if (codexAvailable) {
+    out.push({
+      id: 'codex',
+      label: 'Codex（本机）',
+      kind: 'codex',
+      officialEndpoint: true,
+    });
+  }
+  for (const p of profiles) {
+    if (!p.executorReady) continue;
+    out.push({
+      id: `api:${p.id}`,
+      label: `${p.label}（API）`,
+      kind: 'api',
+      presetId: p.presetId,
+      presetName: p.presetName,
+      model: p.model,
+      endpointOrigin: p.endpointOrigin,
+      officialEndpoint: p.officialEndpoint,
+    });
+  }
+  return out;
 }

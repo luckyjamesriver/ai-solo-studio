@@ -21,7 +21,7 @@ import {
   type UserAcceptanceView,
   type ViewContext,
 } from '../acceptance/view.js';
-import { TaskRunner } from '../task/runner.js';
+import { TaskRunner, type ResolvedExecutor } from '../task/runner.js';
 import { detectScripts } from '../checks/scripts.js';
 import { resolveCapabilities } from '../capabilities/model.js';
 import { validateExtraDir } from '../executor/extra-dirs.js';
@@ -33,6 +33,7 @@ import {
   type AiProviderId,
   type AiSettingsStore,
   type ProjectRolesView,
+  type VerifiedExecutorOption,
 } from './ai-settings.js';
 import { buildTaskView, extraDirKey, type TaskView } from './task-view.js';
 import { classifyTaskState, type TaskClassification } from './task-state-view.js';
@@ -105,6 +106,10 @@ export interface ControllerOptions {
   getAiAvailability?: () => Promise<{ codexAvailable: boolean; claudeAvailable: boolean }>;
   /** 按思考者标识（codex / claude）构建 Thinker */
   makeThinkerByProvider?: (provider: AiProviderId, model?: string) => Thinker;
+  /** 动态按执行者编号构造真实 Executor（含 API Agent 与独立沙箱运行器） */
+  resolveExecutor?: (executorId?: string) => Promise<ResolvedExecutor>;
+  /** 获取当前已通过连接测试的全部可用执行者列表 */
+  getVerifiedExecutors?: () => Promise<VerifiedExecutorOption[]>;
   /** 保存前检查进度推送事件回调（主进程向渲染层推送实时步骤状态） */
   onSaveProgress?: (ev: SaveProgressEvent) => void;
 }
@@ -130,7 +135,12 @@ export class TaskController {
   /** 懒创建：第一次真正用到任务功能时才取得执行体 */
   private r(): TaskRunner {
     if (!this.runner) {
-      this.runner = new TaskRunner({ repo: this.o.repo, executor: this.o.makeExecutor(), ...(this.o.storeOptions ? { storeOptions: this.o.storeOptions } : {}) });
+      this.runner = new TaskRunner({
+        repo: this.o.repo,
+        executor: this.o.makeExecutor(),
+        ...(this.o.resolveExecutor ? { resolveExecutor: this.o.resolveExecutor } : {}),
+        ...(this.o.storeOptions ? { storeOptions: this.o.storeOptions } : {}),
+      });
       this.runner.on('save_progress', (ev: SaveProgressEvent) => {
         this.o.onSaveProgress?.(ev);
       });
@@ -195,12 +205,17 @@ export class TaskController {
     const handoffContent = t.handoff?.taskFilePath
       ? await fsp.readFile(t.handoff.taskFilePath, 'utf8').catch(() => '')
       : undefined;
+    const availableExecutors =
+      EDITABLE.includes(t.state) && this.o.getVerifiedExecutors
+        ? await this.o.getVerifiedExecutors().catch(() => undefined)
+        : undefined;
     const v = buildTaskView(t, {
       scripts,
       running,
       ...(worktreeChanges ? { worktreeChanges } : {}),
       ...(discussion ? { discussion } : {}),
       ...(handoffContent !== undefined ? { handoffContent } : {}),
+      ...(availableExecutors ? { availableExecutors } : {}),
     });
     const err = this.startErrors.get(t.id);
     if (err && !v.startFailure) v.startFailure = err;
@@ -229,10 +244,30 @@ export class TaskController {
     if (typeof request !== 'string' || !request.trim()) throw new Error('请先写下你想让 AI 做什么。');
     if (request.length > 4000) throw new Error('需求太长了，请精简到 4000 字以内。');
     await this.ready();
-    const t = await this.r().create(request.trim());
+    let initialExecutor: { id: string; displayName: string } | undefined;
+    if (this.o.aiSettings && this.o.getVerifiedExecutors) {
+      const verified = await this.o.getVerifiedExecutors().catch(() => []);
+      const eff = await this.o.aiSettings.resolveEffectiveExecutor(this.o.repo, verified);
+      initialExecutor = { id: eff.id, displayName: eff.label };
+    }
+    const t = await this.r().create(request.trim(), initialExecutor);
     const threadId = await this.d().ensureBoundThread(t);
     const bound = await this.r().bindThread(t.id, threadId);
     return this.view(bound);
+  }
+
+  async setTaskExecutor(id: unknown, executorId: unknown): Promise<TaskView> {
+    const tid = this.checkArg(TASK_ID, id);
+    if (this.active.has(tid)) throw new Error('只有未开工的任务才能切换执行者。');
+    if (typeof executorId !== 'string' || (executorId !== 'codex' && !/^api:[a-z0-9_-]{1,48}$/.test(executorId))) {
+      throw new Error('无效的执行者编号。');
+    }
+    const verified = this.o.getVerifiedExecutors ? await this.o.getVerifiedExecutors() : [];
+    const hit = verified.find((v) => v.id === executorId);
+    if (!hit) {
+      throw new Error('所选执行者尚未通过连接测试或已不可用，请先在「设置 → AI 与角色」完成连接测试。');
+    }
+    return this.view(await this.r().setTaskExecutor(tid, hit.id, hit.label));
   }
 
   async get(id: unknown): Promise<TaskView> {
@@ -299,6 +334,7 @@ export class TaskController {
   async start(id: unknown, ack: unknown): Promise<TaskView> {
     let t = await this.load(id);
     if (!t.plan) throw new Error('请先保存计划。');
+    if (t.executorId === 'unset') throw new Error('当前执行者未设置（原 API 配置可能已删除），请先重新选择已测通的执行者。');
     const fullTrust = t.plan.capabilities.constructionMode === 'full_trust';
     if (fullTrust && ack !== true) throw new Error('完全信任模式需要你勾选“我已了解风险”后才能开工。');
     if (this.active.has(t.id)) throw new Error('这个任务已经在施工中。');
@@ -978,15 +1014,23 @@ export class TaskController {
     return readProjectBriefView(this.o.repo);
   }
 
+  private async verifiedExecutorList(codexAvailable = true): Promise<VerifiedExecutorOption[]> {
+    if (this.o.getVerifiedExecutors) return this.o.getVerifiedExecutors();
+    return codexAvailable ? [{ id: 'codex', label: 'Codex（本机）', kind: 'codex', officialEndpoint: true }] : [];
+  }
+
   async getProjectRoles(): Promise<ProjectRolesView> {
     if (!this.o.aiSettings) throw new Error('当前环境未启用 AI 角色设置。');
     const avail = this.o.getAiAvailability
       ? await this.o.getAiAvailability()
       : { codexAvailable: true, claudeAvailable: true };
-    const [cfg, globalRoles, effective] = await Promise.all([
+    const verifiedExecutors = await this.verifiedExecutorList(avail.codexAvailable);
+    const [cfg, globalRoles, effective, projExec, effectiveExecutor] = await Promise.all([
       this.o.aiSettings.getProjectRoles(this.o.repo),
       this.o.aiSettings.getGlobalRoles(),
       this.o.aiSettings.resolveEffectiveRoles(this.o.repo, avail),
+      this.o.aiSettings.getProjectExecutor(this.o.repo),
+      this.o.aiSettings.resolveEffectiveExecutor(this.o.repo, verifiedExecutors),
     ]);
     return {
       ...cfg,
@@ -995,6 +1039,10 @@ export class TaskController {
       codexAvailable: avail.codexAvailable,
       claudeAvailable: avail.claudeAvailable,
       sameAiNotice: buildSameAiNotice(cfg.chief, cfg.reviewer),
+      executorMode: projExec.mode,
+      projectExecutor: projExec.executor,
+      effectiveExecutor,
+      verifiedExecutors,
     };
   }
 
@@ -1004,6 +1052,16 @@ export class TaskController {
       ? await this.o.getAiAvailability()
       : { codexAvailable: true, claudeAvailable: true };
     await this.o.aiSettings.saveProjectRoles(this.o.repo, { mode, chief, reviewer }, avail);
+    return this.getProjectRoles();
+  }
+
+  async saveProjectExecutor(mode: unknown, executorId: unknown): Promise<ProjectRolesView> {
+    if (!this.o.aiSettings) throw new Error('当前环境未启用 AI 角色设置。');
+    const avail = this.o.getAiAvailability
+      ? await this.o.getAiAvailability()
+      : { codexAvailable: true, claudeAvailable: true };
+    const verifiedExecutors = await this.verifiedExecutorList(avail.codexAvailable);
+    await this.o.aiSettings.saveProjectExecutor(this.o.repo, mode, executorId, verifiedExecutors);
     return this.getProjectRoles();
   }
 

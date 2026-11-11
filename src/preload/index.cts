@@ -20,13 +20,21 @@ const api = {
   deleteClaudeKey: () => ipcRenderer.invoke('settings:deleteClaudeKey'),
   getAiSettings: () => ipcRenderer.invoke('settings:getAi'),
   saveAiRoles: (chief: string, reviewer: string, model: string) => ipcRenderer.invoke('settings:saveAiRoles', chief, reviewer, model),
+  listProviderCatalog: () => ipcRenderer.invoke('providers:catalog'),
+  listProviderProfiles: () => ipcRenderer.invoke('providers:list'),
+  fetchProviderModels: (input: ProviderModelFetchInput) => ipcRenderer.invoke('providers:models', input),
+  saveAndTestProvider: (input: ProviderSaveInput) => ipcRenderer.invoke('providers:saveAndTest', input),
+  deleteProviderProfile: (id: string) => ipcRenderer.invoke('providers:delete', id),
+  saveDefaultExecutor: (id: string) => ipcRenderer.invoke('settings:saveDefaultExecutor', id),
   getProjectRoles: (projectId: string) => ipcRenderer.invoke('project:getRoles', projectId),
   saveProjectRoles: (projectId: string, mode: string, chief: string, reviewer: string) => ipcRenderer.invoke('project:saveRoles', projectId, mode, chief, reviewer),
+  saveProjectExecutor: (projectId: string, mode: string, id: string) => ipcRenderer.invoke('project:saveExecutor', projectId, mode, id),
   // B3-2 + 阶段 2 多项目：任务。第一个参数固定为已打开的 projectId；没有任何路径参数——
   // 额外文件夹由主进程弹出系统选择框取得并校验。
   listTasks: (projectId: string) => ipcRenderer.invoke('tasks:list', projectId),
   createTask: (projectId: string, request: string) => ipcRenderer.invoke('tasks:create', projectId, request),
   getTask: (projectId: string, id: string) => ipcRenderer.invoke('tasks:get', projectId, id),
+  setTaskExecutor: (projectId: string, id: string, executorId: string) => ipcRenderer.invoke('tasks:setExecutor', projectId, id, executorId),
   savePlan: (projectId: string, id: string, plan: PlanInput) => ipcRenderer.invoke('tasks:savePlan', projectId, id, plan),
   addExtraDir: (projectId: string, id: string) => ipcRenderer.invoke('tasks:addExtraDir', projectId, id),
   removeExtraDir: (projectId: string, id: string, key: string) => ipcRenderer.invoke('tasks:removeExtraDir', projectId, id, key),
@@ -97,6 +105,22 @@ interface ProjectBriefInput {
   whatItIs: string;
   principles: string;
   targetUsers: string;
+}
+
+interface ProviderModelFetchInput {
+  presetId: string;
+  endpoint: string;
+  secret?: string;
+  savedId?: string;
+}
+
+interface ProviderSaveInput {
+  id?: string;
+  presetId: string;
+  label?: string;
+  endpoint: string;
+  model: string;
+  secret?: string;
 }
 
 interface SaveProgressEvent {

@@ -132,15 +132,15 @@ export class ProviderProfileStore {
     return out;
   }
 
-  private async readSecretsMap(): Promise<Record<string, { cipherB64: string }>> {
+  private async readSecretsMap(): Promise<Record<string, string>> {
     const raw = await this.app.read(SECRETS_RECORD_ID);
     const items = raw?.items;
     if (!items || typeof items !== 'object' || Array.isArray(items)) return {};
-    const out: Record<string, { cipherB64: string }> = {};
+    const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(items as Record<string, unknown>)) {
       if (!PROVIDER_PROFILE_ID_RE.test(k) || !v || typeof v !== 'object' || Array.isArray(v)) continue;
       const rec = v as { cipherB64?: unknown };
-      if (typeof rec.cipherB64 === 'string' && rec.cipherB64) out[k] = { cipherB64: rec.cipherB64 };
+      if (typeof rec.cipherB64 === 'string' && rec.cipherB64) out[k] = rec.cipherB64;
     }
     return out;
   }
@@ -155,7 +155,7 @@ export class ProviderProfileStore {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map((p) => {
         const preset = findProviderPreset(p.presetId)!;
-        const cipherPresent = !!secrets[p.id]?.cipherB64;
+        const cipherPresent = !!secrets[p.id];
         const configured = p.hasSecret ? cipherPresent : !p.requiresKey;
         const needVault = p.hasSecret || p.requiresKey;
         const available = configured && (!needVault || vaultAvail.ok);
@@ -202,7 +202,7 @@ export class ProviderProfileStore {
       if (!p.requiresKey) return null;
       throw new Error(`「${p.label}」未配置有效 API Key。`);
     }
-    const sec = secrets[id]?.cipherB64;
+    const sec = secrets[id];
     if (!sec) throw new Error(`「${p.label}」的加密密钥缺失，请重新配置。`);
     const avail = await this.vault.isAvailable();
     if (!avail.ok) {

@@ -1,12 +1,15 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type {
+  ApiProviderPreset,
   ChiefRoleChoice,
   ClaudeKeySaveResult,
   ClaudeKeyStatus,
   DisclosureState,
   GlobalAiSettingsView,
   HealthReport,
+  ProviderProfileView,
   ReviewerRoleChoice,
+  SaveProviderProfileResult,
 } from './api.js';
 import { HealthList } from './HealthList.js';
 import { COPY } from './copy.js';
@@ -103,6 +106,10 @@ export function SettingsPage({
   onSaveClaudeKey,
   onDeleteClaudeKey,
   onSaveAiRoles,
+  onSaveAndTestProvider,
+  onDeleteProviderProfile,
+  onSaveDefaultExecutor,
+  onFetchProviderModels,
 }: {
   tab: SettingsTab;
   disc: DisclosureState | null;
@@ -116,10 +123,27 @@ export function SettingsPage({
   onSaveClaudeKey?: (secret: string) => Promise<ClaudeKeySaveResult>;
   onDeleteClaudeKey?: () => Promise<ClaudeKeyStatus>;
   onSaveAiRoles?: (chief: string, reviewer: string, model: string) => Promise<GlobalAiSettingsView>;
+  onSaveAndTestProvider?: (input: {
+    id?: string;
+    presetId: string;
+    label?: string;
+    endpoint: string;
+    model: string;
+    secret?: string;
+  }) => Promise<SaveProviderProfileResult>;
+  onDeleteProviderProfile?: (id: string) => Promise<GlobalAiSettingsView>;
+  onSaveDefaultExecutor?: (id: string) => Promise<GlobalAiSettingsView>;
+  onFetchProviderModels?: (input: {
+    presetId: string;
+    endpoint: string;
+    secret?: string;
+    savedId?: string;
+  }) => Promise<{ ok: boolean; models?: string[]; message?: string }>;
 }) {
   const uid = useId();
   const keyInputId = `${uid}-claude-secret`;
   const modelListId = `${uid}-claude-models`;
+  const providerModelListId = `${uid}-provider-models`;
   const [secretDraft, setSecretDraft] = useState('');
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -128,17 +152,96 @@ export function SettingsPage({
   const [chiefDraft, setChiefDraft] = useState<ChiefRoleChoice>(aiSettings?.roles.chief ?? 'codex');
   const [reviewerDraft, setReviewerDraft] = useState<ReviewerRoleChoice>(aiSettings?.roles.reviewer ?? 'none');
   const [modelDraft, setModelDraft] = useState<string>(aiSettings?.roles.claudeModel ?? 'claude-opus-5-5');
+  const [executorDraft, setExecutorDraft] = useState<string>(aiSettings?.defaultExecutor ?? 'codex');
   const [roleBusy, setRoleBusy] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
   const [roleNotice, setRoleNotice] = useState<string | null>(null);
   const rolesDirtyRef = useRef(false);
+
+  const presets: readonly ApiProviderPreset[] = aiSettings?.executorPresets ?? [];
+  const [presetId, setPresetId] = useState<string>('deepseek');
+  const selectedPreset = presets.find((p) => p.id === presetId) ?? presets[0];
+  const [providerEndpoint, setProviderEndpoint] = useState<string>('https://api.deepseek.com');
+  const [providerModel, setProviderModel] = useState<string>('deepseek-chat');
+  const [providerSecret, setProviderSecret] = useState<string>('');
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
+  const [providerBusy, setProviderBusy] = useState(false);
+  const [modelsBusy, setModelsBusy] = useState(false);
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const [providerNotice, setProviderNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!aiSettings || rolesDirtyRef.current) return;
     setChiefDraft(aiSettings.roles.chief);
     setReviewerDraft(aiSettings.roles.reviewer);
     setModelDraft(aiSettings.roles.claudeModel);
-  }, [aiSettings?.roles.chief, aiSettings?.roles.reviewer, aiSettings?.roles.claudeModel]);
+    if (aiSettings.defaultExecutor) setExecutorDraft(aiSettings.defaultExecutor);
+  }, [aiSettings?.roles.chief, aiSettings?.roles.reviewer, aiSettings?.roles.claudeModel, aiSettings?.defaultExecutor]);
+
+  const handleSelectPreset = (nextId: string) => {
+    setPresetId(nextId);
+    const p = presets.find((x) => x.id === nextId);
+    if (p) {
+      setProviderEndpoint(p.defaultEndpoint);
+      setProviderModel(p.suggestedModels[0] ?? '');
+      setFetchedModels([]);
+      setProviderError(null);
+      setProviderNotice(null);
+    }
+  };
+
+  const handleFetchModels = async () => {
+    if (!onFetchProviderModels || modelsBusy) return;
+    setModelsBusy(true);
+    setProviderError(null);
+    setProviderNotice(null);
+    try {
+      const r = await onFetchProviderModels({
+        presetId: selectedPreset?.id ?? presetId,
+        endpoint: providerEndpoint,
+        ...(providerSecret.trim() ? { secret: providerSecret.trim() } : {}),
+      });
+      if (r.ok && r.models?.length) {
+        setFetchedModels(r.models);
+        if (!providerModel.trim()) setProviderModel(r.models[0]!);
+        setProviderNotice(`已拉取 ${r.models.length} 个可用模型，可在模型框中选择或手填。`);
+      } else if (r.ok) {
+        setProviderNotice('服务端未返回模型列表，请手动输入模型 ID。');
+      } else {
+        setProviderError(r.message ?? '拉取模型列表失败，请检查地址和密钥。');
+      }
+    } catch (err) {
+      setProviderError(err instanceof Error ? err.message : '拉取模型列表失败。');
+    } finally {
+      setModelsBusy(false);
+    }
+  };
+
+  const handleSaveAndTestProvider = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!onSaveAndTestProvider || providerBusy) return;
+    setProviderBusy(true);
+    setProviderError(null);
+    setProviderNotice(null);
+    try {
+      const res = await onSaveAndTestProvider({
+        presetId: selectedPreset?.id ?? presetId,
+        endpoint: providerEndpoint,
+        model: providerModel,
+        ...(providerSecret.trim() ? { secret: providerSecret.trim() } : {}),
+      });
+      if (res.ok) {
+        setProviderSecret('');
+        setProviderNotice(res.message);
+      } else {
+        setProviderError(res.message);
+      }
+    } catch (err) {
+      setProviderError(err instanceof Error ? err.message : '连接测试失败，请重试。');
+    } finally {
+      setProviderBusy(false);
+    }
+  };
 
   const effectiveKey = aiSettings?.claudeKey ?? claudeKey;
   const codexFromEnv = codexSummaryTag(env);
@@ -205,7 +308,11 @@ export function SettingsPage({
     try {
       rolesDirtyRef.current = false;
       await onSaveAiRoles(chiefDraft, reviewerDraft, modelDraft);
-      setRoleNotice('默认角色设置已保存（已开始中的讨论线程不受影响）。');
+      const verifiedExecs = aiSettings?.verifiedExecutors ?? [];
+      if (onSaveDefaultExecutor && verifiedExecs.some((v) => v.id === executorDraft)) {
+        await onSaveDefaultExecutor(executorDraft);
+      }
+      setRoleNotice('默认角色与执行者设置已保存（已开始中的任务不受影响）。');
     } catch (err) {
       setRoleError(err instanceof Error ? err.message : '保存失败，请重试。');
     } finally {
@@ -403,12 +510,49 @@ export function SettingsPage({
 
               <div className="item">
                 <div className="grow">
-                  <strong>执行</strong> <span className="muted">· 每个任务一个（目前仅支持 Codex）</span>
+                  <label htmlFor={`${uid}-executor`}>
+                    <strong>执行</strong> <span className="muted">· 动手写代码（仅可选连接测试通过的执行者）</span>
+                  </label>
                 </div>
-                <span data-testid="global-role-executor" className="tag">
-                  Codex（固定）
-                </span>
+                <select
+                  id={`${uid}-executor`}
+                  aria-label="默认执行者"
+                  data-testid="global-role-executor"
+                  value={executorDraft}
+                  onChange={(e) => {
+                    rolesDirtyRef.current = true;
+                    setExecutorDraft(e.target.value);
+                    setRoleError(null);
+                    setRoleNotice(null);
+                  }}
+                >
+                  {executorDraft === 'unset' && (
+                    <option value="unset" disabled>
+                      未设置（请重新选择）
+                    </option>
+                  )}
+                  {(aiSettings?.verifiedExecutors ?? []).length === 0 && executorDraft === 'codex' && (
+                    <option value="codex">Codex（本机）</option>
+                  )}
+                  {executorDraft !== 'unset' &&
+                    (aiSettings?.verifiedExecutors ?? []).length > 0 &&
+                    !(aiSettings?.verifiedExecutors ?? []).some((v) => v.id === executorDraft) && (
+                      <option value={executorDraft} disabled>
+                        {executorDraft === 'codex' ? 'Codex（当前未就绪）' : `${executorDraft}（当前不可用）`}
+                      </option>
+                    )}
+                  {(aiSettings?.verifiedExecutors ?? []).map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               </div>
+              {aiSettings?.executorProblem && (
+                <p role="alert" className="error" style={{ marginTop: '6px' }} data-testid="global-executor-problem">
+                  {aiSettings.executorProblem}
+                </p>
+              )}
 
               <div className="item">
                 <div className="grow">
@@ -473,6 +617,218 @@ export function SettingsPage({
                 </button>
               </div>
             </form>
+          </section>
+
+          <section
+            className="box"
+            aria-labelledby="api-providers-h"
+            style={{ gridColumn: '1 / -1' }}
+            data-testid="settings-api-providers"
+          >
+            <h2 id="api-providers-h">常用 AI API 执行者接入</h2>
+            <p className="muted" style={{ marginTop: '4px' }}>
+              选择服务商与模型并输入密钥，经系统加密存储与两步连接测试（鉴权 + 工具调用能力）通过后，即可担任后台施工执行者。
+            </p>
+
+            {presets.length > 0 && (
+              <form onSubmit={handleSaveAndTestProvider} noValidate style={{ marginTop: '12px' }} data-testid="provider-connect-form">
+                <div className="row" style={{ gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <label htmlFor={`${uid}-preset`} className="muted">服务商</label>
+                  <select
+                    id={`${uid}-preset`}
+                    aria-label="API 服务商"
+                    data-testid="provider-preset-select"
+                    value={selectedPreset?.id ?? presetId}
+                    disabled={providerBusy}
+                    onChange={(e) => handleSelectPreset(e.target.value)}
+                  >
+                    {presets.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedPreset?.regionOptions && selectedPreset.regionOptions.length > 0 && (
+                    <div className="row" style={{ gap: '6px', flexWrap: 'wrap' }}>
+                      {selectedPreset.regionOptions.map((r) => (
+                        <button
+                          key={r.endpoint}
+                          type="button"
+                          className={providerEndpoint === r.endpoint ? 'btn secondary' : 'link'}
+                          style={{ fontSize: '12px' }}
+                          onClick={() => setProviderEndpoint(r.endpoint)}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {selectedPreset?.note && (
+                  <p className="muted" style={{ marginTop: '6px', fontSize: '13px' }}>
+                    {selectedPreset.note}
+                  </p>
+                )}
+
+                <div className="row" style={{ marginTop: '10px', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    aria-label="接口地址"
+                    data-testid="provider-endpoint-input"
+                    value={providerEndpoint}
+                    disabled={providerBusy}
+                    placeholder="https://..."
+                    onChange={(e) => {
+                      setProviderEndpoint(e.target.value);
+                      setProviderError(null);
+                    }}
+                    style={{ flex: '1 1 240px' }}
+                  />
+                  <input
+                    type="text"
+                    list={providerModelListId}
+                    aria-label="执行模型"
+                    data-testid="provider-model-input"
+                    value={providerModel}
+                    disabled={providerBusy}
+                    placeholder="选择或输入模型 ID（如 deepseek-chat）"
+                    onChange={(e) => {
+                      setProviderModel(e.target.value);
+                      setProviderError(null);
+                    }}
+                    style={{ flex: '1 1 200px' }}
+                  />
+                  <datalist id={providerModelListId}>
+                    {[...new Set([...(selectedPreset?.suggestedModels ?? []), ...fetchedModels])].map((m) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                  {selectedPreset?.supportsModelListing && onFetchProviderModels && (
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      disabled={modelsBusy || providerBusy}
+                      data-testid="provider-fetch-models"
+                      onClick={handleFetchModels}
+                    >
+                      {modelsBusy ? '拉取中…' : '拉取模型'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="row" style={{ marginTop: '8px', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="服务商密钥"
+                    data-testid="provider-secret-input"
+                    value={providerSecret}
+                    disabled={providerBusy}
+                    placeholder={selectedPreset?.keyPlaceholder ?? '填写密钥'}
+                    onChange={(e) => {
+                      setProviderSecret(e.target.value);
+                      setProviderError(null);
+                    }}
+                    style={{ flex: 1, minWidth: '220px' }}
+                  />
+                  <button
+                    type="submit"
+                    className="btn pri"
+                    disabled={providerBusy}
+                    data-testid="provider-save-test"
+                  >
+                    {providerBusy ? '连接测试中…' : '连接测试并保存'}
+                  </button>
+                </div>
+
+                {providerError && (
+                  <p role="alert" className="error" style={{ marginTop: '8px' }} data-testid="provider-form-error">
+                    {providerError}
+                  </p>
+                )}
+                {providerNotice && (
+                  <p role="status" className="muted" style={{ marginTop: '8px' }} data-testid="provider-form-notice">
+                    {providerNotice}
+                  </p>
+                )}
+              </form>
+            )}
+
+            <div style={{ marginTop: '14px' }} data-testid="provider-profiles-list">
+              {(aiSettings?.providerProfiles ?? []).length === 0 ? (
+                <p className="muted">还没有保存其他 API 服务商配置。</p>
+              ) : (
+                (aiSettings?.providerProfiles ?? []).map((p: ProviderProfileView) => (
+                  <div className="item" key={p.id} data-testid={`provider-profile-${p.id}`}>
+                    <div className="grow">
+                      <strong>{p.label}</strong>
+                      <div className="muted" style={{ fontSize: '13px' }}>
+                        {p.endpointOrigin}
+                        {p.last4 ? ` · 尾号 ${p.last4}` : p.requiresKey ? '' : ' · 本地免密钥'}
+                        {!p.officialEndpoint ? ' · 非官方/自定义地址' : ''}
+                      </div>
+                      {p.toolWarning && (
+                        <div className="muted" style={{ fontSize: '12px', marginTop: '2px' }}>
+                          {p.toolWarning}
+                        </div>
+                      )}
+                      {p.unavailableReason && (
+                        <div className="error" style={{ fontSize: '12px', marginTop: '2px' }}>
+                          {p.unavailableReason}
+                        </div>
+                      )}
+                    </div>
+                    <div className="row" style={{ gap: '8px', alignItems: 'center' }}>
+                      <span className={p.executorReady ? 'tag ok' : 'tag warn'}>
+                        {p.executorReady ? '可执行者' : !p.toolCallingSupported ? '仅支持对话' : '不可用'}
+                      </span>
+                      {p.executorReady && onSaveDefaultExecutor && (
+                        <button
+                          type="button"
+                          className="btn secondary"
+                          disabled={aiSettings?.defaultExecutor === `api:${p.id}`}
+                          data-testid={`provider-use-exec-${p.id}`}
+                          onClick={async () => {
+                            rolesDirtyRef.current = false;
+                            setProviderError(null);
+                            try {
+                              await onSaveDefaultExecutor(`api:${p.id}`);
+                              setProviderNotice(`已将「${p.label}」设为全局默认执行者。`);
+                            } catch (err) {
+                              setProviderError(err instanceof Error ? err.message : '设置失败');
+                            }
+                          }}
+                        >
+                          {aiSettings?.defaultExecutor === `api:${p.id}` ? '当前默认' : '设为默认执行者'}
+                        </button>
+                      )}
+                      {onDeleteProviderProfile && (
+                        <button
+                          type="button"
+                          className="link"
+                          data-testid={`provider-delete-${p.id}`}
+                          onClick={async () => {
+                            rolesDirtyRef.current = false;
+                            setProviderError(null);
+                            try {
+                              await onDeleteProviderProfile(p.id);
+                              setProviderNotice(`已删除「${p.label}」。`);
+                            } catch (err) {
+                              setProviderError(err instanceof Error ? err.message : '删除失败');
+                            }
+                          }}
+                        >
+                          删除
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </section>
         </div>
       ) : tab === 'disclosure' ? (

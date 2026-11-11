@@ -264,6 +264,47 @@ export function App() {
     return updated;
   };
 
+  const handleSaveAndTestProvider = async (input: {
+    id?: string;
+    presetId: string;
+    label?: string;
+    endpoint: string;
+    model: string;
+    secret?: string;
+  }) => {
+    const res = await studio().saveAndTestProvider(input);
+    if (res.ok && mountedRef.current) {
+      refreshAiSettings();
+      refreshDisclosure();
+    }
+    return res;
+  };
+
+  const handleDeleteProviderProfile = async (id: string) => {
+    const updated = await studio().deleteProviderProfile(id);
+    if (mountedRef.current) {
+      setAiSettings(updated);
+      refreshDisclosure();
+    }
+    return updated;
+  };
+
+  const handleSaveDefaultExecutor = async (id: string) => {
+    const updated = await studio().saveDefaultExecutor(id);
+    if (mountedRef.current) {
+      setAiSettings(updated);
+      refreshDisclosure();
+    }
+    return updated;
+  };
+
+  const handleFetchProviderModels = async (input: {
+    presetId: string;
+    endpoint: string;
+    secret?: string;
+    savedId?: string;
+  }) => studio().fetchProviderModels(input);
+
   const acceptDisclosure = () =>
     studio()
       .acceptDisclosure()
@@ -502,6 +543,10 @@ export function App() {
             onSaveClaudeKey={handleSaveClaudeKey}
             onDeleteClaudeKey={handleDeleteClaudeKey}
             onSaveAiRoles={handleSaveAiRoles}
+            onSaveAndTestProvider={handleSaveAndTestProvider}
+            onDeleteProviderProfile={handleDeleteProviderProfile}
+            onSaveDefaultExecutor={handleSaveDefaultExecutor}
+            onFetchProviderModels={handleFetchProviderModels}
           />
         )}
       </div>
