@@ -249,7 +249,7 @@ describe('阶段 8A 提交③ · 执行者设置持久化、控制器解析、�
     await expect(ctl.setTaskExecutor(created.id, 'api:unverified')).rejects.toThrow('尚未通过连接测试');
     const switchedToCodex = await ctl.setTaskExecutor(created.id, 'codex');
     expect(switchedToCodex.executorId).toBe('codex');
-    expect(switchedToCodex.executorText).toBe('Codex（本机）');
+    expect(switchedToCodex.executorText).toBe('Codex');
 
     const switchedBack = await ctl.setTaskExecutor(created.id, dsId);
     expect(switchedBack.executorId).toBe(dsId);

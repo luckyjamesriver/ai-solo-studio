@@ -24,6 +24,7 @@ const stage5ShotDir = process.env.E2E_STAGE5_SHOT_DIR;
 const stage5bShotDir = process.env.E2E_STAGE5B_SHOT_DIR;
 const stage6ShotDir = process.env.E2E_STAGE6_SHOT_DIR;
 const stage7ShotDir = process.env.E2E_STAGE7_SHOT_DIR;
+const stage8aShotDir = process.env.E2E_STAGE8A_SHOT_DIR;
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -114,6 +115,12 @@ const stage6Shot = async (page: Page, name: string) => {
 const stage7Shot = async (page: Page, name: string) => {
   if (!stage7ShotDir) return;
   const target = path.join(stage7ShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
+const stage8aShot = async (page: Page, name: string) => {
+  if (!stage8aShotDir) return;
+  const target = path.join(stage8aShotDir, `${name}.png`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
@@ -2749,5 +2756,334 @@ describe('阶段 7：外部执行交接与各轮代码保留（E2E）', () => {
     await a.page.getByTestId('historical-round-notice').waitFor();
     expect(await a.page.getByTestId('changes').innerText()).toContain('from-B-r1');
     await stage7Shot(a.page, '08-round1-historical-diff');
+  });
+});
+
+describe('阶段 8A · 多 AI API 执行者接入、连接测试、工具执行与动态告知（E2E）', () => {
+  it('DeepSeek 与 Anthropic API Key 连接测试（拒收仅对话与错密钥）→ 动态外发说明 → 项目覆盖与计划切换 → 工具调用写入并保存 → 删除回退 unset', async () => {
+    const DEEPSEEK_KEY = 'sk-deepseek-ok-8899';
+    const BAD_KEY = 'sk-bad-key-0000';
+    const ANTHROPIC_KEY = 'sk-ant-exec-4567';
+
+    // 1. 启动 DeepSeek (OpenAI-compat) 与 Anthropic (Messages) 本地假服务，生产代码零测试开关
+    const dsSrv = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c) => chunks.push(c as Buffer));
+      req.on('end', () => {
+        const auth = req.headers.authorization;
+        if (auth === `Bearer ${BAD_KEY}` || auth !== `Bearer ${DEEPSEEK_KEY}`) {
+          res.writeHead(401, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'Incorrect API key provided' } }));
+          return;
+        }
+        if ((req.url ?? '').endsWith('/models')) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              data: [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }, { id: 'chat-only-no-tools' }],
+            }),
+          );
+          return;
+        }
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {
+          model?: string;
+          tools?: { function?: { name?: string } }[];
+          messages?: { role?: string }[];
+        };
+        const toolNames = (body.tools ?? []).map((t) => t.function?.name ?? '');
+        if (body.model === 'chat-only-no-tools' && toolNames.length > 0) {
+          res.writeHead(400, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'Selected model does not support tool calling' } }));
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        if (toolNames.includes('write_file')) {
+          const hasToolResult = (body.messages ?? []).some((m) => m.role === 'tool');
+          if (!hasToolResult) {
+            res.end(
+              JSON.stringify({
+                model: body.model,
+                choices: [
+                  {
+                    message: {
+                      role: 'assistant',
+                      content: null,
+                      tool_calls: [
+                        {
+                          id: 'tc_ds_write_1',
+                          type: 'function',
+                          function: {
+                            name: 'write_file',
+                            arguments: JSON.stringify({
+                              path: 'index.html',
+                              content: '<h1>由 DeepSeek API 执行者完成</h1>\n',
+                            }),
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: 'tool_calls',
+                  },
+                ],
+              }),
+            );
+            return;
+          }
+          res.end(
+            JSON.stringify({
+              model: body.model,
+              choices: [
+                {
+                  message: {
+                    role: 'assistant',
+                    content: '已在副本中更新 index.html 为「由 DeepSeek API 执行者完成」。',
+                  },
+                  finish_reason: 'stop',
+                },
+              ],
+            }),
+          );
+          return;
+        }
+        if (toolNames.includes('PING_TOOL')) {
+          res.end(
+            JSON.stringify({
+              model: body.model,
+              choices: [
+                {
+                  message: {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [{ id: 'tc_ping', type: 'function', function: { name: 'PING_TOOL', arguments: '{}' } }],
+                  },
+                  finish_reason: 'tool_calls',
+                },
+              ],
+            }),
+          );
+          return;
+        }
+        res.end(
+          JSON.stringify({
+            model: body.model,
+            choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+          }),
+        );
+      });
+    });
+    await new Promise<void>((r) => dsSrv.listen(0, '127.0.0.1', () => r()));
+    servers.push(dsSrv);
+    const dsOrigin = `http://127.0.0.1:${(dsSrv.address() as { port: number }).port}`;
+
+    const antSrv = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c) => chunks.push(c as Buffer));
+      req.on('end', () => {
+        if (req.headers['x-api-key'] !== ANTHROPIC_KEY) {
+          res.writeHead(401, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'invalid x-api-key' } }));
+          return;
+        }
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {
+          tools?: { name?: string }[];
+        };
+        res.writeHead(200, { 'content-type': 'application/json' });
+        if ((body.tools ?? []).some((t) => t.name === 'PING_TOOL')) {
+          res.end(
+            JSON.stringify({
+              id: 'msg_ant_ping',
+              type: 'message',
+              role: 'assistant',
+              stop_reason: 'tool_use',
+              content: [{ type: 'tool_use', id: 'tu_1', name: 'PING_TOOL', input: {} }],
+            }),
+          );
+          return;
+        }
+        res.end(
+          JSON.stringify({
+            id: 'msg_ant_ok',
+            type: 'message',
+            role: 'assistant',
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'OK' }],
+          }),
+        );
+      });
+    });
+    await new Promise<void>((r) => antSrv.listen(0, '127.0.0.1', () => r()));
+    servers.push(antSrv);
+    const antOrigin = `http://127.0.0.1:${(antSrv.address() as { port: number }).port}`;
+
+    const data = mk('s8a-e2e-data');
+    const proj = gitProject('stage8a-api-exec-site', {
+      'index.html': '<h1>初始首页</h1>\n',
+    });
+
+    const a = await launch(data);
+    // 先暂不同意以便稍后查看动态更新后的首次外发说明
+    await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+    await a.page.getByTestId('onboarding-continue').click();
+    await a.page.getByTestId('workbench').waitFor();
+
+    // 在主进程内将发往 api.deepseek.com 与 api.anthropic.com 的 fetch 转发到本地假 HTTP 服务
+    await a.app.evaluate(
+      (_el, { dsTarget, antTarget }) => {
+        const origFetch = globalThis.fetch.bind(globalThis);
+        globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+          if (url.startsWith('https://api.deepseek.com')) {
+            const mapped = `${dsTarget}${url.slice('https://api.deepseek.com'.length)}`;
+            return origFetch(mapped, init);
+          }
+          if (url.startsWith('https://api.anthropic.com')) {
+            const mapped = `${antTarget}${url.slice('https://api.anthropic.com'.length)}`;
+            return origFetch(mapped, init);
+          }
+          return origFetch(input, init);
+        }) as typeof fetch;
+      },
+      { dsTarget: dsOrigin, antTarget: antOrigin },
+    );
+
+    // 2. 进入「设置 → AI 与角色」：错误密钥被拒且不回显密钥本身
+    await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId('settings-api-providers').waitFor();
+    await a.page.getByTestId('provider-preset-select').selectOption('deepseek');
+    await a.page.getByTestId('provider-secret-input').fill(BAD_KEY);
+    await a.page.getByTestId('provider-save-test').click();
+    await a.page.getByTestId('provider-form-error').waitFor();
+    const errText = await a.page.getByTestId('provider-form-error').innerText();
+    expect(errText).toContain('Key 无效');
+    expect(errText).not.toContain(BAD_KEY);
+    await a.page.getByTestId('provider-form-error').scrollIntoViewIfNeeded();
+    await stage8aShot(a.page, '01-provider-invalid-key');
+
+    // 3. 拉取模型列表 → 测试仅支持对话的模型（标记「仅支持对话」，不可作为执行者）
+    await a.page.getByTestId('provider-secret-input').fill(DEEPSEEK_KEY);
+    await a.page.getByTestId('provider-fetch-models').click();
+    await a.page.getByTestId('provider-form-notice').waitFor();
+    expect(await a.page.getByTestId('provider-form-notice').innerText()).toContain('3 个可用模型');
+
+    await a.page.getByTestId('provider-model-input').fill('chat-only-no-tools');
+    await a.page.getByTestId('provider-save-test').click();
+    await a.page.waitForFunction(() => document.body.innerText.includes('仅支持对话'));
+    const chatOnlyCard = a.page.locator('[data-testid^="provider-profile-"]').filter({ hasText: 'chat-only-no-tools' }).first();
+    expect(await chatOnlyCard.innerText()).toContain('仅支持对话');
+    expect(await chatOnlyCard.locator('[data-testid^="provider-use-exec-"]').count()).toBe(0);
+    await chatOnlyCard.scrollIntoViewIfNeeded();
+    await stage8aShot(a.page, '02-provider-chat-only');
+
+    // 4. 添加可工具调用的 DeepSeek（deepseek-chat）与 Anthropic API 两个执行者并验证密钥不落盘明文
+    await a.page.getByTestId('provider-model-input').fill('deepseek-chat');
+    await a.page.getByTestId('provider-secret-input').fill(DEEPSEEK_KEY);
+    await a.page.getByTestId('provider-save-test').click();
+    await a.page.waitForFunction(() => document.body.innerText.includes('DeepSeek · deepseek-chat'));
+    const dsCard = a.page.locator('[data-testid^="provider-profile-"]').filter({ hasText: 'deepseek-chat' }).first();
+    expect(await dsCard.innerText()).toContain('可执行者');
+    expect(await dsCard.innerText()).toContain('尾号 8899');
+    const dsProfileId = (await dsCard.getAttribute('data-testid'))!.replace('provider-profile-', '');
+
+    // 设为全局默认执行者
+    await a.page.getByTestId(`provider-use-exec-${dsProfileId}`).click();
+    await a.page.waitForFunction(
+      (expectedId) => (document.querySelector('[data-testid="global-role-executor"]') as HTMLSelectElement | null)?.value === expectedId,
+      `api:${dsProfileId}`,
+    );
+
+    // 再添加 Anthropic API 执行者（证明非单一 OpenAI-compat 协议）
+    await a.page.getByTestId('provider-preset-select').selectOption('anthropic');
+    await a.page.getByTestId('provider-secret-input').fill(ANTHROPIC_KEY);
+    await a.page.getByTestId('provider-save-test').click();
+    await a.page.waitForFunction(() => document.body.innerText.includes('尾号 4567'));
+    const antCard = a.page.locator('[data-testid^="provider-profile-"]').filter({ hasText: '尾号 4567' }).first();
+    expect(await antCard.innerText()).toContain('可执行者');
+    const antProfileId = (await antCard.getAttribute('data-testid'))!.replace('provider-profile-', '');
+    await antCard.scrollIntoViewIfNeeded();
+    await stage8aShot(a.page, '03-settings-providers-ready');
+
+    // 磁盘记录文件绝不含密钥明文
+    const walkDisk = (dir: string): string[] =>
+      fs.existsSync(dir)
+        ? fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walkDisk(path.join(dir, e.name)) : [path.join(dir, e.name)]))
+        : [];
+    for (const f of walkDisk(path.join(data, 'records'))) {
+      const raw = fs.readFileSync(f, 'utf8');
+      expect(raw, f).not.toContain(DEEPSEEK_KEY);
+      expect(raw, f).not.toContain(ANTHROPIC_KEY);
+    }
+
+    // 5. 「资料外发」页查看动态外发清单 → 包含 DeepSeek 与 Anthropic 执行服务，再同意外发
+    await a.page.getByTestId('tab-settings-disclosure').click();
+    await a.page.getByRole('button', { name: '查看外发说明' }).click();
+    await a.page.getByTestId('disclosure').waitFor();
+    const discText = await a.page.getByTestId('disclosure').innerText();
+    expect(discText).toContain('DeepSeek（https://api.deepseek.com）');
+    expect(discText).toContain('Anthropic（Claude API）（https://api.anthropic.com）');
+    expect(discText).toContain('担任后台执行者');
+    await stage8aShot(a.page, '04-disclosure-dynamic');
+    await acceptDisclosure(a.page);
+
+    // 6. 打开项目 → 在项目设置按项目覆盖执行者为 Anthropic → 回到任务在 #04-plan 切回 DeepSeek 并实际工具调用开工与保存
+    await stubDialog(a.app, proj);
+    await a.page.getByTestId('nav-open-project').click();
+    await a.page.getByTestId('project').waitFor();
+
+    await a.page.getByTestId('tab-project-settings').click();
+    await a.page.getByTestId('project-settings-roles').waitFor();
+    await a.page.getByTestId('project-role-mode').selectOption('custom');
+    await a.page.getByTestId('project-role-executor').selectOption(`api:${antProfileId}`);
+    await a.page.getByTestId('project-executor-apply').click();
+    await a.page.getByTestId('project-roles-saved').waitFor();
+    expect(await a.page.getByTestId('project-role-executor').inputValue()).toBe(`api:${antProfileId}`);
+    await stage8aShot(a.page, '05-project-executor-override');
+
+    await a.page.getByTestId('tab-tasks').click();
+    await newTask(a.page, '用 DeepSeek API 更新首页标题');
+    // 新建任务先继承项目覆盖的 Anthropic
+    expect(await a.page.getByTestId('plan-executor-select').inputValue()).toBe(`api:${antProfileId}`);
+    // 在 #04-plan 直接切换为 DeepSeek API 执行者
+    await a.page.getByTestId('plan-executor-select').selectOption(`api:${dsProfileId}`);
+    await a.page.waitForFunction(
+      () => document.querySelector('[data-testid="executor-info"]')?.textContent?.includes('DeepSeek · deepseek-chat（API）'),
+    );
+    expect(await a.page.getByTestId('executor-info').innerText()).toBe('执行者：DeepSeek · deepseek-chat（API）');
+    await stage8aShot(a.page, '06-plan-executor-select');
+
+    // 开工 → 真实运行 ApiAgentExecutor 工具调用写入任务副本 → 验收并保存进主项目
+    await a.page.getByTestId('start-button').click();
+    await inState(a.page, 'reviewing');
+    expect(await a.page.getByTestId('executor-info').innerText()).toBe('执行者：DeepSeek · deepseek-chat（API）');
+    expect(await a.page.getByTestId('changes').innerText()).toContain('由 DeepSeek API 执行者完成');
+    expect(fs.readFileSync(path.join(proj, 'index.html'), 'utf8')).toContain('初始首页');
+    await stage8aShot(a.page, '07-acceptance-api-executor');
+
+    await confirmThenSave(a.page);
+    expect(fs.readFileSync(path.join(proj, 'index.html'), 'utf8')).toContain('由 DeepSeek API 执行者完成');
+
+    // 7. 删除全局默认 DeepSeek 配置 → 全局默认回退「未设置」，新建任务拒绝以未设置执行者开工
+    await a.page.getByTestId('nav-settings').click();
+    await a.page.getByTestId(`provider-delete-${dsProfileId}`).click();
+    await a.page.waitForFunction(() => document.querySelector('[data-testid="global-role-executor"]')?.getAttribute('data-testid') === 'global-role-executor' && (document.querySelector('[data-testid="global-role-executor"]') as HTMLSelectElement | null)?.value === 'unset');
+    await a.page.getByTestId('global-executor-problem').waitFor();
+    expect(await a.page.getByTestId('global-executor-problem').innerText()).toContain('未设置');
+    await stage8aShot(a.page, '08-settings-deleted-unset');
+
+    // 把项目切回跟随全局，新建任务继承 unset 后不能直接开工
+    await a.page.getByTestId('nav-workbench').click();
+    await a.page.getByTestId('workbench').waitFor();
+    await a.page.getByRole('button', { name: 'stage8a-api-exec-site' }).first().click();
+    await a.page.getByTestId('project').waitFor();
+    await a.page.getByTestId('tab-project-settings').click();
+    await a.page.getByTestId('project-role-mode').selectOption('global');
+    await a.page.getByTestId('project-roles-save').click();
+    await a.page.getByTestId('project-roles-saved').waitFor();
+
+    await a.page.getByTestId('tab-tasks').click();
+    await newTask(a.page, '删除执行者后禁止直接开工的任务');
+    expect(await a.page.getByTestId('executor-info').innerText()).toContain('未设置');
+    await a.page.getByTestId('start-button').click();
+    await a.page.getByTestId('plan-error').waitFor();
+    expect(await a.page.getByTestId('plan-error').innerText()).toContain('当前执行者未设置');
   });
 });

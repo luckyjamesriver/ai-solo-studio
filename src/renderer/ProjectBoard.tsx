@@ -75,6 +75,9 @@ export function ProjectBoard({
     let cancelled = false;
     setBriefError(null);
     setBriefSavedNotice(null);
+    setRolesView(null);
+    setRolesError(null);
+    setRolesSavedNotice(null);
     setRolesError(null);
     setRolesSavedNotice(null);
     studio()
@@ -90,7 +93,7 @@ export function ProjectBoard({
       .then((rv) => {
         if (cancelled) return;
         setRolesView(rv);
-        setRoleMode(rv.mode);
+        setRoleMode(rv.mode === 'custom' || rv.executorMode === 'custom' ? 'custom' : 'global');
         setRoleChief(rv.chief);
         setRoleReviewer(rv.reviewer);
         setRoleExecutor(rv.projectExecutor ?? rv.effectiveExecutor?.id ?? 'codex');
@@ -319,7 +322,9 @@ export function ProjectBoard({
 
           <div className="box" data-testid="project-settings-roles">
             <h2>AI 角色</h2>
-            {(() => {
+            {!rolesView ? (
+              <p className="muted" style={{ marginTop: '6px' }}>正在加载角色与执行者设置…</p>
+            ) : (() => {
               const roleName = (c: ChiefRoleChoice | ReviewerRoleChoice) =>
                 c === 'claude' ? 'Claude' : c === 'codex' ? 'Codex' : c === 'none' ? '不复核' : '未设置';
               const needUnset = roleMode === 'custom' && (roleChief === 'unset' || roleReviewer === 'unset' || roleExecutor === 'unset');
@@ -453,42 +458,70 @@ export function ProjectBoard({
                         </select>
                       </div>
 
-                      <div className="item">
-                        <div className="grow">
+                      <div className="item" style={{ display: 'block' }}>
+                        <div style={{ marginBottom: '6px' }}>
                           <label htmlFor={`proj-executor-${project.id}`}>
                             <strong>执行</strong> <span className="muted">· 动手修改代码（仅可选连接测试通过的执行者）</span>
                           </label>
                         </div>
-                        <select
-                          id={`proj-executor-${project.id}`}
-                          aria-label="项目执行者"
-                          data-testid="project-role-executor"
-                          value={roleExecutor}
-                          onChange={(e) => {
-                            setRoleExecutor(e.target.value);
-                            setRolesError(null);
-                            setRolesSavedNotice(null);
-                          }}
-                        >
-                          {roleExecutor === 'unset' && (
-                            <option value="unset" disabled>
-                              未设置（请重新选择）
-                            </option>
+                        <div className="row" style={{ gap: '8px', alignItems: 'center', flexWrap: 'wrap', maxWidth: '100%' }}>
+                          <select
+                            id={`proj-executor-${project.id}`}
+                            aria-label="项目执行者"
+                            data-testid="project-role-executor"
+                            value={roleExecutor}
+                            style={{ width: '100%', maxWidth: '100%', minWidth: 0 }}
+                            onChange={(e) => {
+                              setRoleExecutor(e.target.value);
+                              setRolesError(null);
+                              setRolesSavedNotice(null);
+                            }}
+                          >
+                            {roleExecutor === 'unset' && (
+                              <option value="unset" disabled>
+                                未设置（请重新选择）
+                              </option>
+                            )}
+                            {roleExecutor !== 'unset' && !execOptions.some((o) => o.id === roleExecutor) && (
+                              <option value={roleExecutor} disabled>
+                                {rolesView?.effectiveExecutor?.label ?? roleExecutor}（未就绪）
+                              </option>
+                            )}
+                            {execOptions.length === 0 && (
+                              <option value="codex">Codex（本机）</option>
+                            )}
+                            {execOptions.map((opt) => (
+                              <option key={opt.id} value={opt.id}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                          {execOptions.some((o) => o.id === roleExecutor) && (
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              disabled={rolesBusy}
+                              data-testid="project-executor-apply"
+                              onClick={async () => {
+                                setRolesError(null);
+                                setRolesSavedNotice(null);
+                                setRolesBusy(true);
+                                try {
+                                  const next = await studio().saveProjectExecutor(project.id, 'custom', roleExecutor);
+                                  setRolesView(next);
+                                  setRoleExecutor(next.projectExecutor ?? next.effectiveExecutor?.id ?? roleExecutor);
+                                  setRolesSavedNotice('本项目默认执行者已保存。');
+                                } catch (err) {
+                                  setRolesError(err instanceof Error ? err.message : '保存项目执行者失败。');
+                                } finally {
+                                  setRolesBusy(false);
+                                }
+                              }}
+                            >
+                              应用执行者
+                            </button>
                           )}
-                          {roleExecutor !== 'unset' && !execOptions.some((o) => o.id === roleExecutor) && (
-                            <option value={roleExecutor} disabled>
-                              {rolesView?.effectiveExecutor?.label ?? roleExecutor}（未就绪）
-                            </option>
-                          )}
-                          {execOptions.length === 0 && (
-                            <option value="codex">Codex（本机）</option>
-                          )}
-                          {execOptions.map((opt) => (
-                            <option key={opt.id} value={opt.id}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
+                        </div>
                       </div>
                     </>
                   )}

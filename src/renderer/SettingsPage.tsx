@@ -161,14 +161,20 @@ export function SettingsPage({
   const presets: readonly ApiProviderPreset[] = aiSettings?.executorPresets ?? [];
   const [presetId, setPresetId] = useState<string>('deepseek');
   const selectedPreset = presets.find((p) => p.id === presetId) ?? presets[0];
-  const [providerEndpoint, setProviderEndpoint] = useState<string>('https://api.deepseek.com');
-  const [providerModel, setProviderModel] = useState<string>('deepseek-chat');
+  const [providerEndpoint, setProviderEndpoint] = useState<string>(() => selectedPreset?.defaultEndpoint ?? '');
+  const [providerModel, setProviderModel] = useState<string>(() => selectedPreset?.suggestedModels[0] ?? 'deepseek-chat');
   const [providerSecret, setProviderSecret] = useState<string>('');
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [providerBusy, setProviderBusy] = useState(false);
   const [modelsBusy, setModelsBusy] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
   const [providerNotice, setProviderNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!providerEndpoint && selectedPreset?.defaultEndpoint) {
+      setProviderEndpoint(selectedPreset.defaultEndpoint);
+    }
+  }, [providerEndpoint, selectedPreset?.defaultEndpoint]);
 
   useEffect(() => {
     if (!aiSettings || rolesDirtyRef.current) return;
@@ -508,45 +514,74 @@ export function SettingsPage({
                 </select>
               </div>
 
-              <div className="item">
-                <div className="grow">
+              <div className="item" style={{ flexWrap: 'wrap', gap: '8px' }}>
+                <div className="grow" style={{ minWidth: '160px' }}>
                   <label htmlFor={`${uid}-executor`}>
                     <strong>执行</strong> <span className="muted">· 动手写代码（仅可选连接测试通过的执行者）</span>
                   </label>
                 </div>
-                <select
-                  id={`${uid}-executor`}
-                  aria-label="默认执行者"
-                  data-testid="global-role-executor"
-                  value={executorDraft}
-                  onChange={(e) => {
-                    rolesDirtyRef.current = true;
-                    setExecutorDraft(e.target.value);
-                    setRoleError(null);
-                    setRoleNotice(null);
-                  }}
-                >
-                  {executorDraft === 'unset' && (
-                    <option value="unset" disabled>
-                      未设置（请重新选择）
-                    </option>
-                  )}
-                  {(aiSettings?.verifiedExecutors ?? []).length === 0 && executorDraft === 'codex' && (
-                    <option value="codex">Codex（本机）</option>
-                  )}
-                  {executorDraft !== 'unset' &&
-                    (aiSettings?.verifiedExecutors ?? []).length > 0 &&
-                    !(aiSettings?.verifiedExecutors ?? []).some((v) => v.id === executorDraft) && (
-                      <option value={executorDraft} disabled>
-                        {executorDraft === 'codex' ? 'Codex（当前未就绪）' : `${executorDraft}（当前不可用）`}
+                <div className="row" style={{ gap: '8px', alignItems: 'center', flexWrap: 'wrap', maxWidth: '100%', minWidth: 0 }}>
+                  <select
+                    id={`${uid}-executor`}
+                    aria-label="默认执行者"
+                    data-testid="global-role-executor"
+                    value={executorDraft}
+                    style={{ maxWidth: '100%', minWidth: 0 }}
+                    onChange={(e) => {
+                      rolesDirtyRef.current = true;
+                      setExecutorDraft(e.target.value);
+                      setRoleError(null);
+                      setRoleNotice(null);
+                    }}
+                  >
+                    {executorDraft === 'unset' && (
+                      <option value="unset" disabled>
+                        未设置（请重新选择）
                       </option>
                     )}
-                  {(aiSettings?.verifiedExecutors ?? []).map((opt) => (
-                    <option key={opt.id} value={opt.id}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+                    {(aiSettings?.verifiedExecutors ?? []).length === 0 && executorDraft === 'codex' && (
+                      <option value="codex">Codex（本机）</option>
+                    )}
+                    {executorDraft !== 'unset' &&
+                      (aiSettings?.verifiedExecutors ?? []).length > 0 &&
+                      !(aiSettings?.verifiedExecutors ?? []).some((v) => v.id === executorDraft) && (
+                        <option value={executorDraft} disabled>
+                          {executorDraft === 'codex' ? 'Codex（当前未就绪）' : `${executorDraft}（当前不可用）`}
+                        </option>
+                      )}
+                    {(aiSettings?.verifiedExecutors ?? []).map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  {onSaveDefaultExecutor &&
+                    executorDraft !== aiSettings?.defaultExecutor &&
+                    (aiSettings?.verifiedExecutors ?? []).some((v) => v.id === executorDraft) && (
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        disabled={roleBusy}
+                        data-testid="global-executor-apply"
+                        onClick={async () => {
+                          rolesDirtyRef.current = false;
+                          setRoleBusy(true);
+                          setRoleError(null);
+                          setRoleNotice(null);
+                          try {
+                            await onSaveDefaultExecutor(executorDraft);
+                            setRoleNotice('默认执行者已保存（已开始中的任务不受影响）。');
+                          } catch (err) {
+                            setRoleError(err instanceof Error ? err.message : '保存默认执行者失败。');
+                          } finally {
+                            setRoleBusy(false);
+                          }
+                        }}
+                      >
+                        应用执行者
+                      </button>
+                    )}
+                </div>
               </div>
               {aiSettings?.executorProblem && (
                 <p role="alert" className="error" style={{ marginTop: '6px' }} data-testid="global-executor-problem">
@@ -679,7 +714,7 @@ export function SettingsPage({
                     data-testid="provider-endpoint-input"
                     value={providerEndpoint}
                     disabled={providerBusy}
-                    placeholder="https://..."
+                    placeholder={selectedPreset?.defaultEndpoint || '填写服务商接口地址'}
                     onChange={(e) => {
                       setProviderEndpoint(e.target.value);
                       setProviderError(null);

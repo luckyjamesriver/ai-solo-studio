@@ -248,7 +248,7 @@ export class TaskController {
     if (this.o.aiSettings && this.o.getVerifiedExecutors) {
       const verified = await this.o.getVerifiedExecutors().catch(() => []);
       const eff = await this.o.aiSettings.resolveEffectiveExecutor(this.o.repo, verified);
-      initialExecutor = { id: eff.id, displayName: eff.label };
+      initialExecutor = { id: eff.id, displayName: eff.id === 'codex' ? 'Codex' : eff.label };
     }
     const t = await this.r().create(request.trim(), initialExecutor);
     const threadId = await this.d().ensureBoundThread(t);
@@ -267,7 +267,7 @@ export class TaskController {
     if (!hit) {
       throw new Error('所选执行者尚未通过连接测试或已不可用，请先在「设置 → AI 与角色」完成连接测试。');
     }
-    return this.view(await this.r().setTaskExecutor(tid, hit.id, hit.label));
+    return this.view(await this.r().setTaskExecutor(tid, hit.id, hit.id === 'codex' ? 'Codex' : hit.label));
   }
 
   async get(id: unknown): Promise<TaskView> {

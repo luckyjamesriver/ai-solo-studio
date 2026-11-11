@@ -183,13 +183,14 @@ export class TaskRunner extends EventEmitter {
     if (this.opts.sandboxRunner) return this.opts.sandboxRunner;
     if (this.taskSandboxes.has(t.id)) return this.taskSandboxes.get(t.id);
     if (this.opts.resolveExecutor) {
+      const lookupId = !t.executorId || t.executorId === 'external' || t.executorId === 'unset' ? 'codex' : t.executorId;
       try {
-        const picked = await this.opts.resolveExecutor(t.executorId);
-        const sr = picked.sandboxRunner ?? picked.executor.sandboxRunner;
+        const picked = await this.opts.resolveExecutor(lookupId);
+        const sr = picked.sandboxRunner ?? picked.executor.sandboxRunner ?? this.opts.executor.sandboxRunner;
         this.taskSandboxes.set(t.id, sr);
         return sr;
       } catch {
-        return undefined;
+        return this.opts.executor.sandboxRunner;
       }
     }
     return this.opts.executor.sandboxRunner;
