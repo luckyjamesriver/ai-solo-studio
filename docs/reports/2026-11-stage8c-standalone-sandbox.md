@@ -13,6 +13,8 @@
 | `f3365da` | `feat(sandbox)`: 新增脱离 Codex 的 macOS Seatbelt 运行器 `SeatbeltSandboxRunner` 与跨平台工厂 `createStandaloneSandboxRunner`，配套 3 组单元与真实 macOS Seatbelt 哨兵测试（`tests/stage8c-seatbelt.test.ts`）。 |
 | `9299a4c` | `feat(sandbox)`: 将独立检查沙箱接入 `TaskRunner`（`fallbackSandboxRunner`）、`TaskController`、`src/main/index.ts`、`GlobalAiSettingsView` 与 `SettingsPage`（`独立受限检查环境`），补充控制器集成测试（`tests/stage8c-controller.test.ts`）、`tests/security.test.ts` 阶段 8C 安全基线及 Electron E2E + 4 张界面截图。 |
 | `a9c3ed6` | `fix(settings)`: 为 `App.tsx` 的 `aiSettings` 异步刷新路径增加 `aiSettingsSeqRef` 递增序列号防乱序覆盖，并将主进程 `SUB_PROBE_TTL_MS` 从 30 秒提升至 5 分钟（保留显式失效触发），解决慢速 CLI 探测返回晚于配置修改引发的状态闪烁。 |
+| `d7f029e` | `docs(report)`: 提交阶段 8C 初版交付报告。 |
+| `b77ea50` | `test(sandbox)`: 在 `tests/stage8c-seatbelt.test.ts` 中为门禁/域名策略单测显式传入 `platform: 'darwin'` 与 `command: process.execPath`，使纯逻辑校验在 `ubuntu-latest` Linux CI 下也能精准覆盖对应分支而非提前命中跨平台检查。 |
 
 ---
 
@@ -125,17 +127,21 @@
 
 ---
 
-## 六、本地全量验证结果（最终代码提交 `a9c3ed6` 后实跑）
+## 六、本地全量验证结果
 
-| 命令 | 实际结果 |
-| --- | --- |
-| `npm run typecheck` | 通过（`tsc -p tsconfig.json --noEmit`，退出码 0） |
-| `npx vitest run --maxWorkers=2` | **43 个常规测试文件 / 639 条测试全部通过**；12 个真机集成测试文件（`tests/integration/*.real.test.ts`，38 条）因未设置 `STUDIO_REAL_CODEX=1` 按预期跳过（总计 55 文件 / 677 用例，0 失败） |
-| `npm run smoke` | 通过（`document.title`、零 Node 全局泄露、`window.studio` 完整白名单、`冒烟测试通过`） |
-| `npm run test:e2e` | **1 个文件 / 54 条 Electron E2E 全部通过**（0 跳过、0 失败，耗时 `433.41s`） |
+| 命令 | 验证范围 / 基线提交 | 实际结果 |
+| --- | --- | --- |
+| `npm run typecheck` | 提交 `b77ea50` 后实跑 | 通过（`tsc -p tsconfig.json --noEmit`，退出码 0） |
+| `npx vitest run --maxWorkers=2` | 提交 `b77ea50` 后实跑 | **43 个常规测试文件 / 639 条测试全部通过**；12 个真机集成测试文件（`tests/integration/*.real.test.ts`，38 条）因未设置 `STUDIO_REAL_CODEX=1` 按预期跳过（总计 55 文件 / 677 用例，0 失败，耗时 `219.73s`） |
+| `npm run smoke` | 提交 `a9c3ed6`（最后源码修改）后实跑 | 通过（`document.title`、零 Node 全局泄露、`window.studio` 完整白名单、`冒烟测试通过`） |
+| `npm run test:e2e` | 提交 `a9c3ed6`（最后源码修改）后实跑 | **1 个文件 / 54 条 Electron E2E 全部通过**（0 跳过、0 失败，耗时 `433.41s`） |
 
 ---
 
 ## 七、双平台 CI（GitHub Actions）
 
-- 待推送 `rebuild` 并等待 `ubuntu-latest` 与 `macos-latest` 全部通过后回填 Run ID 与链接。
+- **Workflow Run**：[43059792969](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/43059792969)（提交 `b77ea50`）
+  - **`test (ubuntu-latest)`**（Job `130658900038`）：**通过**（`npm run typecheck`、`npm test`、`npm run build` 均成功）— <https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/43059792969/job/130658900038>
+  - **`test (macos-latest)`**（Job `130658899579`）：**通过**（`npm run typecheck`、`npm test`、`npm run build`、`Electron end-to-end (macOS)` 均成功）— <https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/43059792969/job/130658899579>
+- 注：此前提交 `d7f029e` 在 Run `43059386450` 中暴露出 `tests/stage8c-seatbelt.test.ts` 第 105 行在 Linux 下默认 `process.platform === 'linux'` 导致提前返回跨平台提示的问题，已在 `b77ea50` 修复并复跑双平台全绿。
+- 下一步将提交本报告的 CI 链接回填并推送 `rebuild`，等待最终 HEAD 提交 CI 同步通过。
