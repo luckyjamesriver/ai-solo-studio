@@ -385,22 +385,22 @@ export function SettingsPage({
         <div className="settings-grid">
           <section className="box" aria-labelledby="ai-conn-h" data-testid="settings-ai-connections">
             <h2 id="ai-conn-h">已接入的 AI</h2>
-            <div className="item" data-testid="ai-status-codex">
-              <div className="grow">
+            <div className="item" data-testid="ai-status-codex" style={{ alignItems: 'flex-start' }}>
+              <div className="grow" style={{ overflow: 'hidden' }}>
                 <strong>Codex</strong>
-                <div className="muted">{codex.detail}</div>
+                <div className="muted" style={{ wordBreak: 'break-word', whiteSpace: 'normal' }}>{codex.detail}</div>
               </div>
-              <span className={codex.ok ? 'tag ok' : 'tag warn'}>{codex.label}</span>
+              <span className={codex.ok ? 'tag ok' : 'tag warn'} style={{ flexShrink: 0 }}>{codex.label}</span>
             </div>
-            <div className="item" data-testid="ai-status-claude">
-              <div className="grow">
+            <div className="item" data-testid="ai-status-claude" style={{ alignItems: 'flex-start' }}>
+              <div className="grow" style={{ overflow: 'hidden' }}>
                 <strong>Claude</strong>
-                <div className="muted" data-testid="claude-key-summary">
+                <div className="muted" style={{ wordBreak: 'break-word', whiteSpace: 'normal' }} data-testid="claude-key-summary">
                   {!effectiveKey?.configured
-                    ? 'Anthropic API Key：未设置（不读取外部工具凭证）'
+                    ? 'Anthropic API Key：未设置'
                     : effectiveKey.available
-                      ? `Anthropic API Key：已设置（尾号 ${effectiveKey.last4 ?? '****'}）`
-                      : `Anthropic API Key：已设置（尾号 ${effectiveKey.last4 ?? '****'}）· 当前不可用`}
+                      ? `已设置（尾号 ${effectiveKey.last4 ?? '****'}）`
+                      : `已设置（尾号 ${effectiveKey.last4 ?? '****'}）· 当前不可用`}
                 </div>
                 {effectiveKey?.unavailableReason && (
                   <p className="error" style={{ marginTop: '4px' }} role="alert" data-testid="claude-key-unavailable">
@@ -408,18 +408,19 @@ export function SettingsPage({
                   </p>
                 )}
               </div>
-              <span className={claudeAvailable ? 'tag ok' : 'tag warn'} data-testid="claude-key-tag">
+              <span className={claudeAvailable ? 'tag ok' : 'tag warn'} style={{ flexShrink: 0 }} data-testid="claude-key-tag">
                 {!effectiveKey?.configured ? '未设置' : claudeAvailable ? '可用' : '不可用'}
               </span>
             </div>
             {aiSettings?.standaloneSandbox && (
-              <div className="item" data-testid="ai-status-check-runner">
-                <div className="grow">
+              <div className="item" data-testid="ai-status-check-runner" style={{ alignItems: 'flex-start' }}>
+                <div className="grow" style={{ overflow: 'hidden' }}>
                   <strong>独立受限检查环境</strong>
-                  <div className="muted">{aiSettings.standaloneSandbox.detail}</div>
+                  <div className="muted" style={{ wordBreak: 'break-word', whiteSpace: 'normal' }}>{aiSettings.standaloneSandbox.detail}</div>
                 </div>
                 <span
                   className={aiSettings.standaloneSandbox.available ? 'tag ok' : 'tag warn'}
+                  style={{ flexShrink: 0 }}
                   data-testid="check-runner-tag"
                 >
                   {aiSettings.standaloneSandbox.label}
@@ -432,25 +433,25 @@ export function SettingsPage({
                 <strong>设置或更换 Anthropic API Key</strong>
               </label>
               <p className="muted" style={{ marginTop: '4px' }}>
-                仅用于本应用的思考讨论（使用系统加密存储保存在本机，绝不明文落盘，也不传回界面展示）。保存前会先发起一次最小请求验证。
+                仅用于本应用的思考讨论（系统加密存储，绝不明文落盘）。保存前会先发起一次最小请求验证。
               </p>
-              <div className="row" style={{ marginTop: '8px', gap: '8px', alignItems: 'center' }}>
-                <input
-                  id={keyInputId}
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={secretDraft}
-                  disabled={keyBusy}
-                  data-testid="claude-key-input"
-                  placeholder="sk-ant-..."
-                  aria-label="Anthropic API Key"
-                  onChange={(e) => {
-                    setSecretDraft(e.target.value);
-                    if (keyError) setKeyError(null);
-                  }}
-                  style={{ flex: '1 1 200px', minWidth: 0 }}
-                />
+              <input
+                id={keyInputId}
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={secretDraft}
+                disabled={keyBusy}
+                data-testid="claude-key-input"
+                placeholder="sk-ant-..."
+                aria-label="Anthropic API Key"
+                onChange={(e) => {
+                  setSecretDraft(e.target.value);
+                  if (keyError) setKeyError(null);
+                }}
+                style={{ marginTop: '8px' }}
+              />
+              <div className="row" style={{ marginTop: '8px', gap: '8px' }}>
                 <button type="submit" className="btn pri" disabled={keyBusy} data-testid="claude-key-save">
                   {keyBusy ? '验证中…' : '验证并保存'}
                 </button>
@@ -545,8 +546,9 @@ export function SettingsPage({
               <div className="item" style={{ flexWrap: 'wrap', gap: '8px' }}>
                 <div className="grow" style={{ minWidth: '160px' }}>
                   <label htmlFor={`${uid}-executor`}>
-                    <strong>执行</strong> <span className="muted">· 动手写代码（仅可选连接测试通过的执行者）</span>
+                    <strong>执行</strong> <span className="muted">· 动手写代码</span>
                   </label>
+                  <div className="muted" style={{ fontSize: '12px' }}>仅可选连接测试通过的执行者</div>
                 </div>
                 <div className="row" style={{ gap: '8px', alignItems: 'center', flexWrap: 'wrap', maxWidth: '100%', minWidth: 0 }}>
                   <select
@@ -617,12 +619,10 @@ export function SettingsPage({
                 </p>
               )}
 
-              <div className="item">
-                <div className="grow">
-                  <label htmlFor={`${uid}-model`}>
-                    <strong>Claude 模型</strong> <span className="muted">· 默认推荐 claude-opus-5-5</span>
-                  </label>
-                </div>
+              <div style={{ marginTop: '6px' }}>
+                <label htmlFor={`${uid}-model`}>
+                  <strong>Claude 模型</strong> <span className="muted">· 默认推荐 claude-opus-5-5</span>
+                </label>
                 <input
                   id={`${uid}-model`}
                   type="text"
@@ -636,7 +636,7 @@ export function SettingsPage({
                     setRoleError(null);
                     setRoleNotice(null);
                   }}
-                  style={{ minWidth: 0 }}
+                  style={{ marginTop: '6px' }}
                 />
                 <datalist id={modelListId}>
                   {(aiSettings?.availableClaudeModels ?? ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']).map((m) => (
