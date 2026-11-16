@@ -5,7 +5,8 @@ export type SidebarActive =
   | { kind: 'workbench' }
   | { kind: 'project'; projectId: string }
   | { kind: 'settings' }
-  | { kind: 'onboarding' };
+  | { kind: 'onboarding' }
+  | { kind: 'chatgpt_web' };
 
 interface SidebarProps {
   active: SidebarActive;
@@ -18,6 +19,7 @@ interface SidebarProps {
   onSelectProject: (projectId: string) => void;
   onOpenProject: () => void;
   onSelectSettings: () => void;
+  onSelectChatGPTWeb?: () => void;
 }
 
 /** 侧栏项目角标只计需要用户决定的任务数（不含运行中任务）。 */
@@ -37,6 +39,7 @@ export function Sidebar({
   onSelectProject,
   onOpenProject,
   onSelectSettings,
+  onSelectChatGPTWeb,
 }: SidebarProps) {
   return (
     <nav
@@ -110,6 +113,19 @@ export function Sidebar({
       </button>
 
       <div className="side-spacer" />
+
+      {onSelectChatGPTWeb && (
+        <button
+          type="button"
+          className={`nav${active.kind === 'chatgpt_web' ? ' on' : ''}`}
+          data-testid="nav-chatgpt-web"
+          aria-label="ChatGPT 网页"
+          title="ChatGPT.com 官方网页对讲"
+          onClick={onSelectChatGPTWeb}
+        >
+          <span className="nav-label">{collapsed ? 'GPT' : 'ChatGPT 网页'}</span>
+        </button>
+      )}
 
       <button
         type="button"

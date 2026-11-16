@@ -243,7 +243,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webviewTag: false,
+      webviewTag: true,
     },
   });
   win.webContents.setWindowOpenHandler(({ url }) => {

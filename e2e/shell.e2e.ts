@@ -27,6 +27,7 @@ const stage7ShotDir = process.env.E2E_STAGE7_SHOT_DIR;
 const stage8aShotDir = process.env.E2E_STAGE8A_SHOT_DIR;
 const stage8bShotDir = process.env.E2E_STAGE8B_SHOT_DIR;
 const stage8cShotDir = process.env.E2E_STAGE8C_SHOT_DIR;
+const stage9ShotDir = process.env.E2E_STAGE9_SHOT_DIR || path.resolve(root, 'docs/screenshots/stage9-webcodex');
 
 const tmpDirs: string[] = [];
 const apps: ElectronApplication[] = [];
@@ -135,6 +136,12 @@ const stage8bShot = async (page: Page, name: string) => {
 const stage8cShot = async (page: Page, name: string) => {
   if (!stage8cShotDir) return;
   const target = path.join(stage8cShotDir, `${name}.png`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await page.screenshot({ path: target });
+};
+const stage9Shot = async (page: Page, name: string) => {
+  if (!stage9ShotDir) return;
+  const target = path.join(stage9ShotDir, `${name}.png`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   await page.screenshot({ path: target });
 };
@@ -3638,5 +3645,201 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
     await stage8cShot(a.page, '04-save-result-checked-direct');
 
     expect(fs.readFileSync(path.join(proj, 'app.mjs'), 'utf8')).toBe('export const add = (a, b) => a + b;\n');
+  });
+
+  describe('阶段 9 · WebCodex 官方网页提炼、SOP 蓝图与 DeepSeek 执行验收全流程闭环（E2E）', () => {
+    it('配置 DeepSeek 执行者 → 选用 SOP 蓝图模板 → 体验 ChatGPT 官方网页视界并提炼方案 → DeepSeek 施工落地与验收保存', async () => {
+      const DS_KEY = 'sk-deepseek-e2e-stage9';
+      let toolCalled = false;
+
+      // 启动 DeepSeek 模拟服务（本地 HTTP）
+      const dsSrv = http.createServer((req, res) => {
+        const chunks: Buffer[] = [];
+        req.on('data', (c) => chunks.push(c as Buffer));
+        req.on('end', () => {
+          const bodyStr = Buffer.concat(chunks).toString('utf8');
+          res.setHeader('content-type', 'application/json');
+
+          if (req.url === '/models') {
+            return res.end(JSON.stringify({
+              data: [
+                { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+                { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+              ],
+            }));
+          }
+
+          if (req.url === '/chat/completions') {
+            const body = JSON.parse(bodyStr || '{}');
+            const tools = body.tools || [];
+            const toolNames = tools.map((t: any) => t.function?.name ?? '');
+
+            if (toolNames.includes('write_file')) {
+              const hasToolResult = (body.messages ?? []).some((m: any) => m.role === 'tool');
+              if (!hasToolResult) {
+                return res.end(JSON.stringify({
+                  model: body.model,
+                  choices: [{
+                    message: {
+                      role: 'assistant',
+                      content: '我正在用 DeepSeek 为您编写代码并保存文件。',
+                      tool_calls: [{
+                        id: 'call_wf_1',
+                        type: 'function',
+                        function: {
+                          name: 'write_file',
+                          arguments: JSON.stringify({ path: 'calculator.mjs', content: 'export const multiply = (a, b) => a * b;\n' }),
+                        },
+                      }],
+                    },
+                    finish_reason: 'tool_calls',
+                  }],
+                }));
+              }
+              return res.end(JSON.stringify({
+                model: body.model,
+                choices: [{
+                  message: {
+                    role: 'assistant',
+                    content: '文件 calculator.mjs 已成功创建，乘法函数实现完毕。',
+                  },
+                  finish_reason: 'stop',
+                }],
+              }));
+            }
+
+            return res.end(JSON.stringify({
+              model: body.model,
+              choices: [{
+                message: {
+                  role: 'assistant',
+                  content: 'Connection test OK',
+                },
+                finish_reason: 'stop',
+              }],
+            }));
+          }
+
+          res.statusCode = 404;
+          res.end(JSON.stringify({ error: 'not found' }));
+        });
+      });
+
+      await new Promise<void>((r) => dsSrv.listen(0, '127.0.0.1', () => r()));
+      servers.push(dsSrv);
+      const dsAddr = dsSrv.address() as net.AddressInfo;
+      const dsBase = `http://127.0.0.1:${dsAddr.port}`;
+
+      const proj = gitProject('proj-stage9-webcodex', {
+        'package.json': JSON.stringify({
+          name: 'proj-stage9',
+          type: 'module',
+          scripts: { test: 'node -e "process.exit(0)"' },
+        }, null, 2),
+        'index.html': '<h1>Stage 9 Test</h1>\n',
+      });
+
+      const a = await launch(mk('user-stage9'));
+      await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+      await a.page.getByTestId('onboarding-continue').click();
+      await a.page.getByTestId('workbench').waitFor();
+
+      // 在主进程内将发往 api.deepseek.com 的 fetch 转发到本地假 HTTP 服务
+      await a.app.evaluate(
+        (_el, { dsTarget }) => {
+          const origFetch = globalThis.fetch.bind(globalThis);
+          globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+            const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+            if (url.startsWith('https://api.deepseek.com')) {
+              const mapped = `${dsTarget}${url.slice('https://api.deepseek.com'.length)}`;
+              return origFetch(mapped, init);
+            }
+            return origFetch(input, init);
+          }) as typeof fetch;
+        },
+        { dsTarget: dsBase },
+      );
+
+      // 1. 设置页接入 DeepSeek API 并设为默认执行者
+      await a.page.getByTestId('nav-settings').click();
+      await a.page.getByTestId('settings-api-providers').waitFor();
+      await a.page.getByTestId('provider-preset-select').selectOption('deepseek');
+      await a.page.getByTestId('provider-secret-input').fill(DS_KEY);
+      await a.page.getByTestId('provider-save-test').click();
+      await a.page.getByTestId('provider-form-notice').waitFor();
+
+      const setDefaultBtn = a.page.getByRole('button', { name: '设为默认执行者' }).first();
+      await setDefaultBtn.waitFor();
+      await setDefaultBtn.click();
+      await a.page.waitForFunction(() => {
+        const el = document.querySelector('[data-testid="global-role-executor"]') as HTMLSelectElement | null;
+        return !!el && el.value.startsWith('api:');
+      });
+
+      // 2. 打开项目看板，验证 SOP 蓝图选择
+      await stubDialog(a.app, proj);
+      await a.page.getByTestId('nav-open-project').click();
+      await a.page.getByTestId('project').waitFor();
+
+      // 选用 SOP 蓝图
+      const sopSelect = a.page.getByTestId('select-sop-blueprint');
+      await sopSelect.selectOption('sop-desktop-offline');
+      const reqText = await a.page.getByTestId('request').inputValue();
+      expect(reqText).toContain('极简桌面离线工具 SOP');
+      await stage9Shot(a.page, '01-sop-blueprint-selected');
+
+      // 3. 点击侧栏中的「ChatGPT 网页」，体验官方视界
+      await a.page.getByTestId('nav-chatgpt-web').click();
+      await a.page.waitForSelector('#chatgpt-webview');
+      await a.page.waitForTimeout(500);
+      await stage9Shot(a.page, '02-chatgpt-official-webview');
+
+      // 4. 模拟从网页中提炼方案并转为当前项目任务
+      await a.page.evaluate(() => {
+        // @ts-ignore
+        window.prompt = () => '【来自 ChatGPT 网页方案】实现高精度乘法函数 calculator.mjs';
+      });
+      await a.page.getByRole('button', { name: '📥 提炼方案并转为任务' }).click();
+
+      // 跳过讨论直接进入开工计划
+      await a.page.getByTestId('skip-discussion-button').waitFor();
+      await a.page.getByTestId('skip-discussion-button').click();
+
+      // 自动切回任务并进入开工计划
+      await a.page.getByTestId('plan-card').waitFor();
+      const planText = await a.page.getByTestId('executor-info').innerText();
+      expect(planText).toContain('DeepSeek');
+      await stage9Shot(a.page, '03-deepseek-plan-ready');
+
+      // 5. 点击批准开工，由 DeepSeek 执行施工
+      await a.page.getByTestId('start-button').click();
+      await inState(a.page, 'reviewing');
+
+      // 验收卡呈现
+      const factsText = await a.page.getByTestId('facts').innerText();
+      expect(factsText).toContain('通过');
+      await stage9Shot(a.page, '04-deepseek-execution-acceptance');
+
+      // 6. 保存到项目
+      const overallBtn = a.page.getByTestId('confirm-overall');
+      await overallBtn.waitFor({ state: 'visible' });
+      await overallBtn.click();
+      await a.page.waitForFunction(() => {
+        const btn = document.querySelector('[data-testid="confirm-overall"]') as HTMLButtonElement | null;
+        return btn?.getAttribute('aria-pressed') === 'true';
+      });
+
+      const saveBtn = a.page.getByTestId('save-button');
+      await a.page.waitForFunction(() => !(document.querySelector('[data-testid="save-button"]') as HTMLButtonElement | null)?.disabled, { timeout: 15_000 });
+      await saveBtn.click();
+      if (await a.page.getByTestId('unchecked-confirm-panel').isVisible().catch(() => false)) {
+        await a.page.getByTestId('unchecked-confirm-save-button').click();
+      }
+      await a.page.waitForSelector('[data-testid="save-result-panel"][data-outcome="saved"]', { timeout: 30_000 });
+      await stage9Shot(a.page, '05-save-result-complete');
+
+      // 校验物理文件落盘
+      expect(fs.readFileSync(path.join(proj, 'calculator.mjs'), 'utf8')).toContain('multiply');
+    });
   });
 });

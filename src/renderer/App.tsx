@@ -5,6 +5,7 @@ import { Disclosure, SettingsPage, type SettingsTab } from './SettingsPage.js';
 import { Sidebar, type SidebarActive } from './Sidebar.js';
 import { TaskPage } from './TaskPage.js';
 import { Workbench } from './Workbench.js';
+import { ChatGPTView } from './ChatGPTView.js';
 import {
   studio,
   type ClaudeKeySaveResult,
@@ -35,7 +36,8 @@ export type AppScreen =
   | { kind: 'workbench' }
   | { kind: 'project'; projectId: string; tab: ProjectBoardTab }
   | { kind: 'task'; projectId: string; taskId: string }
-  | { kind: 'settings'; tab: SettingsTab };
+  | { kind: 'settings'; tab: SettingsTab }
+  | { kind: 'chatgpt_web'; projectId?: string };
 
 export function App() {
   const [screen, setScreen] = useState<AppScreen>({ kind: 'onboarding' });
@@ -423,7 +425,9 @@ export function App() {
         ? { kind: 'settings' }
         : screen.kind === 'onboarding'
           ? { kind: 'onboarding' }
-          : { kind: 'workbench' };
+          : screen.kind === 'chatgpt_web'
+            ? { kind: 'chatgpt_web' }
+            : { kind: 'workbench' };
 
   const currentProjectStatus =
     activeProjectId
@@ -453,6 +457,10 @@ export function App() {
           navigate({ kind: 'settings', tab: 'ai' });
           refreshEnv();
           refreshClaudeKey();
+        }}
+        onSelectChatGPTWeb={() => {
+          const currentPid = screen.kind === 'project' ? screen.projectId : (workbench.projects[0]?.id ?? undefined);
+          navigate({ kind: 'chatgpt_web', projectId: currentPid });
         }}
       />
 
@@ -573,6 +581,32 @@ export function App() {
             onFetchProviderModels={handleFetchProviderModels}
             onEnableSubscriptionCli={handleEnableSubscriptionCli}
             onDisableSubscriptionCli={handleDisableSubscriptionCli}
+          />
+        )}
+
+        {screen.kind === 'chatgpt_web' && (
+          <ChatGPTView
+            currentProjectName={
+              screen.projectId
+                ? (projectsById[screen.projectId]?.name ?? screen.projectId)
+                : (workbench.projects[0]?.name ?? undefined)
+            }
+            onImportPlanToTask={(content) => {
+              const targetPid = screen.projectId ?? workbench.projects[0]?.id;
+              if (targetPid) {
+                createTask(targetPid, content);
+              } else {
+                setNotice('已提炼方案。请先打开或选择一个项目后再创建任务！');
+                navigate({ kind: 'workbench' });
+              }
+            }}
+            onBackToProject={() => {
+              if (screen.projectId) {
+                selectProject(screen.projectId, 'tasks');
+              } else {
+                navigate({ kind: 'workbench' });
+              }
+            }}
           />
         )}
       </div>

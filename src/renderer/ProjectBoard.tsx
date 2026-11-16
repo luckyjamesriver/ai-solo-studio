@@ -13,6 +13,7 @@ import {
 import { ProjectBriefForm } from './ProjectBriefForm.js';
 import { SaveHistoryPage } from './SaveHistoryPage.js';
 import { COPY } from './copy.js';
+import { SOP_BLUEPRINTS } from '../core/thinking/sopTemplates.js';
 
 export type ProjectBoardTab = 'tasks' | 'history' | 'settings';
 
@@ -203,10 +204,31 @@ export function ProjectBoard({
                 rows={2}
               />
             </label>
-            <div className="row" style={{ marginTop: '10px' }}>
+            <div className="row" style={{ marginTop: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
               <button type="button" data-testid="create-task" onClick={submit} disabled={!request.trim() || creating}>
                 创建任务
               </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="muted" style={{ fontSize: '12px' }}>SOP 蓝图：</span>
+                <select
+                  data-testid="select-sop-blueprint"
+                  defaultValue=""
+                  onChange={(e) => {
+                    const bp = SOP_BLUEPRINTS.find((b) => b.id === e.target.value);
+                    if (bp) {
+                      setRequest(bp.recommendedPrompt);
+                    }
+                  }}
+                  style={{ fontSize: '12px', padding: '3px 8px' }}
+                >
+                  <option value="" disabled>快速套用工程蓝图...</option>
+                  {SOP_BLUEPRINTS.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.badge})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
