@@ -96,7 +96,7 @@ export function ChatGPTView({
               marginTop: '2px',
             }}
           >
-            免 API 密钥直通个人订阅 · 分区：<code>persist:ai_solo_chatgpt</code>
+            免 API 密钥直通个人订阅 · 分区：<code>persist:ai_solo_chatgpt</code>（若 Google 登录遇“通行密钥”，点下方「试试其他方式」选密码或验证码即可）
           </div>
         </div>
 
@@ -140,6 +140,8 @@ export function ChatGPTView({
           id="chatgpt-webview"
           src="https://chatgpt.com"
           partition="persist:ai_solo_chatgpt"
+          allowpopups
+          useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
           style={{
             width: '100%',
             height: '100%',
