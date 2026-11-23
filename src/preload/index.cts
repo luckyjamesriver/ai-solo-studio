@@ -80,6 +80,11 @@ const api = {
   undoFromHistory: (projectId: string, id: string) => ipcRenderer.invoke('project:undoHistory', projectId, id),
   // 项目状态异常时在访达中显示项目；无参数，位置由主进程决定
   revealProject: () => ipcRenderer.invoke('project:reveal'),
+  // 阶段 P0-2：ChatGPT 独立安全伴侣视界与系统浏览器受控交互
+  openChatGPTCompanion: () => ipcRenderer.invoke('chatgpt:openCompanion') as Promise<{ ok: boolean; status: ChatGPTCompanionStatus }>,
+  closeChatGPTCompanion: () => ipcRenderer.invoke('chatgpt:closeCompanion') as Promise<{ ok: boolean }>,
+  getChatGPTCompanionStatus: () => ipcRenderer.invoke('chatgpt:getStatus') as Promise<ChatGPTCompanionStatus>,
+  openChatGPTInSystemBrowser: () => ipcRenderer.invoke('chatgpt:openSystemBrowser') as Promise<{ ok: boolean }>,
   onSaveProgress: (listener: (ev: SaveProgressEvent) => void) => {
     const handler = (_e: IpcRendererEvent, ev: SaveProgressEvent) => listener(ev);
     ipcRenderer.on('acceptance:saveProgress', handler);
@@ -137,6 +142,14 @@ interface SaveProgressEvent {
   taskId: string;
   saveSteps: { key: string; label: string; status: string; detail?: string }[];
   finished: boolean;
+}
+
+export interface ChatGPTCompanionStatus {
+  isOpen: boolean;
+  url: string;
+  authStatus: 'LIVE_LOGIN_NOT_VERIFIED';
+  lastLoadError?: string | null;
+  lastBlockedUrl?: string | null;
 }
 
 contextBridge.exposeInMainWorld('studio', api);

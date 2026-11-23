@@ -589,16 +589,16 @@ export function App() {
             currentProjectName={
               screen.projectId
                 ? (projectsById[screen.projectId]?.name ?? screen.projectId)
-                : (workbench.projects[0]?.name ?? undefined)
+                : undefined
             }
-            onImportPlanToTask={(content) => {
-              const targetPid = screen.projectId ?? workbench.projects[0]?.id;
-              if (targetPid) {
-                createTask(targetPid, content);
-              } else {
-                setNotice('已提炼方案。请先打开或选择一个项目后再创建任务！');
-                navigate({ kind: 'workbench' });
+            currentProjectId={screen.projectId}
+            projects={workbench.projects.map((p) => ({ id: p.id, name: p.name }))}
+            onImportPlanToTask={async (targetPid, content) => {
+              if (!targetPid) {
+                setNotice('请先选择或指定目标归属项目后再创建任务！');
+                throw new Error('未明确指定目标归属项目');
               }
+              await createTask(targetPid, content);
             }}
             onBackToProject={() => {
               if (screen.projectId) {

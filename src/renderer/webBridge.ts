@@ -78,27 +78,11 @@ export async function extractContentFromWebview(webviewSelector = '#chatgpt-webv
     }
   }
 
-  // 兜底：从系统剪贴板读取
-  try {
-    const clipText = await navigator.clipboard.readText();
-    if (clipText && clipText.trim().length > 5) {
-      const cleanText = clipText.trim();
-      return {
-        success: true,
-        text: cleanText,
-        codeBlocks: extractMarkdownCodeBlocks(cleanText),
-        isSelection: false,
-      };
-    }
-  } catch (err) {
-    console.warn('[WebBridge] Clipboard read failed:', err);
-  }
-
   return {
     success: false,
     text: '',
     codeBlocks: [],
     isSelection: false,
-    error: '未能在网页中捕获到回答。请确保网页已完成输出，或先手动选中一段方案文字！',
+    error: '未能在网页中捕获到回答。请确保网页已完成输出，或使用剪贴板与手动输入方案！',
   };
 }

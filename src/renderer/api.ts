@@ -192,6 +192,10 @@ interface StudioApi {
   getSaveHistory(projectId: string): Promise<SaveHistoryView>;
   undoFromHistory(projectId: string, id: string): Promise<UndoHistoryResult>;
   revealProject(): Promise<void>;
+  openChatGPTCompanion(): Promise<{ ok: boolean; status: { isOpen: boolean; url: string; authStatus: 'LIVE_LOGIN_NOT_VERIFIED'; lastLoadError?: string | null; lastBlockedUrl?: string | null } }>;
+  closeChatGPTCompanion(): Promise<{ ok: boolean }>;
+  getChatGPTCompanionStatus(): Promise<{ isOpen: boolean; url: string; authStatus: 'LIVE_LOGIN_NOT_VERIFIED'; lastLoadError?: string | null; lastBlockedUrl?: string | null }>;
+  openChatGPTInSystemBrowser(): Promise<{ ok: boolean }>;
   onSaveProgress(listener: (ev: SaveProgressEvent) => void): () => void;
   detectEnvironment(): Promise<HealthReport>;
   chooseProject(): Promise<OpenResult>;
