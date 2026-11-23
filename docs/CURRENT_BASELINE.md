@@ -1,8 +1,8 @@
 # AI Solo Studio — 当前工程基线 (CURRENT_BASELINE)
 
 **更新时间：** 2026-11-23  
-**权威基线分支：** `rebuild`（最新主干 HEAD: `443773c` / PR #2 Merged）  
-**状态声明：** `AISS_CODEMAP_CONTEXT_READY_FOR_INDEPENDENT_REVIEW`
+**权威基线分支：** `rebuild`（最新主干 HEAD: `441770f` / PR #5 Merged）  
+**状态声明：** `AISS_ENGINEERING_FOUNDATION_COMPLETE`
 
 ---
 
@@ -12,8 +12,8 @@
 
 | 层次划分 | 覆盖范围与分支路径 | 当前真实状态与事实边界 |
 |---|---|---|
-| **第一层：主线已合并 (Mainline Merged)** | 分支：`origin/rebuild`<br>最新 HEAD: `443773c` | • **M0 / M1 / M2 / M3-BASE** 基础架构稳固。<br>• **PR #1 (Merged)**: CI 最小恢复与安全边界（`1b5fe76`）。<br>• **PR #2 (Merged)**: 修复 ADR 0005 存储语义、消除 URL 逃逸、收敛单源 SOP 蓝图（`443773c`）。<br>• 此层代码为目前唯一正式交付代码。 |
-| **第二层：独立 PR 待审 (Open PRs Pending Review)** | • **PR #3**: `feat/p0-2-chatgpt-interaction`<br>• **PR #4**: `docs/agent-reporting-standard`<br>• **PR #5**: `feat/codemap-context-pilot` | • **PR #3 (OPEN)**: ChatGPT P0-2 Webview 安全通信桥梁及独立闭环验证（包含 `ChatGPTCompanionManager`、`planParser.ts`、`chatgptFeedback.ts` 等）。<br>• **PR #4 (OPEN)**: 统一 7 字段代理交付回复强制标准与项目级指令文件，等待维护者审查合并。<br>• **PR #5 (本专项, OPEN)**: 代码地图、基线记忆与 CRG 索引试点及失效降级规范。<br>• **独立分支 (未提 PR)**: `docs/novice-website-mode`（新手建站模式 PRD 及 N0-N7 规划 R1/v0.2，本地独立分支已就绪，等待维护者裁定 5 项方案后决定是否提交 PR）。 |
+| **第一层：主线已合并 (Mainline Merged)** | 分支：`origin/rebuild`<br>最新 HEAD: `441770f` | • **M0 / M1 / M2 / M3-BASE** 基础架构稳固。<br>• **PR #1 (Merged)**: CI 最小恢复与安全边界（`1b5fe76`）。<br>• **PR #2 (Merged)**: 修复 ADR 0005 存储语义、消除 URL 逃逸、收敛单源 SOP 蓝图（`443773c`）。<br>• **PR #4 (Merged)**: 统一 7 字段代理交付回复强制标准与全局工作区规则（`442c73f` / `255e635`）。<br>• **PR #5 (Merged)**: 代码地图、基线记忆与 CRG 索引试点及失效降级规范（`441770f` / `dfa38ef`）。<br>• 此层代码为目前正式交付代码。 |
+| **第二层：独立 PR 待审 (Open PRs Pending Review)** | • **PR #3**: `feat/p0-2-chatgpt-interaction`<br>• **独立分支 (未提 PR)**: `docs/novice-website-mode` | • **PR #3 (OPEN)**: ChatGPT P0-2 Webview 安全通信桥梁及独立闭环验证（包含 `ChatGPTCompanionManager`、`planParser.ts`、`chatgptFeedback.ts` 等）。<br>• **独立分支 (未提 PR)**: `docs/novice-website-mode`（新手建站模式 PRD 及 N0-N7 规划 R1/v0.2，本地独立分支已就绪，等待维护者裁定 5 项方案后决定是否提交 PR）。 |
 | **第三层：本地工作区在研未提交 (Local In-Progress / Uncommitted)** | 路径：`/Users/jamesho/ai-solo-studio-rebuild`<br>（原工作区未提交文件） | • 包含 8 个未提交修改（`e2e/shell.e2e.ts`, `src/core/app/task-controller.ts`, `src/core/thinking/index.ts`, `App.tsx`, `SettingsPage.tsx` 以及未跟踪的 `autonomous-feedback-loop.ts`, `chatgpt-devkit.ts`, `tests/autonomous-feedback-loop.test.ts`）。<br>• **特别强调**：`src/core/thinking/chatgpt-devkit.ts` 为原工作区本地未跟踪原型文件（`??`），**绝不是 PR #3 的组成部分**。<br>• **严格约束**：受 100% 隔离保护，**严禁画入当前主线架构，不能作为现有代码引用**。 |
 
 ---
@@ -34,9 +34,17 @@
    - **ADR 0007 & 0008 (测试分层与依赖准入)**：
      - Core 纯逻辑单元测试、Electron 冒烟测试、Playwright E2E 测试严格分层；
      - 新增依赖必须精确版本且发布满 14 天，禁止引入未受审的原生编译模块。
-2. **第二优先级：项目级通用规范（`docs/standards/AGENT_REPORTING_STANDARD.md`，PR #4 待审）**
+2. **第二优先级：项目级通用规范（`docs/standards/AGENT_REPORTING_STANDARD.md`，PR #4 已合并入主线）**
    - 任务交付面向用户的回复强制使用 7 字段固定格式（最多 8 行、300 汉字）；详细证据必须完整落盘于项目文档中，严禁假装通过。
-3. **第三优先级：当前基线与代码地图（`CURRENT_BASELINE.md` / `docs/engineering/CODE_MAP.md`）**
+3. **第三优先级：当前基线与代码地图（`CURRENT_BASELINE.md` / `docs/engineering/CODE_MAP.md`，PR #5 已合并入主线）**
    - 必须 100% 映射 `origin/rebuild` 上真实存在的模块、函数签名与测试套件。
 4. **历史演进参考：早期报告与草稿（`docs/plans/`、`docs/reports/`）**
    - 仅作为历史演进背景记录，凡与上述 ADR 冲突的早期描述一律失效。
+
+---
+
+## 三、 本地代码索引与辅助机制有效性声明 (Code Review Graph)
+
+- **CRG 索引状态**：`VALID` (已增量同步至最新主干 HEAD `441770f`)
+- **索引规格**：214 文件，2989 节点，47146 边，数据库大小 52MB（严格受限在 256MB 安全红线内）。
+- **失效降级策略**：若 HEAD 推进导致 `built !== current`，自动标记为 `INDEX_STALE`；开发代理立即降级为 Git / Ripgrep 原生源码检索，严禁阻塞开发，不引入任何常驻索引守护进程。
