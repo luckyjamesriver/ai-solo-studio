@@ -20,11 +20,12 @@
 ```
 
 ### 规则要点
-1. **长度限制：** 最终用户回复原则上最多 8 行、300 个汉字，不计标识符、SHA、URL 与文件路径。
-2. **状态枚举：** 严格只能使用 `COMPLETE`、`READY_FOR_REVIEW`、`PARTIAL`、`BLOCKED`。
+1. **长度限制：** 最终用户回复原则上最多 8 行、300 个汉字（不计标识符、SHA、URL 与文件路径）。
+2. **状态枚举：** 严格只能使用 `COMPLETE`、`READY_FOR_REVIEW`、`PARTIAL`、`BLOCKED` 四种状态。
 3. **真实诚实：** 未验证事项明确写 `NOT_VERIFIED`，不得写 PASS；PR 待合并不得写 `COMPLETE`。
-4. **证据完整落盘：** 所有详细证据、测试数量、CI 链接、改动文件清单必须保存在 `docs/reports/` 或对应交付物中，不得因精简终端回复而遗失证据。
-5. **唯一权威规范文档：** 详细格式说明、边界规则与各类示例见 [`docs/standards/AGENT_REPORTING_STANDARD.md`](docs/standards/AGENT_REPORTING_STANDARD.md)。
+4. **证据完整落盘：** 所有详细证据、测试数量、CI 链接、改动文件清单必须保存在当前项目内的相对路径（如 `docs/reports/` 或对应交付物）中，严禁因精简终端回复而遗失证据。
+5. **例外情况：** 遇到安全事故/凭证泄露风险，或用户明确指令要求详细报告时，允许突破精简限制展开详述。
+6. **唯一权威规范：** 完整规范定义、各字段填报细则与虚构示例参见唯一权威文件：[`docs/standards/AGENT_REPORTING_STANDARD.md`](docs/standards/AGENT_REPORTING_STANDARD.md)。
 
 ---
 
