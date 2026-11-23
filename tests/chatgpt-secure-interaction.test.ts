@@ -7,6 +7,7 @@ import {
   CHATGPT_PARTITION,
   ALLOWED_CHATGPT_ORIGINS,
   chatgptCompanion,
+  ChatGPTCompanionManager,
 } from '../src/main/chatgpt-companion.js';
 import { parsePlanFromText, serializePlanForTask } from '../src/renderer/planParser.js';
 import { buildChatGPTFeedbackPacket, sanitizeFeedbackText } from '../src/renderer/chatgptFeedback.js';
@@ -101,6 +102,93 @@ describe('AISS-P0-2-R2：ChatGPT 网页安全交互与受控协作验收', () =>
       expect(companionCode).toMatch(/did-fail-load/);
       expect(companionCode).toMatch(/lastLoadError/);
     });
+
+    it('真实 Electron WebContents 事件拦截测试（服务端重定向、子框架导航、弹窗与权限拦截验证）', () => {
+      const manager = new ChatGPTCompanionManager();
+      const eventHandlers: Record<string, Function> = {};
+      let windowOpenHandler: Function | null = null;
+      let permissionRequestHandler: Function | null = null;
+      const loadedUrls: string[] = [];
+
+      const mockWebContents = {
+        on: (ev: string, cb: Function) => {
+          eventHandlers[ev] = cb;
+        },
+        setWindowOpenHandler: (cb: Function) => {
+          windowOpenHandler = cb;
+        },
+        session: {
+          setPermissionRequestHandler: (cb: Function) => {
+            permissionRequestHandler = cb;
+          },
+        },
+      };
+
+      const mockWin = {
+        loadURL: (url: string) => {
+          loadedUrls.push(url);
+          return Promise.resolve();
+        },
+      };
+
+      manager.setupWebContentsSecurity(mockWebContents, mockWin);
+
+      // 1. 服务端重定向 will-redirect 拦截测试
+      expect(typeof eventHandlers['will-redirect']).toBe('function');
+      const allowedRedirectEv = { preventDefault: () => { allowedRedirectEv.defaultPrevented = true; }, defaultPrevented: false };
+      eventHandlers['will-redirect']!(allowedRedirectEv, 'https://auth0.openai.com/oauth/callback');
+      expect(allowedRedirectEv.defaultPrevented).toBe(false);
+
+      const forbiddenRedirectEv = { preventDefault: () => { forbiddenRedirectEv.defaultPrevented = true; }, defaultPrevented: false };
+      eventHandlers['will-redirect']!(forbiddenRedirectEv, 'https://malicious-phishing-site.com/steal');
+      expect(forbiddenRedirectEv.defaultPrevented).toBe(true);
+      expect(manager.getLastBlockedUrl()).toBe('https://malicious-phishing-site.com/steal');
+
+      // 2. 页面跳转 will-navigate 拦截测试
+      expect(typeof eventHandlers['will-navigate']).toBe('function');
+      const forbiddenNavEv = { preventDefault: () => { forbiddenNavEv.defaultPrevented = true; }, defaultPrevented: false };
+      eventHandlers['will-navigate']!(forbiddenNavEv, 'http://insecure-http.com');
+      expect(forbiddenNavEv.defaultPrevented).toBe(true);
+      expect(manager.getLastBlockedUrl()).toBe('http://insecure-http.com');
+
+      // 3. 子框架导航 will-frame-navigate 拦截测试
+      expect(typeof eventHandlers['will-frame-navigate']).toBe('function');
+      const forbiddenFrameEv = { url: 'https://iframe-tracker.com', preventDefault: () => { forbiddenFrameEv.defaultPrevented = true; }, defaultPrevented: false };
+      eventHandlers['will-frame-navigate']!(forbiddenFrameEv);
+      expect(forbiddenFrameEv.defaultPrevented).toBe(true);
+      expect(manager.getLastBlockedUrl()).toBe('https://iframe-tracker.com');
+
+      // 4. 弹窗拦截 setWindowOpenHandler 测试
+      expect(typeof windowOpenHandler).toBe('function');
+      // 白名单内的登录弹窗：在伴侣视界窗口内加载，但仍然 deny 新建独立原生窗口
+      const allowedPopup = windowOpenHandler!({ url: 'https://accounts.google.com/o/oauth2' });
+      expect(allowedPopup).toEqual({ action: 'deny' });
+      expect(loadedUrls).toContain('https://accounts.google.com/o/oauth2');
+
+      // 外部非法域名弹窗：deny 且记录审计日志，绝不 loadURL
+      loadedUrls.length = 0;
+      const forbiddenPopup = windowOpenHandler!({ url: 'https://evil-popup.com' });
+      expect(forbiddenPopup).toEqual({ action: 'deny' });
+      expect(loadedUrls.length).toBe(0);
+      expect(manager.getLastBlockedUrl()).toBe('https://evil-popup.com');
+
+      // 5. 加载失败感知 did-fail-load 测试
+      expect(typeof eventHandlers['did-fail-load']).toBe('function');
+      // 子框架加载失败：不污染全局主状态
+      eventHandlers['did-fail-load']!({}, -105, 'NAME_NOT_RESOLVED', 'https://chatgpt.com/sub', false);
+      expect(manager.getLastLoadError()).toBeNull();
+      // 主框架加载失败：记录并报告
+      eventHandlers['did-fail-load']!({}, -106, 'ERR_INTERNET_DISCONNECTED', 'https://chatgpt.com', true);
+      expect(manager.getLastLoadError()).toContain('ERR_INTERNET_DISCONNECTED (-106)');
+
+      // 6. 系统权限请求测试：全拒绝
+      expect(typeof permissionRequestHandler).toBe('function');
+      let grantedResult: boolean | null = null;
+      permissionRequestHandler!({}, 'media', (grant: boolean) => {
+        grantedResult = grant;
+      });
+      expect(grantedResult).toBe(false);
+    });
   });
 
   describe('3. 用户登录状态诚实标记与反作弊合规', () => {
@@ -181,6 +269,42 @@ describe('AISS-P0-2-R2：ChatGPT 网页安全交互与受控协作验收', () =>
       expect(plan.title).toBe('实现高精度乘法函数 calculator.mjs');
       expect(plan.goal).toContain('实现高精度乘法函数 calculator.mjs');
       expect(plan.inScope).toContain('calculator.mjs');
+    });
+
+    it('方案解析与序列化：完整保留代码块与补充说明，防止关键参考实现静默丢失', () => {
+      const sample = `
+# 任务：重构数学模块
+## 目标
+重构大整数乘法器。
+## 施工范围
+- \`src/math.ts\`
+## 验收标准
+- [ ] 导出 multiply 函数
+## 重要约束
+- 零外部依赖
+\`\`\`typescript
+export function multiply(a: bigint, b: bigint): bigint {
+  return a * b;
+}
+\`\`\`
+补充说明：请注意负数边界情况。
+      `;
+      const plan = parsePlanFromText(sample);
+      expect(plan.codeBlocks.length).toBe(1);
+      expect(plan.codeBlocks[0]).toContain('export function multiply');
+
+      const serialized = serializePlanForTask({
+        goal: plan.goal,
+        inScope: plan.inScope,
+        criteria: plan.criteria,
+        constraints: plan.constraints,
+        codeBlocks: plan.codeBlocks,
+        rawPlanNotes: '请注意负数边界情况。',
+      });
+      expect(serialized).toContain('### 方案代码与实现参考');
+      expect(serialized).toContain('export function multiply');
+      expect(serialized).toContain('### 原始方案补充说明');
+      expect(serialized).toContain('请注意负数边界情况。');
     });
   });
 
@@ -291,6 +415,13 @@ describe('AISS-P0-2-R2：ChatGPT 网页安全交互与受控协作验收', () =>
       expect(packet).toContain('人工确认交接（Human-in-the-loop transfer · 阶段 P0-2）');
       expect(packet).toContain('非全自动后台双向通信');
       expect(packet).toContain('<!-- AI-SOLO-STUDIO-HANDOFF: mode=human-in-the-loop, stage=P0-2');
+    });
+
+    it('反馈包明确声明正则脱敏非 100% 绝对安全保证，必须经人工逐行核对确认', () => {
+      const packet = buildChatGPTFeedbackPacket(mockTask);
+      expect(packet).toContain('隐私安全声明');
+      expect(packet).toContain('正则脱敏无法保证 100%');
+      expect(packet).toContain('已由用户逐行人工核验确认后发出');
     });
   });
 

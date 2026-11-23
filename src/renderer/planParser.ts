@@ -162,13 +162,15 @@ export function parsePlanFromText(rawText: string): ParsedPlan {
 
 /**
  * 将解析与核准后的方案序列化为标准 TaskController 输入请求文本。
- * 包含目标、施工范围、验收标准与重要约束，防止有效上下文丢失。
+ * 包含目标、施工范围、验收标准、重要约束、代码块与补充说明，防止有效上下文和原始信息静默丢失。
  */
 export function serializePlanForTask(params: {
   goal: string;
   inScope: readonly string[];
   criteria: readonly string[];
   constraints?: readonly string[];
+  codeBlocks?: readonly string[];
+  rawPlanNotes?: string;
   rawText?: string;
 }): string {
   const sections: string[] = [];
@@ -184,6 +186,14 @@ export function serializePlanForTask(params: {
 
   if (params.constraints && params.constraints.length > 0) {
     sections.push(`### 重要约束\n${params.constraints.map((c) => `- ${c}`).join('\n')}`);
+  }
+
+  if (params.codeBlocks && params.codeBlocks.length > 0) {
+    sections.push(`### 方案代码与实现参考\n${params.codeBlocks.map((b) => `\`\`\`\n${b}\n\`\`\``).join('\n\n')}`);
+  }
+
+  if (params.rawPlanNotes && params.rawPlanNotes.trim()) {
+    sections.push(`### 原始方案补充说明\n${params.rawPlanNotes.trim()}`);
   }
 
   return sections.join('\n\n');

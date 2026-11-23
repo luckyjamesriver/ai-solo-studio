@@ -85,35 +85,7 @@ export class ChatGPTCompanionManager {
 
     this.companionWindow = win;
 
-    // 弹窗拦截（R2 加固）：白名单内在当前窗口载入，非白名单一律拒绝；绝不自动唤起外部应用！
-    win.webContents.setWindowOpenHandler(({ url }) => {
-      if (isAllowedChatGPTUrl(url)) {
-        void win.loadURL(url);
-      } else {
-        this.lastBlockedUrl = url;
-      }
-      return { action: 'deny' };
-    });
-
-    // 页面跳转拦截（R2 加固）：禁止跳出白名单域名；绝不自动唤起外部应用！
-    win.webContents.on('will-navigate', (event, navigationUrl) => {
-      if (!isAllowedChatGPTUrl(navigationUrl)) {
-        event.preventDefault();
-        this.lastBlockedUrl = navigationUrl;
-      }
-    });
-
-    // 页面加载失败感知：诚实记录错误并向 UI 报告
-    win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (isMainFrame) {
-        this.lastLoadError = `${errorDescription} (${errorCode}) @ ${validatedURL}`;
-      }
-    });
-
-    // 系统权限拦截：默认拒绝所有系统级权限请求
-    win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-      callback(false);
-    });
+    this.setupWebContentsSecurity(win.webContents, win);
 
     win.on('closed', () => {
       this.companionWindow = null;
@@ -122,6 +94,70 @@ export class ChatGPTCompanionManager {
     void win.loadURL(CHATGPT_COMPANION_URL);
 
     return { ok: true, status: this.getStatus() };
+  }
+
+  /**
+   * 为伴侣视界 WebContents 注入严格的安全拦截与状态监听规则（P0-2-R3 加固版）。
+   * 包含：弹窗拦截、主框架跳转拦截、服务端重定向拦截、子框架导航拦截、加载失败感知及系统权限拒绝。
+   */
+  public setupWebContentsSecurity(
+    webContents: Electron.WebContents | any,
+    win: BrowserWindow | any
+  ): void {
+    // 弹窗拦截（R2 加固）：白名单内在当前窗口载入，非白名单一律拒绝；绝不自动唤起外部应用！
+    webContents.setWindowOpenHandler(({ url }: { url: string }) => {
+      if (isAllowedChatGPTUrl(url)) {
+        if (typeof win?.loadURL === 'function') {
+          void win.loadURL(url);
+        }
+      } else {
+        this.lastBlockedUrl = url;
+      }
+      return { action: 'deny' };
+    });
+
+    // 页面跳转拦截（R2 加固）：禁止跳出白名单域名；绝不自动唤起外部应用！
+    webContents.on('will-navigate', (event: any, navigationUrl: string) => {
+      if (!isAllowedChatGPTUrl(navigationUrl)) {
+        if (typeof event?.preventDefault === 'function') {
+          event.preventDefault();
+        }
+        this.lastBlockedUrl = navigationUrl;
+      }
+    });
+
+    // HTTP 服务端重定向拦截（P0-2-R3 加固）：拦截 301/302 重定向到非白名单域名
+    webContents.on('will-redirect', (event: any, redirectUrl: string) => {
+      if (!isAllowedChatGPTUrl(redirectUrl)) {
+        if (typeof event?.preventDefault === 'function') {
+          event.preventDefault();
+        }
+        this.lastBlockedUrl = redirectUrl;
+      }
+    });
+
+    // 子框架导航拦截（P0-2-R3 加固）：防止 iframe 逃逸到未授权外部域名
+    webContents.on('will-frame-navigate', (event: any) => {
+      const targetUrl = event?.url || '';
+      if (!isAllowedChatGPTUrl(targetUrl)) {
+        if (typeof event?.preventDefault === 'function') {
+          event.preventDefault();
+        }
+        this.lastBlockedUrl = targetUrl;
+      }
+    });
+
+    // 页面加载失败感知：诚实记录错误并向 UI 报告
+    webContents.on('did-fail-load', (_event: any, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => {
+      if (isMainFrame) {
+        this.lastLoadError = `${errorDescription} (${errorCode}) @ ${validatedURL}`;
+      }
+    });
+
+    // 系统权限拦截：默认拒绝所有系统级权限请求
+    webContents.session?.setPermissionRequestHandler((_webContents: any, _permission: any, callback: (grant: boolean) => void) => {
+      callback(false);
+    });
   }
 
   public closeCompanion(): { ok: boolean } {

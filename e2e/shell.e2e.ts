@@ -3895,6 +3895,12 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
       const curProjText = await a.page.getByTestId('chatgpt-current-project').innerText();
       expect(curProjText).toContain('proj-p0-2-e2e');
 
+      // 2.1 测试网页自动抓取失败时的降级感知（不伪造自动获取成功）
+      await a.page.getByRole('button', { name: '📥 提炼方案并转为任务' }).click();
+      const fallbackHint = a.page.getByTestId('manual-fallback-hint');
+      await fallbackHint.waitFor({ state: 'visible' });
+      expect(await fallbackHint.innerText()).toContain('未能直接从网页抓取内容');
+
       // 3. 输入方案文本并解析
       const rawInput = a.page.getByTestId('chatgpt-raw-input');
       await rawInput.fill(`
@@ -3922,7 +3928,7 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
       await rawInput.fill('输入已被用户修改');
       expect(await previewCard.isVisible()).toBe(false);
 
-      // 5. 重新输入有效方案并解析
+      // 5. 重新输入包含代码块的有效方案并解析
       await rawInput.fill(`
 # 任务：实现精确乘法工具
 ## 目标
@@ -3931,12 +3937,28 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
 - \`src/multiply.mjs\`
 ## 验收标准
 - [ ] 导出 multiply(a, b)
+## 重要约束
+- 必须遵循模块化规范
+\`\`\`javascript
+export function multiply(a, b) {
+  return a * b;
+}
+\`\`\`
       `);
       await a.page.getByTestId('parse-plan-button').click();
       await previewCard.waitFor({ state: 'visible' });
 
-      // 微调目标
+      // 验证代码块展示
+      const codeBlockPreview = a.page.getByTestId('preview-code-blocks');
+      await codeBlockPreview.waitFor({ state: 'visible' });
+      expect(await codeBlockPreview.innerText()).toContain('export function multiply');
+
+      // 微调目标、施工范围与验收标准
       await goalInput.fill('实现可靠乘法工具 multiply.mjs（已微调）');
+      const scopeInput = a.page.getByTestId('preview-edited-scope');
+      await scopeInput.fill('src/multiply.mjs\nsrc/types.d.ts');
+      const criteriaInput = a.page.getByTestId('preview-edited-criteria');
+      await criteriaInput.fill('导出 multiply(a, b)\n通过精度边界测试');
 
       // 6. 显式确认导入，任务受控创建
       await a.page.getByTestId('confirm-import-plan-button').click();
@@ -3946,7 +3968,7 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
       const taskTitle = await a.page.getByTestId('task-title').innerText();
       expect(taskTitle).toContain('实现可靠乘法工具 multiply.mjs（已微调）');
 
-      // 7. 验证反馈包内容审查与脱敏模态框
+      // 7. 验证反馈包内容审查与脱敏模态框（含隐私免责声明与人工核验勾选框）
       const copyBtn = a.page.getByTestId('copy-chatgpt-feedback');
       await copyBtn.waitFor({ state: 'visible' });
       await copyBtn.click();
@@ -3954,14 +3976,27 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
       const reviewModal = a.page.getByTestId('feedback-review-modal');
       await reviewModal.waitFor({ state: 'visible' });
 
+      // 验证隐私安全免责声明
+      const disclaimer = a.page.getByTestId('feedback-privacy-disclaimer');
+      await disclaimer.waitFor({ state: 'visible' });
+      expect(await disclaimer.innerText()).toContain('无法保证 100% 覆盖所有私有凭证');
+
       const textarea = a.page.getByTestId('feedback-packet-textarea');
       const packetContent = await textarea.inputValue();
       expect(packetContent).toContain('Human-in-the-loop transfer · 阶段 P0-2');
       expect(packetContent).toContain('### 宿主真实检查事实 (Host Verified Facts)');
       expect(packetContent).toContain('无宿主自动化测试事实记录');
 
+      // 验证在勾选人工核验前，确认复制按钮处于禁用状态
+      const confirmCopyBtn = a.page.getByTestId('confirm-copy-feedback-button');
+      expect(await confirmCopyBtn.isDisabled()).toBe(true);
+
+      // 勾选人工核验复选框
+      await a.page.getByTestId('feedback-manual-review-ack').check();
+      expect(await confirmCopyBtn.isDisabled()).toBe(false);
+
       // 确认并复制
-      await a.page.getByTestId('confirm-copy-feedback-button').click();
+      await confirmCopyBtn.click();
       await a.page.waitForFunction(() => {
         const btn = document.querySelector('[data-testid="copy-chatgpt-feedback"]');
         return btn?.textContent?.includes('已复制反馈包');

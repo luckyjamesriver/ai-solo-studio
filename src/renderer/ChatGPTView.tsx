@@ -30,11 +30,13 @@ export function ChatGPTView({
   const [rawPlanText, setRawPlanText] = useState('');
   const [previewPlan, setPreviewPlan] = useState<ParsedPlan | null>(null);
   const [editedGoal, setEditedGoal] = useState('');
-  const [editedScope, setEditedScope] = useState<string[]>([]);
-  const [editedCriteria, setEditedCriteria] = useState<string[]>([]);
-  const [editedConstraints, setEditedConstraints] = useState<string[]>([]);
+  const [editedScopeText, setEditedScopeText] = useState('');
+  const [editedCriteriaText, setEditedCriteriaText] = useState('');
+  const [editedConstraintsText, setEditedConstraintsText] = useState('');
+  const [editedNotes, setEditedNotes] = useState('');
   const [companionActive, setCompanionActive] = useState(false);
   const [companionLoadError, setCompanionLoadError] = useState<string | null>(null);
+  const [extractionFallback, setExtractionFallback] = useState(false);
 
   // 1. 打开独立伴侣视界
   const handleOpenCompanion = async () => {
@@ -44,6 +46,9 @@ export function ChatGPTView({
       const res = await studio().openChatGPTCompanion();
       if (res.ok) {
         setCompanionActive(true);
+        if (res.status?.lastLoadError) {
+          setCompanionLoadError(res.status.lastLoadError);
+        }
         setFeedback('已启动 ChatGPT 独立伴侣视界（强沙箱隔离 · 独立会话分区）。');
       }
     } catch (e: any) {
@@ -69,10 +74,12 @@ export function ChatGPTView({
     const parsed = parsePlanFromText(trimmed);
     setPreviewPlan(parsed);
     setEditedGoal(parsed.goal || parsed.title);
-    setEditedScope([...parsed.inScope]);
-    setEditedCriteria([...parsed.criteria]);
-    setEditedConstraints([...parsed.constraints]);
-    setFeedback(`${sourceLabel}已成功解析。请在右侧预览卡中核验目标、施工范围与验收标准，确认无误后方可导入。`);
+    setEditedScopeText(parsed.inScope.join('\n'));
+    setEditedCriteriaText(parsed.criteria.join('\n'));
+    setEditedConstraintsText(parsed.constraints.join('\n'));
+    setEditedNotes('');
+    setExtractionFallback(false);
+    setFeedback(`${sourceLabel}已成功解析。请在右侧预览卡中核验并微调目标、施工范围与验收标准，确认无误后方可导入。`);
   };
 
   // 3. 从剪贴板粘贴方案
@@ -101,11 +108,26 @@ export function ChatGPTView({
   // 5. 用户主动确认后，才真正导入为 Studio 任务（核心门禁）
   const handleConfirmImport = () => {
     if (!previewPlan) return;
+    const scopes = editedScopeText
+      .split('\n')
+      .map((s) => s.trim().replace(/^[-*]\s*/, ''))
+      .filter(Boolean);
+    const criteria = editedCriteriaText
+      .split('\n')
+      .map((c) => c.trim().replace(/^-\s*\[[ xX]\]\s*/, '').replace(/^[-*]\s*/, ''))
+      .filter(Boolean);
+    const constraints = editedConstraintsText
+      .split('\n')
+      .map((c) => c.trim().replace(/^[-*]\s*/, ''))
+      .filter(Boolean);
+
     const finalContent = serializePlanForTask({
       goal: editedGoal.trim() || previewPlan.goal || previewPlan.title,
-      inScope: editedScope,
-      criteria: editedCriteria,
-      constraints: editedConstraints,
+      inScope: scopes.length > 0 ? scopes : previewPlan.inScope,
+      criteria: criteria.length > 0 ? criteria : previewPlan.criteria,
+      constraints: constraints.length > 0 ? constraints : previewPlan.constraints,
+      codeBlocks: previewPlan.codeBlocks,
+      rawPlanNotes: editedNotes.trim(),
       rawText: previewPlan.rawText,
     });
     onImportPlanToTask(finalContent);
@@ -117,6 +139,7 @@ export function ChatGPTView({
   const handleExtractAndTransfer = async () => {
     setExtracting(true);
     setFeedback(null);
+    setExtractionFallback(false);
     try {
       let candidate = rawPlanText.trim();
       if (!candidate) {
@@ -126,21 +149,17 @@ export function ChatGPTView({
         }
       }
 
-      if (!candidate) {
-        const manual = prompt('未能自动提取到内容。你可以手动粘贴 ChatGPT 生成的方案文本：', '');
-        if (manual && manual.trim().length > 5) {
-          candidate = manual.trim();
-        }
-      }
-
       if (candidate && candidate.length > 5) {
         // 关键安全修复：只装载到预览卡，绝不自动调用 onImportPlanToTask
         loadPlanToPreview(candidate, '提炼内容');
       } else {
-        setFeedback('未能获取有效方案，请在网页中生成回复或在文本框中粘贴后再试。');
+        // 诚实反馈：明确使用剪贴板或手工粘贴，绝不伪装自动获取成功
+        setExtractionFallback(true);
+        setFeedback('未能自动从网页直接读取内容（受同源沙箱与跨进程隔离保护）。已切换为手动模式，请在网页中复制方案后使用剪贴板粘贴或手动输入。');
       }
     } catch (e: any) {
-      setFeedback(`提取异常: ${e.message || e}`);
+      setExtractionFallback(true);
+      setFeedback(`提取异常: ${e.message || e}。请使用剪贴板或手工粘贴方案。`);
     } finally {
       setExtracting(false);
     }
@@ -400,6 +419,23 @@ export function ChatGPTView({
             粘贴在 ChatGPT 网页中商讨确定的方案文本，Studio 会自动解析任务目标、施工范围与验收标准：
           </p>
 
+          {extractionFallback && (
+            <div
+              data-testid="manual-fallback-hint"
+              style={{
+                padding: '10px 14px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--color-surface-subtle)',
+                border: '1px solid var(--color-warn)',
+                color: 'var(--color-warn)',
+                fontSize: '12px',
+                lineHeight: 1.5,
+              }}
+            >
+              ⚠️ <b>提示</b>：未能直接从网页抓取内容（受安全沙箱与同源隔离保护）。已切换为手动模式，请在 ChatGPT 网页中直接复制方案文本，然后点击上方「📋 从剪贴板粘贴」或在下方输入框中手动粘贴，绝不伪装自动获取成功。
+            </div>
+          )}
+
           <textarea
             data-testid="chatgpt-raw-input"
             value={rawPlanText}
@@ -408,6 +444,7 @@ export function ChatGPTView({
               // 关键安全修复：输入改变后，旧预览与旧确认立即失效！
               setPreviewPlan(null);
               setFeedback(null);
+              setExtractionFallback(false);
             }}
             placeholder="在此粘贴来自 ChatGPT 的讨论方案、任务草稿或 Markdown 蓝图..."
             rows={5}
@@ -498,49 +535,129 @@ export function ChatGPTView({
               </div>
 
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--color-muted)' }}>施工范围（涉及文件）：</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                  <label style={{ fontSize: '12px', color: 'var(--color-muted)' }}>施工范围（涉及文件，每行一个）：</label>
                   {!previewPlan.scopeConfirmed && (
                     <span style={{ fontSize: '10px', color: 'var(--color-warn)', background: 'var(--color-surface)', padding: '1px 6px', borderRadius: '4px', border: '1px solid var(--color-border)' }}>
                       待确认
                     </span>
                   )}
                 </div>
-                <div style={{ margin: '4px 0 0 0', fontSize: '12px' }}>
-                  {editedScope.map((f, i) => (
-                    <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '2px' }}>
-                      <code>{f}</code>
-                    </div>
-                  ))}
-                </div>
+                <textarea
+                  data-testid="preview-edited-scope"
+                  value={editedScopeText}
+                  onChange={(e) => setEditedScopeText(e.target.value)}
+                  rows={3}
+                  style={{
+                    width: '100%',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontFamily: 'monospace',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                    color: 'var(--color-ink)',
+                    resize: 'vertical',
+                  }}
+                />
               </div>
 
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--color-muted)' }}>验收标准：</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                  <label style={{ fontSize: '12px', color: 'var(--color-muted)' }}>验收标准（每行一项）：</label>
                   {!previewPlan.criteriaConfirmed && (
                     <span style={{ fontSize: '10px', color: 'var(--color-warn)', background: 'var(--color-surface)', padding: '1px 6px', borderRadius: '4px', border: '1px solid var(--color-border)' }}>
                       待确认
                     </span>
                   )}
                 </div>
-                <ul style={{ margin: '4px 0 0 0', paddingLeft: '18px', fontSize: '12px', lineHeight: 1.5 }}>
-                  {editedCriteria.map((c, i) => (
-                    <li key={i}>{c}</li>
-                  ))}
-                </ul>
+                <textarea
+                  data-testid="preview-edited-criteria"
+                  value={editedCriteriaText}
+                  onChange={(e) => setEditedCriteriaText(e.target.value)}
+                  rows={3}
+                  style={{
+                    width: '100%',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                    color: 'var(--color-ink)',
+                    resize: 'vertical',
+                  }}
+                />
               </div>
 
-              {editedConstraints.length > 0 && (
+              <div>
+                <label style={{ fontSize: '12px', color: 'var(--color-muted)', display: 'block', marginBottom: '4px' }}>
+                  重要约束（每行一项，可选）：
+                </label>
+                <textarea
+                  data-testid="preview-edited-constraints"
+                  value={editedConstraintsText}
+                  onChange={(e) => setEditedConstraintsText(e.target.value)}
+                  rows={2}
+                  style={{
+                    width: '100%',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                    color: 'var(--color-ink)',
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+
+              {previewPlan.codeBlocks.length > 0 && (
                 <div>
-                  <span style={{ fontSize: '12px', color: 'var(--color-muted)' }}>重要约束：</span>
-                  <ul style={{ margin: '4px 0 0 0', paddingLeft: '18px', fontSize: '12px', lineHeight: 1.5 }}>
-                    {editedConstraints.map((ct, i) => (
-                      <li key={i}><code>{ct}</code></li>
+                  <div style={{ fontSize: '12px', color: 'var(--color-muted)', marginBottom: '4px' }}>
+                    代码块与参考实现（已保留 {previewPlan.codeBlocks.length} 处）：
+                  </div>
+                  <div
+                    data-testid="preview-code-blocks"
+                    style={{
+                      maxHeight: '120px',
+                      overflowY: 'auto',
+                      padding: '8px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--color-surface)',
+                      border: '1px solid var(--color-border)',
+                      fontSize: '11px',
+                      fontFamily: 'monospace',
+                    }}
+                  >
+                    {previewPlan.codeBlocks.map((blk, i) => (
+                      <pre key={i} style={{ margin: '4px 0', whiteSpace: 'pre-wrap' }}>{blk}</pre>
                     ))}
-                  </ul>
+                  </div>
                 </div>
               )}
+
+              <div>
+                <label style={{ fontSize: '12px', color: 'var(--color-muted)', display: 'block', marginBottom: '4px' }}>
+                  原始方案补充说明（可选）：
+                </label>
+                <textarea
+                  data-testid="preview-edited-notes"
+                  value={editedNotes}
+                  onChange={(e) => setEditedNotes(e.target.value)}
+                  placeholder="可补充其他重要背景、上下文或设计说明..."
+                  rows={2}
+                  style={{
+                    width: '100%',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                    color: 'var(--color-ink)',
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
 
               <div
                 style={{

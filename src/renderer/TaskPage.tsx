@@ -46,6 +46,7 @@ export function TaskPage({
   const [maskCredentials, setMaskCredentials] = useState(true);
   const [relativePaths, setRelativePaths] = useState(true);
   const [includeDiagnostics, setIncludeDiagnostics] = useState(true);
+  const [manualReviewAck, setManualReviewAck] = useState(false);
   const [editedPacket, setEditedPacket] = useState('');
 
   useEffect(() => {
@@ -60,6 +61,7 @@ export function TaskPage({
       includeDiagnostics,
     });
     setEditedPacket(packet);
+    setManualReviewAck(false);
     setShowFeedbackModal(true);
   };
 
@@ -315,6 +317,21 @@ export function TaskPage({
                 </label>
               </div>
 
+              <div
+                data-testid="feedback-privacy-disclaimer"
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--color-surface-subtle)',
+                  border: '1px solid var(--color-warn)',
+                  color: 'var(--color-warn)',
+                  fontSize: '11px',
+                  lineHeight: 1.5,
+                }}
+              >
+                ⚠️ <b>隐私与凭证安全提示</b>：内置脱敏规则仅基于通用模式匹配，<b>无法保证 100% 覆盖所有私有凭证、内部数据与隐私信息</b>。向外部网页复制发送前，请务必人工仔细逐行核对下方文本！
+              </div>
+
               <div style={{ fontSize: '12px', color: 'var(--color-muted)' }}>
                 请核对以下即将复制的内容，无证据项已明确标注，你可直接在下方编辑框中微调：
               </div>
@@ -337,6 +354,27 @@ export function TaskPage({
                   resize: 'vertical',
                 }}
               />
+
+              <label
+                style={{
+                  fontSize: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer',
+                  color: 'var(--color-ink)',
+                  fontWeight: 500,
+                  marginTop: '2px',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  data-testid="feedback-manual-review-ack"
+                  checked={manualReviewAck}
+                  onChange={(e) => setManualReviewAck(e.target.checked)}
+                />
+                我已逐行人工核验上述反馈包文本，确认无未脱敏的私有密钥与敏感业务信息
+              </label>
             </div>
 
             <div
@@ -360,11 +398,18 @@ export function TaskPage({
               </button>
               <button
                 type="button"
+                disabled={!manualReviewAck}
                 onClick={handleConfirmCopyFeedback}
                 data-testid="confirm-copy-feedback-button"
-                style={{ fontSize: '13px', padding: '6px 16px', fontWeight: 600 }}
+                style={{
+                  fontSize: '13px',
+                  padding: '6px 16px',
+                  fontWeight: 600,
+                  opacity: manualReviewAck ? 1 : 0.6,
+                  cursor: manualReviewAck ? 'pointer' : 'not-allowed',
+                }}
               >
-                {copiedFeedback ? '✓ 已复制到剪贴板' : '✅ 确认并复制到剪贴板'}
+                {copiedFeedback ? '✓ 已复制到剪贴板' : '✅ 确认已核验并复制到剪贴板'}
               </button>
             </div>
           </div>

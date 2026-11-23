@@ -172,7 +172,8 @@ export function buildChatGPTFeedbackPacket(
   const rawPacket = `# AI Solo Studio 执行结果反馈包 (ChatGPT 协同交接)
 
 > **交接模式**：人工确认交接（Human-in-the-loop transfer · 阶段 P0-2）  
-> **审查说明**：本反馈包由用户在 AI Solo Studio 审查后手动生成与确认，用于粘贴至 ChatGPT 网页继续讨论与指导；非全自动后台双向通信。无证据绝不宣称通过。
+> **审查说明**：本反馈包由用户在 AI Solo Studio 审查后手动生成与确认，用于粘贴至 ChatGPT 网页继续讨论与指导；非全自动后台双向通信。无证据绝不宣称通过。  
+> **隐私安全声明**：本反馈包虽经通用规则初步脱敏，但正则脱敏无法保证 100% 覆盖所有私有凭证与隐私信息；已由用户逐行人工核验确认后发出。
 
 ## 1. 任务背景与当前阶段
 - **所属项目**：${pName}
