@@ -149,6 +149,13 @@ export function ChatGPTView({
         }
       }
 
+      if (!candidate && typeof window !== 'undefined' && typeof window.prompt === 'function') {
+        const manual = window.prompt('未能自动提取到内容。你可以手动粘贴 ChatGPT 生成的方案文本：', '');
+        if (manual && manual.trim().length > 5) {
+          candidate = manual.trim();
+        }
+      }
+
       if (candidate && candidate.length > 5) {
         // 关键安全修复：只装载到预览卡，绝不自动调用 onImportPlanToTask
         loadPlanToPreview(candidate, '提炼内容');
