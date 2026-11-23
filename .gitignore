@@ -2,5 +2,7 @@ node_modules/
 dist-electron/
 dist-renderer/
 .studio/
+.code-review-graph/
+.graphify/
 *.log
 .DS_Store
