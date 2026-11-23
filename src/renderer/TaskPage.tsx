@@ -194,6 +194,7 @@ export function TaskPage({
             projectId={projectId}
             task={task}
             onChanged={onAcceptanceChanged}
+            onBackToProject={onBackToProject}
             {...(onOpenHistory ? { onOpenHistory } : {})}
             {...(onOpenTask ? { onOpenTask } : {})}
           />
