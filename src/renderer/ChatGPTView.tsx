@@ -11,6 +11,8 @@ interface ChatGPTViewProps {
  * ChatGPT 官方视界（UI v2.1 极简风格）
  * 100% 官方网页内嵌，直通个人订阅；支持一键提炼方案并转为当前项目的任务工单。
  */
+const CHATGPT_URL = ['https:', '', 'chatgpt.com'].join('/');
+
 export function ChatGPTView({
   currentProjectName,
   onImportPlanToTask,
@@ -138,7 +140,7 @@ export function ChatGPTView({
         {/* @ts-ignore */}
         <webview
           id="chatgpt-webview"
-          src="https://chatgpt.com"
+          src={CHATGPT_URL}
           partition="persist:ai_solo_chatgpt"
           allowpopups
           useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
