@@ -108,6 +108,7 @@ describe('AISS-P0-2-R2：ChatGPT 网页安全交互与受控协作验收', () =>
       const eventHandlers: Record<string, Function> = {};
       let windowOpenHandler: Function | null = null;
       let permissionRequestHandler: Function | null = null;
+      let permissionCheckHandler: Function | null = null;
       const loadedUrls: string[] = [];
 
       const mockWebContents = {
@@ -120,6 +121,9 @@ describe('AISS-P0-2-R2：ChatGPT 网页安全交互与受控协作验收', () =>
         session: {
           setPermissionRequestHandler: (cb: Function) => {
             permissionRequestHandler = cb;
+          },
+          setPermissionCheckHandler: (cb: Function) => {
+            permissionCheckHandler = cb;
           },
         },
       };
@@ -181,13 +185,17 @@ describe('AISS-P0-2-R2：ChatGPT 网页安全交互与受控协作验收', () =>
       eventHandlers['did-fail-load']!({}, -106, 'ERR_INTERNET_DISCONNECTED', 'https://chatgpt.com', true);
       expect(manager.getLastLoadError()).toContain('ERR_INTERNET_DISCONNECTED (-106)');
 
-      // 6. 系统权限请求测试：全拒绝
+      // 6. 系统权限请求与查询测试：全拒绝（含同步权限查询 setPermissionCheckHandler）
       expect(typeof permissionRequestHandler).toBe('function');
       let grantedResult: boolean | null = null;
       permissionRequestHandler!({}, 'media', (grant: boolean) => {
         grantedResult = grant;
       });
       expect(grantedResult).toBe(false);
+
+      expect(typeof permissionCheckHandler).toBe('function');
+      expect(permissionCheckHandler!({}, 'geolocation', 'https://chatgpt.com')).toBe(false);
+      expect(permissionCheckHandler!({}, 'notifications', 'https://chatgpt.com')).toBe(false);
     });
   });
 
@@ -306,6 +314,44 @@ export function multiply(a: bigint, b: bigint): bigint {
       expect(serialized).toContain('### 原始方案补充说明');
       expect(serialized).toContain('请注意负数边界情况。');
     });
+
+    it('用户清空或修改字段后，序列化绝不悄悄恢复为解析时的旧值，并明确核准要求优于原始参考', () => {
+      // 模拟解析时原本有涉及文件与验收标准
+      const sample = `
+# 任务：重写网络模块
+## 目标
+重写网络模块为 Fetch API
+## 施工范围
+- \`src/old-net.ts\`
+## 验收标准
+- [ ] 移除 axios
+      `;
+      const plan = parsePlanFromText(sample);
+      expect(plan.inScope).toContain('src/old-net.ts');
+
+      // 用户在导入确认前显式清空了施工范围（用户删除了所有文件，要求无限制或由执行体分析）
+      const userEmptyScope: string[] = [];
+      const userEditedCriteria = ['新标准：纯原生 Fetch 实现并通过测试'];
+
+      const serialized = serializePlanForTask({
+        goal: '重写网络模块为 Fetch API（已核准）',
+        inScope: userEmptyScope,
+        criteria: userEditedCriteria,
+        rawText: plan.rawText,
+      });
+
+      // 核心门禁验证：核准要求区域绝不可悄悄复活旧的 'src/old-net.ts'
+      const [approvedPart, refPart] = serialized.split('### 原始方案参考');
+      expect(approvedPart).not.toContain('src/old-net.ts');
+      expect(approvedPart).toContain('【无特定文件限制/由执行体按方案分析决定】');
+      expect(approvedPart).toContain('新标准：纯原生 Fetch 实现并通过测试');
+
+      // 明确优先级声明与原始参考保留
+      expect(serialized).toContain('用户核准要求为最高优先级约束');
+      expect(serialized).toContain('原始方案参考');
+      expect(serialized).toContain('若与上方核准要求冲突，以上方核准要求为准');
+      expect(refPart).toContain('src/old-net.ts'); // 原始信息保留在参考区域，但不影响核准约束
+    });
   });
 
   describe('5. 执行结果结构化反馈包生成与审查脱敏机制（R2 加固）', () => {
@@ -417,11 +463,13 @@ export function multiply(a: bigint, b: bigint): bigint {
       expect(packet).toContain('<!-- AI-SOLO-STUDIO-HANDOFF: mode=human-in-the-loop, stage=P0-2');
     });
 
-    it('反馈包明确声明正则脱敏非 100% 绝对安全保证，必须经人工逐行核对确认', () => {
+    it('未核验前反馈包明确声明正则脱敏非 100% 绝对保证，且不得提前宣称用户已完成核验', () => {
       const packet = buildChatGPTFeedbackPacket(mockTask);
       expect(packet).toContain('隐私安全声明');
       expect(packet).toContain('正则脱敏无法保证 100%');
-      expect(packet).toContain('已由用户逐行人工核验确认后发出');
+      // 严禁在用户实际核对勾选前妄称“已由用户逐行人工核验确认后发出”
+      expect(packet).not.toContain('已由用户逐行人工核验确认后发出');
+      expect(packet).toContain('外发前必须由人工逐行核验确认');
     });
   });
 

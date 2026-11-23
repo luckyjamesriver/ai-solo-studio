@@ -154,10 +154,11 @@ export class ChatGPTCompanionManager {
       }
     });
 
-    // 系统权限拦截：默认拒绝所有系统级权限请求
+    // 系统权限拦截：默认拒绝所有系统级权限请求与同步权限查询
     webContents.session?.setPermissionRequestHandler((_webContents: any, _permission: any, callback: (grant: boolean) => void) => {
       callback(false);
     });
+    webContents.session?.setPermissionCheckHandler(() => false);
   }
 
   public closeCompanion(): { ok: boolean } {

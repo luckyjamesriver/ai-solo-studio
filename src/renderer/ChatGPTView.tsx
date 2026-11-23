@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { extractContentFromWebview } from './webBridge.js';
 import { CHATGPT_WEB_URL, validateApprovedExternalUrl } from './externalServices.js';
 import { parsePlanFromText, serializePlanForTask, type ParsedPlan } from './planParser.js';
@@ -6,7 +6,7 @@ import { studio } from './api.js';
 
 interface ChatGPTViewProps {
   currentProjectName?: string;
-  onImportPlanToTask: (content: string) => void;
+  onImportPlanToTask: (content: string) => Promise<void> | void;
   onBackToProject: () => void;
 }
 
@@ -37,6 +37,30 @@ export function ChatGPTView({
   const [companionActive, setCompanionActive] = useState(false);
   const [companionLoadError, setCompanionLoadError] = useState<string | null>(null);
   const [extractionFallback, setExtractionFallback] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  // 0. 定时与挂载同步伴侣视界状态（感知真实崩溃、加载失败与关闭）
+  useEffect(() => {
+    let active = true;
+    const syncStatus = async () => {
+      try {
+        const s = await studio().getChatGPTCompanionStatus();
+        if (active && s) {
+          setCompanionActive(s.isOpen);
+          setCompanionLoadError(s.lastLoadError || null);
+        }
+      } catch {}
+    };
+    void syncStatus();
+    const timer = setInterval(() => {
+      void syncStatus();
+    }, 1000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   // 1. 打开独立伴侣视界
   const handleOpenCompanion = async () => {
@@ -79,6 +103,7 @@ export function ChatGPTView({
     setEditedConstraintsText(parsed.constraints.join('\n'));
     setEditedNotes('');
     setExtractionFallback(false);
+    setImportError(null);
     setFeedback(`${sourceLabel}已成功解析。请在右侧预览卡中核验并微调目标、施工范围与验收标准，确认无误后方可导入。`);
   };
 
@@ -105,34 +130,47 @@ export function ChatGPTView({
     loadPlanToPreview(rawPlanText, '手动输入内容');
   };
 
-  // 5. 用户主动确认后，才真正导入为 Studio 任务（核心门禁）
-  const handleConfirmImport = () => {
-    if (!previewPlan) return;
-    const scopes = editedScopeText
-      .split('\n')
-      .map((s) => s.trim().replace(/^[-*]\s*/, ''))
-      .filter(Boolean);
-    const criteria = editedCriteriaText
-      .split('\n')
-      .map((c) => c.trim().replace(/^-\s*\[[ xX]\]\s*/, '').replace(/^[-*]\s*/, ''))
-      .filter(Boolean);
-    const constraints = editedConstraintsText
-      .split('\n')
-      .map((c) => c.trim().replace(/^[-*]\s*/, ''))
-      .filter(Boolean);
+  // 5. 用户主动确认后，才真正导入为 Studio 任务（核心门禁与异步安全保护）
+  const handleConfirmImport = async () => {
+    if (!previewPlan || importing) return;
+    setImporting(true);
+    setImportError(null);
+    setFeedback(null);
+    try {
+      // 严格尊重用户编辑：若用户删除/清空输入，如实传入空数组，绝不悄悄复活旧值
+      const scopes = editedScopeText
+        .split('\n')
+        .map((s) => s.trim().replace(/^[-*]\s*/, ''))
+        .filter(Boolean);
+      const criteria = editedCriteriaText
+        .split('\n')
+        .map((c) => c.trim().replace(/^-\s*\[[ xX]\]\s*/, '').replace(/^[-*]\s*/, ''))
+        .filter(Boolean);
+      const constraints = editedConstraintsText
+        .split('\n')
+        .map((c) => c.trim().replace(/^[-*]\s*/, ''))
+        .filter(Boolean);
 
-    const finalContent = serializePlanForTask({
-      goal: editedGoal.trim() || previewPlan.goal || previewPlan.title,
-      inScope: scopes.length > 0 ? scopes : previewPlan.inScope,
-      criteria: criteria.length > 0 ? criteria : previewPlan.criteria,
-      constraints: constraints.length > 0 ? constraints : previewPlan.constraints,
-      codeBlocks: previewPlan.codeBlocks,
-      rawPlanNotes: editedNotes.trim(),
-      rawText: previewPlan.rawText,
-    });
-    onImportPlanToTask(finalContent);
-    setPreviewPlan(null);
-    setFeedback('方案已成功通过确认门禁，已导入为 Studio 任务。');
+      const finalContent = serializePlanForTask({
+        goal: editedGoal.trim() || previewPlan.goal || previewPlan.title,
+        inScope: scopes,
+        criteria: criteria,
+        constraints: constraints,
+        codeBlocks: previewPlan.codeBlocks,
+        rawPlanNotes: editedNotes.trim(),
+        rawText: previewPlan.rawText,
+      });
+
+      await onImportPlanToTask(finalContent);
+      setPreviewPlan(null);
+      setFeedback('方案已成功通过确认门禁，已导入为 Studio 任务。');
+    } catch (e: any) {
+      const msg = e?.message || String(e) || '创建任务失败';
+      setImportError(msg);
+      setFeedback(`创建任务失败: ${msg}。原方案与编辑状态已完整保留，请重试。`);
+    } finally {
+      setImporting(false);
+    }
   };
 
   // 6. 提炼并转为任务按钮（严格遵循确认门禁：先提炼到预览卡，绝不绕过确认）
@@ -352,6 +390,7 @@ export function ChatGPTView({
               <span>网页加载受阻（{companionLoadError}），建议使用系统浏览器。</span>
               <button
                 type="button"
+                data-testid="fallback-to-system-browser-button"
                 onClick={handleOpenSystemBrowser}
                 style={{ fontSize: '11px', padding: '2px 8px' }}
               >
@@ -678,18 +717,49 @@ export function ChatGPTView({
                 ⚠️ 安全门禁控制：点击下方确认按钮仅创建受控任务卡片；必须经你再次核准开工计划后，AI 执行体才会开始施工。
               </div>
 
+              {importError && (
+                <div
+                  data-testid="plan-import-error"
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--color-diff-del-bg)',
+                    color: 'var(--color-warn)',
+                    border: '1px solid var(--color-warn)',
+                    fontSize: '12px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span>创建任务失败：{importError}（原方案与编辑状态已完整保留）</span>
+                  <button
+                    type="button"
+                    data-testid="plan-import-retry-button"
+                    onClick={handleConfirmImport}
+                    disabled={importing}
+                    style={{ fontSize: '11px', padding: '2px 8px' }}
+                  >
+                    重试导入
+                  </button>
+                </div>
+              )}
+
               <button
                 type="button"
                 data-testid="confirm-import-plan-button"
                 onClick={handleConfirmImport}
+                disabled={importing}
                 style={{
                   padding: '8px 16px',
                   fontSize: '13px',
                   fontWeight: 600,
                   marginTop: '4px',
+                  opacity: importing ? 0.7 : 1,
+                  cursor: importing ? 'wait' : 'pointer',
                 }}
               >
-                ✅ 确认导入为 Studio 任务
+                {importing ? '正在创建任务...' : '✅ 确认导入为 Studio 任务'}
               </button>
             </div>
           )}

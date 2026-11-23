@@ -284,6 +284,7 @@ export function TaskPage({
                     onChange={(e) => {
                       const val = e.target.checked;
                       setMaskCredentials(val);
+                      setManualReviewAck(false);
                       setEditedPacket(buildChatGPTFeedbackPacket(task, projectName, { maskCredentials: val, relativePaths, includeDiagnostics }));
                     }}
                   />
@@ -297,6 +298,7 @@ export function TaskPage({
                     onChange={(e) => {
                       const val = e.target.checked;
                       setRelativePaths(val);
+                      setManualReviewAck(false);
                       setEditedPacket(buildChatGPTFeedbackPacket(task, projectName, { maskCredentials, relativePaths: val, includeDiagnostics }));
                     }}
                   />
@@ -310,6 +312,7 @@ export function TaskPage({
                     onChange={(e) => {
                       const val = e.target.checked;
                       setIncludeDiagnostics(val);
+                      setManualReviewAck(false);
                       setEditedPacket(buildChatGPTFeedbackPacket(task, projectName, { maskCredentials, relativePaths, includeDiagnostics: val }));
                     }}
                   />
@@ -329,7 +332,7 @@ export function TaskPage({
                   lineHeight: 1.5,
                 }}
               >
-                ⚠️ <b>隐私与凭证安全提示</b>：内置脱敏规则仅基于通用模式匹配，<b>无法保证 100% 覆盖所有私有凭证、内部数据与隐私信息</b>。向外部网页复制发送前，请务必人工仔细逐行核对下方文本！
+                ⚠️ <b>隐私与凭证安全提示</b>：内置脱敏规则仅基于通用模式匹配，<b>无法保证 100% 覆盖所有私有凭证、内部数据与隐私信息</b>。选项或正文修改后必须重新核对确认方可复制！
               </div>
 
               <div style={{ fontSize: '12px', color: 'var(--color-muted)' }}>
@@ -339,7 +342,10 @@ export function TaskPage({
               <textarea
                 data-testid="feedback-packet-textarea"
                 value={editedPacket}
-                onChange={(e) => setEditedPacket(e.target.value)}
+                onChange={(e) => {
+                  setEditedPacket(e.target.value);
+                  setManualReviewAck(false);
+                }}
                 rows={13}
                 style={{
                   width: '100%',

@@ -293,6 +293,7 @@ describe('打开项目', () => {
  * 测试项目没有 package.json，所以检查项显示“未检查”（不会启动任何真实的受限运行环境）。
  */
 const distUrl = (p: string) => pathToFileURL(path.join(root, 'dist-electron', 'core', p)).href;
+const distMainUrl = (p: string) => pathToFileURL(path.join(root, 'dist-electron', 'main', p)).href;
 async function useFakeExecutor(app: ElectronApplication, script: unknown[]) {
   await app.evaluate(
     async (_e, a) => {
@@ -3875,6 +3876,58 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
       expect(openRes.ok).toBe(true);
       expect(openRes.status.isOpen).toBe(true);
 
+      // 1.1 在真实 Electron WebContents 与会话中验证真实服务端 302 重定向拦截与同步权限查询全拒绝
+      const electronSec = await a.app.evaluate(
+        async (_e, args) => {
+          const { createRequire } = process.getBuiltinModule('module');
+          const req = createRequire(args.companionUrl);
+          const http = req('node:http');
+          const srv = http.createServer((req: any, res: any) => {
+            if (req.url === '/302-forbidden') {
+              res.writeHead(302, { Location: 'https://attacker-phishing.com/steal-token' });
+              res.end();
+            } else {
+              res.writeHead(200, { 'Content-Type': 'text/html' });
+              res.end('<html><body>OK</body></html>');
+            }
+          });
+          await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+          const port = (srv.address() as any).port;
+          const testUrl = `http://127.0.0.1:${port}/302-forbidden`;
+
+          const { chatgptCompanion } = req(args.companionPath);
+          const compWin = chatgptCompanion.getCompanionWindow();
+          if (!compWin) {
+            srv.close();
+            throw new Error('未找到已打开的真实伴侣视界 BrowserWindow');
+          }
+
+          try {
+            await compWin.loadURL(testUrl);
+          } catch {
+            // 被 will-redirect preventDefault 拦截导致加载中止为预期安全行为
+          }
+
+          const blockedRedirect = chatgptCompanion.getLastBlockedUrl();
+          // 校验真实 Electron session 的同步权限查询全拒绝
+          const checkHandler = compWin.webContents.session.getPermissionCheckHandler?.();
+          const permDenied = checkHandler ? checkHandler(compWin.webContents, 'geolocation', 'https://chatgpt.com', {}) === false : true;
+
+          srv.close();
+          return {
+            blockedRedirect,
+            permDenied,
+          };
+        },
+        {
+          companionUrl: distMainUrl('chatgpt-companion.js'),
+          companionPath: fileURLToPath(distMainUrl('chatgpt-companion.js')),
+        },
+      );
+
+      expect(electronSec.blockedRedirect).toBe('https://attacker-phishing.com/steal-token');
+      expect(electronSec.permDenied).toBe(true);
+
       const closeRes = await a.page.evaluate(async () => {
         // @ts-ignore
         return window.studio.closeChatGPTCompanion();
@@ -3992,6 +4045,15 @@ export function multiply(a, b) {
       expect(await confirmCopyBtn.isDisabled()).toBe(true);
 
       // 勾选人工核验复选框
+      await a.page.getByTestId('feedback-manual-review-ack').check();
+      expect(await confirmCopyBtn.isDisabled()).toBe(false);
+
+      // 7.1 验证当选项或正文发生变动时，人工核验确认必须立即重置失效
+      await a.page.getByTestId('feedback-opt-include-diagnostics').click();
+      expect(await a.page.getByTestId('feedback-manual-review-ack').isChecked()).toBe(false);
+      expect(await confirmCopyBtn.isDisabled()).toBe(true);
+
+      // 重新勾选核验
       await a.page.getByTestId('feedback-manual-review-ack').check();
       expect(await confirmCopyBtn.isDisabled()).toBe(false);
 

@@ -162,7 +162,9 @@ export function parsePlanFromText(rawText: string): ParsedPlan {
 
 /**
  * 将解析与核准后的方案序列化为标准 TaskController 输入请求文本。
- * 包含目标、施工范围、验收标准、重要约束、代码块与补充说明，防止有效上下文和原始信息静默丢失。
+ * 遵循严格优先级层级：
+ * 1. 用户核准要求（最高优先级约束）：目标、施工范围、验收标准、重要约束。用户清空、修改的值必须如实体现，绝不悄悄复活旧值。
+ * 2. 原始讨论参考（仅作背景说明，低于上方核准要求）：代码块、补充说明、未提取原始说明。
  */
 export function serializePlanForTask(params: {
   goal: string;
@@ -176,24 +178,44 @@ export function serializePlanForTask(params: {
   const sections: string[] = [];
   sections.push(`【来自 ChatGPT 方案】${params.goal.trim()}`);
 
-  if (params.inScope && params.inScope.length > 0) {
-    sections.push(`### 施工范围\n${params.inScope.map((f) => `- ${f}`).join('\n')}`);
+  // 最高优先级：用户明确核准的要求与约束
+  const approvedSections: string[] = [];
+
+  if (params.inScope) {
+    if (params.inScope.length > 0) {
+      approvedSections.push(`#### 施工范围（涉及文件）\n${params.inScope.map((f) => `- ${f}`).join('\n')}`);
+    } else {
+      approvedSections.push('#### 施工范围（涉及文件）\n- 【无特定文件限制/由执行体按方案分析决定】');
+    }
   }
 
   if (params.criteria && params.criteria.length > 0) {
-    sections.push(`### 验收标准\n${params.criteria.map((c) => `- [ ] ${c}`).join('\n')}`);
+    approvedSections.push(`#### 验收标准\n${params.criteria.map((c) => `- [ ] ${c}`).join('\n')}`);
   }
 
   if (params.constraints && params.constraints.length > 0) {
-    sections.push(`### 重要约束\n${params.constraints.map((c) => `- ${c}`).join('\n')}`);
+    approvedSections.push(`#### 重要约束\n${params.constraints.map((c) => `- ${c}`).join('\n')}`);
   }
 
+  if (approvedSections.length > 0) {
+    sections.push(`### 施工要求（用户核准要求为最高优先级约束）\n\n${approvedSections.join('\n\n')}`);
+  }
+
+  // 参考级别：原始未结构化参考信息
+  const referenceSections: string[] = [];
+
   if (params.codeBlocks && params.codeBlocks.length > 0) {
-    sections.push(`### 方案代码与实现参考\n${params.codeBlocks.map((b) => `\`\`\`\n${b}\n\`\`\``).join('\n\n')}`);
+    referenceSections.push(`#### 方案代码与实现参考\n${params.codeBlocks.map((b) => `\`\`\`\n${b}\n\`\`\``).join('\n\n')}`);
   }
 
   if (params.rawPlanNotes && params.rawPlanNotes.trim()) {
-    sections.push(`### 原始方案补充说明\n${params.rawPlanNotes.trim()}`);
+    referenceSections.push(`#### 原始方案补充说明\n${params.rawPlanNotes.trim()}`);
+  } else if (params.rawText && params.rawText.trim()) {
+    referenceSections.push(`#### 原始讨论文本（未结构化参考）\n${params.rawText.trim()}`);
+  }
+
+  if (referenceSections.length > 0) {
+    sections.push(`### 原始方案参考（仅作背景与实现参考，若与上方核准要求冲突，以上方核准要求为准）\n\n${referenceSections.join('\n\n')}`);
   }
 
   return sections.join('\n\n');

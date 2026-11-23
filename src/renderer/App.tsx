@@ -591,10 +591,10 @@ export function App() {
                 ? (projectsById[screen.projectId]?.name ?? screen.projectId)
                 : (workbench.projects[0]?.name ?? undefined)
             }
-            onImportPlanToTask={(content) => {
+            onImportPlanToTask={async (content) => {
               const targetPid = screen.projectId ?? workbench.projects[0]?.id;
               if (targetPid) {
-                createTask(targetPid, content);
+                await createTask(targetPid, content);
               } else {
                 setNotice('已提炼方案。请先打开或选择一个项目后再创建任务！');
                 navigate({ kind: 'workbench' });
