@@ -2,16 +2,20 @@
  * 方案结构化解析模块（ChatGPT -> Studio）
  * 
  * 职责：
- * 1. 从 ChatGPT 讨论生成的文本、Markdown 或用户输入中提炼出结构化的方案对象（目标、验收标准、涉及文件、代码块）。
- * 2. 提供容错机制：无论是规整的 Markdown 蓝图还是非结构化的口语化方案，均能提取出可靠的初始任务模型。
- * 3. 供方案导入预览卡片使用，确保在用户核准前不创建任务、不自动施工。
+ * 1. 从 ChatGPT 讨论生成的文本、Markdown 或用户输入中提炼出结构化的方案对象（目标、验收标准、涉及文件、重要约束、代码块）。
+ * 2. 对齐 TaskController 和 PlanCard 协议，不建立平行任务模型。
+ * 3. 严格合规：无法确定的文件范围和验收项必须显式标记为「【待确认】」，绝不擅自补全为已批准的硬性约束。
+ * 4. 供方案导入预览卡片使用，确保在用户核准前不创建任务、不自动施工。
  */
 
 export interface ParsedPlan {
   readonly title: string;
   readonly goal: string;
   readonly criteria: readonly string[];
+  readonly criteriaConfirmed: boolean;
   readonly inScope: readonly string[];
+  readonly scopeConfirmed: boolean;
+  readonly constraints: readonly string[];
   readonly codeBlocks: readonly string[];
   readonly rawText: string;
 }
@@ -36,8 +40,11 @@ export function parsePlanFromText(rawText: string): ParsedPlan {
     return {
       title: '新建任务',
       goal: '',
-      criteria: ['按要求完成实现并通过相关测试与检查'],
-      inScope: [],
+      criteria: ['【待确认】按方案要求完成实现并通过相关测试与检查'],
+      criteriaConfirmed: false,
+      inScope: ['【待确认】未指定涉及文件范围'],
+      scopeConfirmed: false,
+      constraints: [],
       codeBlocks: [],
       rawText: '',
     };
@@ -49,12 +56,12 @@ export function parsePlanFromText(rawText: string): ParsedPlan {
   let title = '';
   let goal = '';
 
-  const titleMatch = text.match(/(?:^|\n)(?:#+\s*任务[:：]?|【来自\s*ChatGPT\s*网页方案】|【方案】|任务[:：])\s*([^\n]+)/i);
+  const titleMatch = text.match(/(?:^|\n)(?:#+\s*任务[:：]?|【来自\s*ChatGPT\s*(?:网页)?方案】|【方案】|任务[:：])\s*([^\n]+)/i);
   if (titleMatch?.[1]?.trim()) {
     title = titleMatch[1].replace(/^[：:\s]+/, '').trim();
   }
 
-  const goalMatch = text.match(/(?:^|\n)(?:#+\s*目标[:：]?|目标[:：]|一、任务目标|【目标】)\s*([^\n]+(?:\n(?![#-]|验收|涉及)[^\n]+)*)/i);
+  const goalMatch = text.match(/(?:^|\n)(?:#+\s*目标[:：]?|目标[:：]|一、任务目标|【目标】)\s*([^\n]+(?:\n(?![#-]|验收|涉及|范围|约束)[^\n]+)*)/i);
   if (goalMatch?.[1]?.trim()) {
     goal = goalMatch[1].replace(/^[：:\s]+/, '').trim();
   }
@@ -72,27 +79,47 @@ export function parsePlanFromText(rawText: string): ParsedPlan {
 
   // 2. 尝试提取条目化验收标准
   const criteria: string[] = [];
+  let criteriaConfirmed = false;
   const criteriaSectionMatch = text.match(/(?:#+\s*验收标准|验收标准[:：]|二、验收标准|【验收标准】)([\s\S]*?)(?:\n#+|\n===|\n---|$)/i);
-  const criteriaSource = criteriaSectionMatch?.[1] ?? text;
+  const criteriaSource = criteriaSectionMatch?.[1];
 
-  // 匹配 "- [ ] ...", "- [x] ...", "- ...", "* ...", "1. ...", "1) ..."
-  const itemMatches = criteriaSource.matchAll(/(?:^|\n)\s*(?:-\s*\[[ xX]\]|-\s+|\*\s+|\d+[.)]\s+)([^\n]+)/g);
-  for (const match of itemMatches) {
-    const item = match[1]?.trim();
-    if (item && item.length > 2 && !item.startsWith('http') && !item.startsWith('修改文件')) {
-      criteria.push(item);
+  if (criteriaSource && criteriaSource.trim()) {
+    const itemMatches = criteriaSource.matchAll(/(?:^|\n)\s*(?:-\s*\[[ xX]\]|-\s+|\*\s+|\d+[.)]\s+)([^\n]+)/g);
+    for (const match of itemMatches) {
+      const item = match[1]?.trim();
+      if (item && item.length > 2 && !item.startsWith('http')) {
+        criteria.push(item);
+      }
     }
   }
 
-  // 兜底验收标准
-  if (criteria.length === 0) {
-    criteria.push('按方案要求完成代码修改');
-    criteria.push('运行类型检查、单元测试并通过验证');
+  if (criteria.length > 0) {
+    criteriaConfirmed = true;
+  } else {
+    // 从全文尝试匹配 checklist
+    const generalMatches = text.matchAll(/(?:^|\n)\s*-\s*\[[ xX]\]\s*([^\n]+)/g);
+    for (const match of generalMatches) {
+      const item = match[1]?.trim();
+      if (item && item.length > 2) {
+        criteria.push(item);
+      }
+    }
+    if (criteria.length > 0) {
+      criteriaConfirmed = true;
+    } else {
+      criteriaConfirmed = false;
+      criteria.push('【待确认】按方案要求完成代码修改');
+      criteria.push('【待确认】运行类型检查、单元测试并通过验证');
+    }
   }
 
-  // 3. 提取涉及文件 / 作用域 (例如 `src/...` 或 filename.ext)
+  // 3. 提取涉及文件 / 施工范围 (例如 `src/...` 或 filename.ext)
   const inScope: string[] = [];
-  const fileMatches = text.matchAll(/(?:^|\s|`)((?:src|tests|e2e|docs|scripts)\/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+|[a-zA-Z0-9_-]+\.(?:mjs|cjs|ts|tsx|js|jsx|json|md))(?:`|\s|$)/g);
+  let scopeConfirmed = false;
+  const scopeSectionMatch = text.match(/(?:#+\s*(?:施工范围|涉及文件|改动文件)|(?:施工范围|涉及文件)[:：])([\s\S]*?)(?:\n#+|\n===|\n---|$)/i);
+  const scopeSource = scopeSectionMatch?.[1] ?? text;
+
+  const fileMatches = scopeSource.matchAll(/(?:^|\s|`|')((?:src|tests|e2e|docs|scripts)\/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+|[a-zA-Z0-9_-]+\.(?:mjs|cjs|ts|tsx|js|jsx|json|md))(?:`|'|\s|$)/g);
   for (const match of fileMatches) {
     const f = match[1]?.trim();
     if (f && !inScope.includes(f)) {
@@ -100,12 +127,64 @@ export function parsePlanFromText(rawText: string): ParsedPlan {
     }
   }
 
+  if (inScope.length > 0) {
+    scopeConfirmed = true;
+  } else {
+    scopeConfirmed = false;
+    inScope.push('【待确认】由执行体在施工前分析并确认具体受影响文件');
+  }
+
+  // 4. 提取重要约束
+  const constraints: string[] = [];
+  const constraintsSectionMatch = text.match(/(?:#+\s*(?:重要约束|技术约束|安全约束|约束条件)|(?:重要约束|技术约束)[:：])([\s\S]*?)(?:\n#+|\n===|\n---|$)/i);
+  if (constraintsSectionMatch?.[1]) {
+    const cMatches = constraintsSectionMatch[1].matchAll(/(?:^|\n)\s*(?:-\s*|\*\s+|\d+[.)]\s+)([^\n]+)/g);
+    for (const match of cMatches) {
+      const item = match[1]?.trim();
+      if (item && item.length > 2) {
+        constraints.push(item);
+      }
+    }
+  }
+
   return {
     title,
     goal,
     criteria,
+    criteriaConfirmed,
     inScope,
+    scopeConfirmed,
+    constraints,
     codeBlocks,
     rawText: text,
   };
+}
+
+/**
+ * 将解析与核准后的方案序列化为标准 TaskController 输入请求文本。
+ * 包含目标、施工范围、验收标准与重要约束，防止有效上下文丢失。
+ */
+export function serializePlanForTask(params: {
+  goal: string;
+  inScope: readonly string[];
+  criteria: readonly string[];
+  constraints?: readonly string[];
+  rawText?: string;
+}): string {
+  const sections: string[] = [];
+  sections.push(`【来自 ChatGPT 方案】${params.goal.trim()}`);
+
+  if (params.inScope && params.inScope.length > 0) {
+    sections.push(`### 施工范围\n${params.inScope.map((f) => `- ${f}`).join('\n')}`);
+  }
+
+  if (params.criteria && params.criteria.length > 0) {
+    sections.push(`### 验收标准\n${params.criteria.map((c) => `- [ ] ${c}`).join('\n')}`);
+  }
+
+  if (params.constraints && params.constraints.length > 0) {
+    sections.push(`### 重要约束\n${params.constraints.map((c) => `- ${c}`).join('\n')}`);
+  }
+
+  return sections.join('\n\n');
 }

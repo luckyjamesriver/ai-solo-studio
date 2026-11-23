@@ -16,6 +16,8 @@ export interface ChatGPTCompanionStatus {
   isOpen: boolean;
   url: string;
   authStatus: 'LIVE_LOGIN_NOT_VERIFIED';
+  lastLoadError: string | null;
+  lastBlockedUrl: string | null;
 }
 
 /**
@@ -35,18 +37,24 @@ export function isAllowedChatGPTUrl(rawUrl: string): boolean {
 }
 
 /**
- * ChatGPT 独立伴侣视界管理器（P0-2）
+ * ChatGPT 独立伴侣视界管理器（P0-2-R2 安全加固版）
  * 
  * 安全架构：
  * 1. 独立 BrowserWindow：与主应用窗口完全隔离，主应用保持 webviewTag: false。
  * 2. 强沙箱与零特权：启用 contextIsolation: true、nodeIntegration: false、sandbox: true，绝不注入主应用 preload。
  * 3. 独立持久化分区：使用 persist:ai_solo_chatgpt，Cookie 与本地存储同主窗口严格隔离。
- * 4. 受控导航与弹窗：所有弹窗一律 deny，白名单内同窗加载，白名单外一律委托系统默认浏览器（shell.openExternal）。
+ * 4. 受控导航与弹窗（R2 关键加固）：
+ *    - 远程网页绝对无法通过 window.open 或页面重定向静默启动宿主系统浏览器（全面移除静默 shell.openExternal）。
+ *    - 允许白名单内的官方页面与 OAuth 页面在伴侣窗口内加载。
+ *    - 白名单外弹窗与跳转一律拦截拒绝并记录审计日志。
  * 5. 权限请求全拒绝：默认拦截并拒绝任何敏感系统权限请求（摄像头、麦克风、地理位置等）。
  * 6. 诚实身份与合规：绝不伪装 User-Agent、不篡改 Cookie，真实网页登录状态如实标记为 LIVE_LOGIN_NOT_VERIFIED。
+ * 7. 页面加载错误感知：监听 did-fail-load，感知网络阻断或服务商屏蔽，为用户提供诚实反馈与系统浏览器安全兜底。
  */
 export class ChatGPTCompanionManager {
   private companionWindow: BrowserWindow | null = null;
+  private lastLoadError: string | null = null;
+  private lastBlockedUrl: string | null = null;
 
   public openCompanion(): { ok: boolean; status: ChatGPTCompanionStatus } {
     if (this.companionWindow && !this.companionWindow.isDestroyed()) {
@@ -56,6 +64,9 @@ export class ChatGPTCompanionManager {
       this.companionWindow.focus();
       return { ok: true, status: this.getStatus() };
     }
+
+    this.lastLoadError = null;
+    this.lastBlockedUrl = null;
 
     const win = new BrowserWindow({
       width: 1080,
@@ -74,27 +85,32 @@ export class ChatGPTCompanionManager {
 
     this.companionWindow = win;
 
-    // 弹窗拦截：禁止任意新弹窗，受信任域在伴侣窗口内打开，外部链接交由系统默认浏览器
+    // 弹窗拦截（R2 加固）：白名单内在当前窗口载入，非白名单一律拒绝；绝不自动唤起外部应用！
     win.webContents.setWindowOpenHandler(({ url }) => {
       if (isAllowedChatGPTUrl(url)) {
         void win.loadURL(url);
-      } else if (url.startsWith('https://')) {
-        void shell.openExternal(url);
+      } else {
+        this.lastBlockedUrl = url;
       }
       return { action: 'deny' };
     });
 
-    // 页面跳转拦截：禁止跳向未受信任的第三方站点
+    // 页面跳转拦截（R2 加固）：禁止跳出白名单域名；绝不自动唤起外部应用！
     win.webContents.on('will-navigate', (event, navigationUrl) => {
       if (!isAllowedChatGPTUrl(navigationUrl)) {
         event.preventDefault();
-        if (navigationUrl.startsWith('https://')) {
-          void shell.openExternal(navigationUrl);
-        }
+        this.lastBlockedUrl = navigationUrl;
       }
     });
 
-    // 系统权限拦截：默认拒绝所有权限请求
+    // 页面加载失败感知：诚实记录错误并向 UI 报告
+    win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (isMainFrame) {
+        this.lastLoadError = `${errorDescription} (${errorCode}) @ ${validatedURL}`;
+      }
+    });
+
+    // 系统权限拦截：默认拒绝所有系统级权限请求
     win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
       callback(false);
     });
@@ -122,6 +138,8 @@ export class ChatGPTCompanionManager {
       isOpen,
       url: CHATGPT_COMPANION_URL,
       authStatus: 'LIVE_LOGIN_NOT_VERIFIED',
+      lastLoadError: this.lastLoadError,
+      lastBlockedUrl: this.lastBlockedUrl,
     };
   }
 
@@ -132,6 +150,14 @@ export class ChatGPTCompanionManager {
 
   public getCompanionWindow(): BrowserWindow | null {
     return this.companionWindow;
+  }
+
+  public getLastBlockedUrl(): string | null {
+    return this.lastBlockedUrl;
+  }
+
+  public getLastLoadError(): string | null {
+    return this.lastLoadError;
   }
 }
 

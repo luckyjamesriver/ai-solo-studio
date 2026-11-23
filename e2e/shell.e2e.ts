@@ -3802,6 +3802,10 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
       });
       await a.page.getByRole('button', { name: '📥 提炼方案并转为任务' }).click();
 
+      // 阶段 P0-2-R2：统一受控确认门禁，提炼后必须经确认卡核准方可创建任务
+      await a.page.getByTestId('plan-import-preview').waitFor();
+      await a.page.getByTestId('confirm-import-plan-button').click();
+
       // 跳过讨论直接进入开工计划
       await a.page.getByTestId('skip-discussion-button').waitFor();
       await a.page.getByTestId('skip-discussion-button').click();
@@ -3841,6 +3845,127 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
 
       // 校验物理文件落盘
       expect(fs.readFileSync(path.join(proj, 'calculator.mjs'), 'utf8')).toContain('multiply');
+    });
+  });
+
+  describe('阶段 P0-2 · ChatGPT 伴侣窗口安全控制、方案受控导入门禁与审查反馈包全流程闭环（E2E）', () => {
+    it('伴侣窗口生命周期与安全状态、方案输入与防绕过门禁失效、微调确认建任务与反馈包审查复制闭环', async () => {
+      const proj = gitProject('proj-p0-2-e2e', {
+        'package.json': JSON.stringify({ name: 'proj-p0-2-e2e', type: 'module' }),
+        'index.html': '<h1>P0-2 Test</h1>\n',
+      });
+
+      const a = await launch(mk('user-p0-2'));
+      await a.page.getByRole('button', { name: '暂不同意，先看看' }).click();
+      await a.page.getByTestId('onboarding-continue').click();
+      await a.page.getByTestId('workbench').waitFor();
+
+      // 1. 验证独立伴侣视界 IPC 状态与生命周期
+      const statusInit = await a.page.evaluate(async () => {
+        // @ts-ignore
+        return window.studio.getChatGPTCompanionStatus();
+      });
+      expect(statusInit.isOpen).toBe(false);
+      expect(statusInit.authStatus).toBe('LIVE_LOGIN_NOT_VERIFIED');
+
+      const openRes = await a.page.evaluate(async () => {
+        // @ts-ignore
+        return window.studio.openChatGPTCompanion();
+      });
+      expect(openRes.ok).toBe(true);
+      expect(openRes.status.isOpen).toBe(true);
+
+      const closeRes = await a.page.evaluate(async () => {
+        // @ts-ignore
+        return window.studio.closeChatGPTCompanion();
+      });
+      expect(closeRes.ok).toBe(true);
+
+      // 2. 打开项目并切换到 ChatGPT 官方视界
+      await stubDialog(a.app, proj);
+      await a.page.getByTestId('nav-open-project').click();
+      await a.page.getByTestId('project').waitFor();
+
+      await a.page.getByTestId('nav-chatgpt-web').click();
+      await a.page.waitForSelector('#chatgpt-webview');
+
+      // 验证诚实标注状态与项目名称
+      const authBadge = await a.page.getByTestId('chatgpt-auth-status').innerText();
+      expect(authBadge).toContain('LIVE_LOGIN_NOT_VERIFIED');
+      const curProjText = await a.page.getByTestId('chatgpt-current-project').innerText();
+      expect(curProjText).toContain('proj-p0-2-e2e');
+
+      // 3. 输入方案文本并解析
+      const rawInput = a.page.getByTestId('chatgpt-raw-input');
+      await rawInput.fill(`
+# 任务：编写大整数加法函数
+## 目标
+实现大整数加法函数 add_big.mjs 并通过验证
+## 施工范围
+- \`src/add_big.mjs\`
+## 验收标准
+- [ ] 导出 addBig 函数
+- [ ] 边界测试全部通过
+## 重要约束
+- 必须基于 Node 22 原生特性
+      `);
+
+      await a.page.getByTestId('parse-plan-button').click();
+      const previewCard = a.page.getByTestId('plan-import-preview');
+      await previewCard.waitFor({ state: 'visible' });
+
+      // 验证解析出的内容
+      const goalInput = a.page.getByTestId('preview-edited-goal');
+      expect(await goalInput.inputValue()).toContain('实现大整数加法函数 add_big.mjs');
+
+      // 4. 关键门禁测试：修改原始文本后，旧预览与旧确认立即失效
+      await rawInput.fill('输入已被用户修改');
+      expect(await previewCard.isVisible()).toBe(false);
+
+      // 5. 重新输入有效方案并解析
+      await rawInput.fill(`
+# 任务：实现精确乘法工具
+## 目标
+实现可靠乘法工具 multiply.mjs
+## 施工范围
+- \`src/multiply.mjs\`
+## 验收标准
+- [ ] 导出 multiply(a, b)
+      `);
+      await a.page.getByTestId('parse-plan-button').click();
+      await previewCard.waitFor({ state: 'visible' });
+
+      // 微调目标
+      await goalInput.fill('实现可靠乘法工具 multiply.mjs（已微调）');
+
+      // 6. 显式确认导入，任务受控创建
+      await a.page.getByTestId('confirm-import-plan-button').click();
+
+      // 验证跳转至讨论/计划页，且任务标题已为微调后的目标
+      await a.page.getByTestId('task-page').waitFor();
+      const taskTitle = await a.page.getByTestId('task-title').innerText();
+      expect(taskTitle).toContain('实现可靠乘法工具 multiply.mjs（已微调）');
+
+      // 7. 验证反馈包内容审查与脱敏模态框
+      const copyBtn = a.page.getByTestId('copy-chatgpt-feedback');
+      await copyBtn.waitFor({ state: 'visible' });
+      await copyBtn.click();
+
+      const reviewModal = a.page.getByTestId('feedback-review-modal');
+      await reviewModal.waitFor({ state: 'visible' });
+
+      const textarea = a.page.getByTestId('feedback-packet-textarea');
+      const packetContent = await textarea.inputValue();
+      expect(packetContent).toContain('Human-in-the-loop transfer · 阶段 P0-2');
+      expect(packetContent).toContain('### 宿主真实检查事实 (Host Verified Facts)');
+      expect(packetContent).toContain('无宿主自动化测试事实记录');
+
+      // 确认并复制
+      await a.page.getByTestId('confirm-copy-feedback-button').click();
+      await a.page.waitForFunction(() => {
+        const btn = document.querySelector('[data-testid="copy-chatgpt-feedback"]');
+        return btn?.textContent?.includes('已复制反馈包');
+      });
     });
   });
 });

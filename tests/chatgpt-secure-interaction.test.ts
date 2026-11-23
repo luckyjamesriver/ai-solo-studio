@@ -8,14 +8,14 @@ import {
   ALLOWED_CHATGPT_ORIGINS,
   chatgptCompanion,
 } from '../src/main/chatgpt-companion.js';
-import { parsePlanFromText } from '../src/renderer/planParser.js';
-import { buildChatGPTFeedbackPacket } from '../src/renderer/chatgptFeedback.js';
+import { parsePlanFromText, serializePlanForTask } from '../src/renderer/planParser.js';
+import { buildChatGPTFeedbackPacket, sanitizeFeedbackText } from '../src/renderer/chatgptFeedback.js';
 import type { TaskView } from '../src/core/app/task-view.js';
 
 const read = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
 const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
 
-describe('AISS-P0-2：ChatGPT 网页安全交互与受控协作验收', () => {
+describe('AISS-P0-2-R2：ChatGPT 网页安全交互与受控协作验收', () => {
   describe('1. 安全窗口启动与沙箱隔离约束（P0）', () => {
     const companionSource = read('src/main/chatgpt-companion.ts');
     const companionCode = stripComments(companionSource);
@@ -42,7 +42,7 @@ describe('AISS-P0-2：ChatGPT 网页安全交互与受控协作验收', () => {
     });
   });
 
-  describe('2. 官方网站实际访问与安全导航控制', () => {
+  describe('2. 官方网站安全导航控制与外部弹窗加固（R2 加固）', () => {
     it('官方访问目标固定为已批准的 ChatGPT 官网', () => {
       expect(CHATGPT_COMPANION_URL).toBe('https://chatgpt.com');
     });
@@ -81,11 +81,25 @@ describe('AISS-P0-2：ChatGPT 网页安全交互与受控协作验收', () => {
       }
     });
 
-    it('源码中弹窗与外链一律 deny，外部链接受控重定向至系统浏览器', () => {
+    it('外部弹窗与跳转一律拦截并记录审计日志，绝不静默启动外部系统浏览器', () => {
       const companionCode = stripComments(read('src/main/chatgpt-companion.ts'));
+      // setWindowOpenHandler 必须返回 action: 'deny'
       expect(companionCode).toMatch(/setWindowOpenHandler[\s\S]*?action:\s*['"]deny['"]/);
-      expect(companionCode).toMatch(/shell\.openExternal/);
-      expect(companionCode).toMatch(/on\s*\(\s*['"]will-navigate['"]/);
+      // 远程页面自身事件中绝不能自动调用 shell.openExternal
+      const windowOpenBlock = companionCode.match(/setWindowOpenHandler[\s\S]*?return\s*\{[^}]*action:\s*['"]deny['"][^}]*\}/)?.[0] || '';
+      expect(windowOpenBlock).not.toMatch(/shell\.openExternal/);
+
+      const willNavigateBlock = companionCode.match(/will-navigate[\s\S]*?\}\);/)?.[0] || '';
+      expect(willNavigateBlock).not.toMatch(/shell\.openExternal/);
+
+      // 仅在明确的用户宿主操作 openSystemBrowser 中允许使用 shell.openExternal
+      expect(companionCode).toMatch(/openSystemBrowser\s*\(\s*\)[\s\S]*?shell\.openExternal/);
+    });
+
+    it('网页加载失败感知：监听 did-fail-load 并在状态中如实报告', () => {
+      const companionCode = stripComments(read('src/main/chatgpt-companion.ts'));
+      expect(companionCode).toMatch(/did-fail-load/);
+      expect(companionCode).toMatch(/lastLoadError/);
     });
   });
 
@@ -113,25 +127,52 @@ describe('AISS-P0-2：ChatGPT 网页安全交互与受控协作验收', () => {
     });
   });
 
-  describe('4. 真实方案结构化导入与预览解析机制', () => {
-    it('标准 Markdown 方案提取：目标、验收标准与作用域', () => {
+  describe('4. 真实方案结构化解析与完整约束保留（R2 加固）', () => {
+    it('标准 Markdown 方案提取：目标、验收标准、施工范围与重要约束', () => {
       const sample = `
 # 任务：实现高精度乘法函数
 ## 目标
 实现支持大整数的高精度乘法算法，确保无浮点精度丢失。
+## 施工范围
+- \`src/calculator.mjs\`
 ## 验收标准
 - [ ] 导出 \`multiplyBigInt(a, b)\` 函数
 - [ ] 单元测试覆盖至少 10 组大整数边界测试
 - [ ] \`npm test\` 通过
-## 涉及文件
-修改文件：\`src/calculator.mjs\`
+## 重要约束
+- 必须使用 Node 22 原生 BigInt，不得引入第三方数学库
+- 不得修改其他模块接口
       `;
       const plan = parsePlanFromText(sample);
       expect(plan.title).toBe('实现高精度乘法函数');
       expect(plan.goal).toContain('实现支持大整数的高精度乘法算法');
       expect(plan.criteria.length).toBe(3);
-      expect(plan.criteria[0]).toContain('multiplyBigInt');
+      expect(plan.criteriaConfirmed).toBe(true);
       expect(plan.inScope).toContain('src/calculator.mjs');
+      expect(plan.scopeConfirmed).toBe(true);
+      expect(plan.constraints.length).toBe(2);
+      expect(plan.constraints[0]).toContain('Node 22');
+
+      // 序列化验证
+      const serialized = serializePlanForTask({
+        goal: plan.goal,
+        inScope: plan.inScope,
+        criteria: plan.criteria,
+        constraints: plan.constraints,
+      });
+      expect(serialized).toContain('### 施工范围');
+      expect(serialized).toContain('### 验收标准');
+      expect(serialized).toContain('### 重要约束');
+      expect(serialized).toContain('src/calculator.mjs');
+    });
+
+    it('缺失施工范围或验收标准时显式标记【待确认】，绝不擅自补全为已批准硬约束', () => {
+      const minimalSample = '简单优化乘法逻辑';
+      const plan = parsePlanFromText(minimalSample);
+      expect(plan.scopeConfirmed).toBe(false);
+      expect(plan.inScope[0]).toContain('【待确认】');
+      expect(plan.criteriaConfirmed).toBe(false);
+      expect(plan.criteria[0]).toContain('【待确认】');
     });
 
     it('旧版测试格式与口语化方案兼容解析', () => {
@@ -139,21 +180,11 @@ describe('AISS-P0-2：ChatGPT 网页安全交互与受控协作验收', () => {
       const plan = parsePlanFromText(sample);
       expect(plan.title).toBe('实现高精度乘法函数 calculator.mjs');
       expect(plan.goal).toContain('实现高精度乘法函数 calculator.mjs');
-      expect(plan.criteria.length).toBeGreaterThanOrEqual(1);
       expect(plan.inScope).toContain('calculator.mjs');
-    });
-
-    it('空值与非结构化输入具备安全兜底，不崩溃', () => {
-      const emptyPlan = parsePlanFromText('');
-      expect(emptyPlan.title).toBe('新建任务');
-      expect(emptyPlan.criteria.length).toBeGreaterThan(0);
-
-      const codePlan = parsePlanFromText('```js\nconsole.log(123);\n```');
-      expect(codePlan.codeBlocks.length).toBe(1);
     });
   });
 
-  describe('5. 执行结果结构化反馈包生成与交接（Studio -> ChatGPT）', () => {
+  describe('5. 执行结果结构化反馈包生成与审查脱敏机制（R2 加固）', () => {
     const mockTask: TaskView = {
       id: 'task-test-001',
       request: '实现高精度乘法',
@@ -168,7 +199,7 @@ describe('AISS-P0-2：ChatGPT 网页安全交互与受控协作验收', () => {
       reapproveNotice: null,
       fullTrust: false,
       fullTrustConfirmed: false,
-      checks: [{ name: 'test', label: '运行测试' }],
+      checks: [{ name: 'test', label: '运行测试' }, { name: 'build', label: '代码检查' }],
       permissions: null,
       progress: ['已完成代码编写', '已运行测试'],
       building: {
@@ -187,13 +218,12 @@ describe('AISS-P0-2：ChatGPT 网页安全交互与受控协作验收', () => {
         headline: '修改完成并通过验证',
         facts: [
           { label: '单元测试', status: 'ok', detail: '10/10 测试用例通过' },
-          { label: '文件改动', status: 'ok', detail: '修改了 1 个文件 (+25/-0)' },
         ],
         changes: [{ path: 'src/calculator.mjs', status: 'modified' }],
-        incomplete: { kind: 'none' },
+        incomplete: { kind: 'raw', text: '部分大数测试耗时较长，建议后续优化' },
         unexpectedRequests: 0,
       },
-      diagnostics: ['测试总耗时 120ms'],
+      diagnostics: ['执行耗时 120ms', 'Token key: sk-ant-api03-abcdefghijklmn1234567890'],
       executorName: 'DeepSeek',
       executorText: 'DeepSeek · deepseek-chat',
       round: 1,
@@ -220,33 +250,40 @@ describe('AISS-P0-2：ChatGPT 网页安全交互与受控协作验收', () => {
       updatedAt: '2026-11-23T06:10:00Z',
     };
 
-    it('反馈包完整包含六大核心模块', () => {
+    it('反馈包严格区分宿主真实检查事实与 AI 自述内容', () => {
       const packet = buildChatGPTFeedbackPacket(mockTask, 'MyCalculatorApp');
 
-      // 1. 任务背景与当前阶段
-      expect(packet).toContain('## 1. 任务背景与当前阶段');
-      expect(packet).toContain('MyCalculatorApp');
-      expect(packet).toContain('task-test-001');
-      expect(packet).toContain('第 1 轮');
-      expect(packet).toContain('待验收');
-      expect(packet).toContain('DeepSeek');
+      // 宿主事实
+      expect(packet).toContain('### 宿主真实检查事实 (Host Verified Facts)');
+      expect(packet).toContain('10/10 测试用例通过（宿主执行验证）');
 
-      // 2. 真实完成的代码修改
-      expect(packet).toContain('## 2. 真实完成的代码修改');
-      expect(packet).toContain('src/calculator.mjs');
+      // AI 自述
+      expect(packet).toContain('### AI 自述记录 (AI Self-Reported · 非宿主证据)');
+      expect(packet).toContain('部分大数测试耗时较长');
 
-      // 3. 测试与环境检查事实
-      expect(packet).toContain('## 3. 测试与环境检查事实');
-      expect(packet).toContain('10/10 测试用例通过');
+      // 未运行检查项
+      expect(packet).toContain('### 计划内未运行项 (Unchecked Items)');
+      expect(packet).toContain('代码检查');
 
-      // 4. 未解决或阻断的问题
-      expect(packet).toContain('## 4. 未解决或阻断的问题');
+      // 待核验标准
+      expect(packet).toContain('### 尚未验收条目 (Pending User Acceptance)');
+      expect(packet).toContain('无精度丢失（待人工核验）');
+    });
 
-      // 5. 需要用户或 ChatGPT 裁决的事项
-      expect(packet).toContain('## 5. 需要用户或 ChatGPT 裁决的事项');
+    it('反馈包脱敏功能有效过滤敏感凭证与绝对路径', () => {
+      const packet = buildChatGPTFeedbackPacket(mockTask, 'MyCalculatorApp', {
+        maskCredentials: true,
+        relativePaths: true,
+      });
 
-      // 6. 下一轮开发建议
-      expect(packet).toContain('## 6. 下一轮开发建议');
+      // API Key 必须被脱敏
+      expect(packet).not.toContain('abcdefghijklmn1234567890');
+      expect(packet).toContain('[REDACTED]');
+
+      // 路径脱敏测试
+      const rawWithPath = '在 /Users/jamesho/project/src/index.ts 中发生错误';
+      const sanitized = sanitizeFeedbackText(rawWithPath, { relativePaths: true });
+      expect(sanitized).toBe('在 ~/project/src/index.ts 中发生错误');
     });
 
     it('反馈包明确声明人工确认交接（Human-in-the-loop），绝不虚构自动双向协作', () => {

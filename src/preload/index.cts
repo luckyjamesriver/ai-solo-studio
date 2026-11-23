@@ -148,6 +148,8 @@ export interface ChatGPTCompanionStatus {
   isOpen: boolean;
   url: string;
   authStatus: 'LIVE_LOGIN_NOT_VERIFIED';
+  lastLoadError?: string | null;
+  lastBlockedUrl?: string | null;
 }
 
 contextBridge.exposeInMainWorld('studio', api);
