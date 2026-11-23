@@ -33,14 +33,25 @@ describe('视觉规范与随包字体（UI v2.1 第 10 节）', () => {
     expect(tokens).not.toMatch(/https?:\/\//);
   });
 
-  it('src/renderer 除 tokens.css 外不写死任何颜色值，且不从网络加载资源', () => {
+  it('src/renderer 除 tokens.css 外不写死任何颜色值，且外部服务 URL 仅在批准清单中定义', () => {
     for (const f of fs.readdirSync(rendererDir)) {
       const full = path.join(rendererDir, f);
       if (!fs.statSync(full).isFile()) continue;
       if (f === 'tokens.css' || !/\.(css|ts|tsx|html)$/.test(f)) continue;
       const content = fs.readFileSync(full, 'utf8');
       expect(content, `${f} 不得写死十六进制颜色或 rgb()`).not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(/);
-      expect(content, `${f} 不得包含外部网址`).not.toMatch(/https?:\/\//);
+      if (f === 'externalServices.ts') {
+        // 外部服务配置专有文件：提取所有出现的 URL，必须全部通过可信来源校验
+        const urls = [...content.matchAll(/['"](https?:\/\/[^'"]+)['"]/g)].map((m) => m[1]!);
+        expect(urls.length).toBeGreaterThan(0);
+        for (const u of urls) {
+          // 必须只允许 https 且必须属于已批准的安全来源
+          expect(u.startsWith('https://'), `${u} 必须使用 https 协议`).toBe(true);
+          expect(u).toMatch(/^https:\/\/(?:[a-zA-Z0-9-]+\.)*(?:chatgpt\.com|openai\.com|live\.com|apple\.com|google\.com)(?:\/.*)?$/);
+        }
+      } else {
+        expect(content, `${f} 不得包含硬编码外部网址（外部服务须在 externalServices.ts 统一定义）`).not.toMatch(/https?:\/\//);
+      }
     }
   });
 

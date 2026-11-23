@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const read = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
+const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
 function walk(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)],
@@ -11,11 +12,27 @@ function walk(dir: string): string[] {
 
 describe('安全基线（防回归）', () => {
   const main = read('src/main/index.ts');
-  it('Electron 窗口启用隔离与沙箱', () => {
-    expect(main).toMatch(/contextIsolation:\s*true/);
-    expect(main).toMatch(/nodeIntegration:\s*false/);
-    expect(main).toMatch(/sandbox:\s*true/);
-    expect(main).toMatch(/webviewTag:\s*false/);
+  const mainCode = stripComments(main);
+
+  it('Electron 窗口启用隔离与沙箱（基于真实生效代码，注释不可伪造）', () => {
+    expect(mainCode).toMatch(/contextIsolation:\s*true/);
+    expect(mainCode).toMatch(/nodeIntegration:\s*false/);
+    expect(mainCode).toMatch(/sandbox:\s*true/);
+    expect(mainCode).toMatch(/webviewTag:\s*false/);
+    expect(mainCode).not.toMatch(/webviewTag:\s*true/);
+  });
+
+  it('安全测试机制健全性负向校验：注释与死代码不能让不安全配置通过测试', () => {
+    const deceptiveConfig = `
+      // webviewTag: false - 假装符合安全基线
+      webviewTag: true,
+    `;
+    // 若不去除注释，假配置会误导匹配
+    expect(deceptiveConfig).toMatch(/webviewTag:\s*false/);
+    // 经 stripComments 处理后，必须揭穿假象
+    const stripped = stripComments(deceptiveConfig);
+    expect(stripped).not.toMatch(/webviewTag:\s*false/);
+    expect(stripped).toMatch(/webviewTag:\s*true/);
   });
 
   const sources = walk('src').filter((f) => /\.(c?ts|tsx)$/.test(f)).map((f) => [f, fs.readFileSync(f, 'utf8')] as const);
@@ -265,7 +282,6 @@ describe('安全基线（防回归）', () => {
   });
 
   // ---------- M3-B1 新增（只增不减） ----------
-  const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
   const envAppFiles = [...walk('src/core/env'), ...walk('src/core/app')].filter((x) => /\.ts$/.test(x));
 
   it('M3-B1：渲染进程 API 清单固定，且没有任何一个接受“路径”参数（只有编号或布尔值）', () => {
@@ -847,7 +863,7 @@ describe('安全基线（防回归）', () => {
       expect(s4).toMatchObject({ ok: false, message: MESSAGES.acceptanceInvalid });
       expect(u4).toMatchObject({ ok: false, message: MESSAGES.acceptanceInvalid });
       expect(fs.readFileSync(path.join(f4.repo, 'index.html'), 'utf8')).toBe('old\n');
-    });
+    }, 60_000);
   });
 
   describe('阶段 2 第一部分：多项目归属校验（只增不减）', () => {

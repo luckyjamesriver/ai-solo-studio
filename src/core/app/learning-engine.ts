@@ -1,43 +1,34 @@
-export interface ProjectLearning {
-  id: string;
-  timestamp: string;
-  taskTitle: string;
-  trigger: string;
-  rule: string;
-  origin?: 'auto_reflection' | 'user_feedback' | 'system';
-}
+import {
+  defaultLearningStore,
+  LearningStore,
+  type ProjectLearning,
+  type RecordLearningInput,
+  type RecordLearningResult,
+} from '../persistence/learning.js';
+
+export type { ProjectLearning, RecordLearningInput, RecordLearningResult };
+
+/**
+ * 交付状态标记（维护者审查约定）：
+ * 本能力底层已完成符合 ADR 0005/0006 规范的磁盘持久化、崩溃隔离与重启恢复支持；
+ * 但目前尚未正式接入 App 业务主闭环（如自动反馈注入与开工编排），在此明确标记为实验性/未交付状态，
+ * 不夸大为已完成的生产知识库。
+ */
+export const LEARNING_ENGINE_DELIVERY_STATUS = 'experimental_unintegrated' as const;
 
 /**
  * 经验反思知识库 (RSI Learning Engine)
- * 记录工程避坑经验，并在后续讨论与开工时自动注入上下文。
+ * 记录工程避坑经验，支持跨进程重启的真实持久化。
  */
 export class LearningEngine {
-  private memoryCache = new Map<string, ProjectLearning[]>();
+  constructor(private readonly store: LearningStore = defaultLearningStore) {}
 
   getLearnings(projectFolder: string): ProjectLearning[] {
-    return this.memoryCache.get(projectFolder) ?? [];
+    return this.store.getLearnings(projectFolder);
   }
 
-  recordLearning(
-    projectFolder: string,
-    learning: { trigger: string; taskTitle: string; rule: string; origin?: 'auto_reflection' | 'user_feedback' | 'system' }
-  ): { success: boolean; data?: ProjectLearning } {
-    try {
-      const learnings = [...this.getLearnings(projectFolder)];
-      const newEntry: ProjectLearning = {
-        id: `learn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        timestamp: new Date().toISOString(),
-        taskTitle: learning.taskTitle,
-        trigger: learning.trigger,
-        rule: learning.rule,
-        origin: learning.origin ?? 'auto_reflection',
-      };
-      learnings.unshift(newEntry);
-      this.memoryCache.set(projectFolder, learnings.slice(0, 50));
-      return { success: true, data: newEntry };
-    } catch {
-      return { success: false };
-    }
+  recordLearning(projectFolder: string, learning: RecordLearningInput): RecordLearningResult {
+    return this.store.recordLearning(projectFolder, learning);
   }
 
   formatLearningsForPrompt(projectFolder: string, limit = 5): string {
