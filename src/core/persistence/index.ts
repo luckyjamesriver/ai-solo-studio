@@ -8,3 +8,4 @@ export type { VolumeProbe } from './volume.js';
 export { diffRecord, applyPatch } from './patch.js';
 export { ConsentStore, CONSENT_COLLECTION, CONSENT_RECORD_ID, type ConsentRecord, type RecordConsentOptions, type ClearConsentOptions } from './consent.js';
 export { ManifestStore, MANIFEST_COLLECTION, type TaskManifest, type SaveManifestOptions } from './manifest.js';
+export { LearningStore, defaultLearningStore, type ProjectLearning, type RecordLearningInput, type RecordLearningResult } from './learning.js';

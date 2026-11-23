@@ -10,6 +10,9 @@ declare module 'write-file-atomic' {
     tmpfileCreated?: (tmpfile: string) => void | Promise<void>;
   }
   function writeFile(filename: string, data: string | Uint8Array, options?: Options | string): Promise<void>;
+  namespace writeFile {
+    function sync(filename: string, data: string | Uint8Array, options?: Options | string): void;
+  }
   export = writeFile;
 }
 

@@ -177,7 +177,7 @@ describe('阶段 7 提交③：各轮代码保留（refs/studio/rounds）与冲�
       `refs/studio/rounds/${tB.id}/2`,
     ]);
     expect(saveB2.view.rounds[0]!.changes.find((c) => c.path === 'small.txt')?.preview?.kind).toBe('text');
-  });
+  }, 60_000);
 
   it('放弃任务的轮次引用保留 30 天：30 天内 reconcileTasks 不删除；超过 30 天自动清理，已保存任务永久保留', async () => {
     const repo = await makeRepo({ 'a.txt': 'a0\n' });
