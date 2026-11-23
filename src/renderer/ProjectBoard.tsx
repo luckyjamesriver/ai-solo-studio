@@ -13,7 +13,7 @@ import {
 import { ProjectBriefForm } from './ProjectBriefForm.js';
 import { SaveHistoryPage } from './SaveHistoryPage.js';
 import { COPY } from './copy.js';
-import { SOP_BLUEPRINTS } from '../core/thinking/sopTemplates.js';
+import { SOP_BLUEPRINTS } from './sopTemplates.js';
 
 export type ProjectBoardTab = 'tasks' | 'history' | 'settings';
 

@@ -14,8 +14,7 @@ export interface WebExtractionResult {
 export function extractMarkdownCodeBlocks(raw: string): string[] {
   const codeRegex = /```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/g;
   const blocks: string[] = [];
-  let match;
-  while ((match = codeRegex.exec(raw)) !== null) {
+  for (const match of raw.matchAll(codeRegex)) {
     if (match[1]?.trim()) {
       blocks.push(match[1].trim());
     }

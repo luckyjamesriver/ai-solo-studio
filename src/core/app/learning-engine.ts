@@ -1,13 +1,10 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 export interface ProjectLearning {
   id: string;
   timestamp: string;
   taskTitle: string;
   trigger: string;
   rule: string;
-  source: 'auto_reflection' | 'user_feedback' | 'system';
+  origin?: 'auto_reflection' | 'user_feedback' | 'system';
 }
 
 /**
@@ -15,42 +12,28 @@ export interface ProjectLearning {
  * 记录工程避坑经验，并在后续讨论与开工时自动注入上下文。
  */
 export class LearningEngine {
-  private getStoragePath(projectFolder: string): string {
-    const studioDir = path.join(projectFolder, '.studio');
-    if (!fs.existsSync(studioDir)) {
-      fs.mkdirSync(studioDir, { recursive: true });
-    }
-    return path.join(studioDir, 'learnings.json');
-  }
+  private memoryCache = new Map<string, ProjectLearning[]>();
 
   getLearnings(projectFolder: string): ProjectLearning[] {
-    try {
-      const filePath = this.getStoragePath(projectFolder);
-      if (!fs.existsSync(filePath)) return [];
-      const raw = fs.readFileSync(filePath, 'utf8');
-      return JSON.parse(raw);
-    } catch {
-      return [];
-    }
+    return this.memoryCache.get(projectFolder) ?? [];
   }
 
   recordLearning(
     projectFolder: string,
-    learning: { trigger: string; taskTitle: string; rule: string; source?: ProjectLearning['source'] }
+    learning: { trigger: string; taskTitle: string; rule: string; origin?: 'auto_reflection' | 'user_feedback' | 'system' }
   ): { success: boolean; data?: ProjectLearning } {
     try {
-      const learnings = this.getLearnings(projectFolder);
+      const learnings = [...this.getLearnings(projectFolder)];
       const newEntry: ProjectLearning = {
         id: `learn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         timestamp: new Date().toISOString(),
         taskTitle: learning.taskTitle,
         trigger: learning.trigger,
         rule: learning.rule,
-        source: learning.source || 'auto_reflection',
+        origin: learning.origin ?? 'auto_reflection',
       };
       learnings.unshift(newEntry);
-      const filePath = this.getStoragePath(projectFolder);
-      fs.writeFileSync(filePath, JSON.stringify(learnings.slice(0, 50), null, 2), 'utf8');
+      this.memoryCache.set(projectFolder, learnings.slice(0, 50));
       return { success: true, data: newEntry };
     } catch {
       return { success: false };

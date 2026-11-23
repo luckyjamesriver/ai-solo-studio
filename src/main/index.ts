@@ -243,6 +243,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // webviewTag: false - 安全基线，P0-2专项前开启供阶段9 E2E受控验证
       webviewTag: true,
     },
   });
