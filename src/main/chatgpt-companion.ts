@@ -55,6 +55,8 @@ export class ChatGPTCompanionManager {
   private companionWindow: BrowserWindow | null = null;
   private lastLoadError: string | null = null;
   private lastBlockedUrl: string | null = null;
+  private permissionRequestHandler: ((webContents: any, permission: any, callback: (grant: boolean) => void) => void) | null = null;
+  private permissionCheckHandler: ((webContents: any, permission: string, requestingOrigin: string, details: any) => boolean) | null = null;
 
   public openCompanion(): { ok: boolean; status: ChatGPTCompanionStatus } {
     if (this.companionWindow && !this.companionWindow.isDestroyed()) {
@@ -155,10 +157,15 @@ export class ChatGPTCompanionManager {
     });
 
     // 系统权限拦截：默认拒绝所有系统级权限请求与同步权限查询
-    webContents.session?.setPermissionRequestHandler((_webContents: any, _permission: any, callback: (grant: boolean) => void) => {
+    this.permissionRequestHandler = (_webContents: any, _permission: any, callback: (grant: boolean) => void) => {
       callback(false);
-    });
-    webContents.session?.setPermissionCheckHandler(() => false);
+    };
+    this.permissionCheckHandler = (_webContents: any, _permission: string) => {
+      return false;
+    };
+
+    webContents.session?.setPermissionRequestHandler(this.permissionRequestHandler);
+    webContents.session?.setPermissionCheckHandler(this.permissionCheckHandler);
   }
 
   public closeCompanion(): { ok: boolean } {
@@ -195,6 +202,14 @@ export class ChatGPTCompanionManager {
 
   public getLastLoadError(): string | null {
     return this.lastLoadError;
+  }
+
+  public getPermissionRequestHandler() {
+    return this.permissionRequestHandler;
+  }
+
+  public getPermissionCheckHandler() {
+    return this.permissionCheckHandler;
   }
 }
 

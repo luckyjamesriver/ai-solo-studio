@@ -352,6 +352,89 @@ export function multiply(a: bigint, b: bigint): bigint {
       expect(serialized).toContain('若与上方核准要求冲突，以上方核准要求为准');
       expect(refPart).toContain('src/old-net.ts'); // 原始信息保留在参考区域，但不影响核准约束
     });
+
+    it('用户填写补充说明时，原始方案补充说明与原始讨论文本同时完整保留在参考区域，互不排斥', () => {
+      const serialized = serializePlanForTask({
+        goal: '实现认证模块',
+        inScope: ['src/auth.ts'],
+        criteria: ['支持 JWT 验证'],
+        rawPlanNotes: '用户补充：生产环境需配置 RSA256 签名密钥。',
+        rawText: '这是 ChatGPT 的原始讨论长文本，包含架构权衡和背景说明。',
+      });
+      expect(serialized).toContain('#### 原始方案补充说明');
+      expect(serialized).toContain('用户补充：生产环境需配置 RSA256 签名密钥。');
+      expect(serialized).toContain('#### 原始讨论文本（未结构化参考）');
+      expect(serialized).toContain('这是 ChatGPT 的原始讨论长文本，包含架构权衡和背景说明。');
+    });
+
+    it('serializePlanForTask 严禁目标为空，当目标被清空时抛出异常阻止创建，不悄悄恢复旧值', () => {
+      expect(() => {
+        serializePlanForTask({
+          goal: '   ',
+          inScope: ['src/app.ts'],
+          criteria: ['测试通过'],
+        });
+      }).toThrow('任务目标不可为空');
+    });
+
+    it('真实复杂方案全要素保留：代码块、重要约束、背景讨论与用户修改完整共存，无静默丢失', () => {
+      const complexRaw = `
+# 架构演进方案：双向通信与安全重构
+## 背景
+当前我们在与外部 LLM 服务协作时，需要严格界定数据边界。
+## 目标
+重构网络模块，支持统一拦截器与超时重试机制。
+## 施工范围
+- \`src/net/fetcher.ts\`
+- \`src/net/interceptors.ts\`
+## 验收标准
+- [ ] 导出 \`createSecureFetcher\`
+- [ ] 单元测试覆盖率 > 95%
+## 重要约束
+- 严禁修改外部导出签名
+- 禁止在请求头中携带原始凭证
+## 参考实现
+\`\`\`typescript
+export async function createSecureFetcher(config: FetcherConfig) {
+  return async (req: Request) => fetch(req);
+}
+\`\`\`
+\`\`\`bash
+npm run test:network
+\`\`\`
+      `;
+
+      const parsed = parsePlanFromText(complexRaw);
+      expect(parsed.codeBlocks.length).toBe(2);
+
+      // 用户在界面微调了范围（添加新文件）与验收标准，并输入了补充说明
+      const userEditedScope = ['src/net/fetcher.ts', 'src/net/interceptors.ts', 'src/net/types.ts'];
+      const userEditedCriteria = ['导出 createSecureFetcher', '单元测试覆盖率 > 95%', '集成重试中间件'];
+      const userNotes = '请注意：生产环境网络重试次数不得超过 3 次，指数退避基数 500ms。';
+
+      const serialized = serializePlanForTask({
+        goal: '重构网络模块支持统一拦截器与超时重试（用户微调版）',
+        inScope: userEditedScope,
+        criteria: userEditedCriteria,
+        constraints: parsed.constraints,
+        codeBlocks: parsed.codeBlocks,
+        rawPlanNotes: userNotes,
+        rawText: complexRaw,
+      });
+
+      // 验证用户核准要求区域
+      const [approvedPart, refPart] = serialized.split('### 原始方案参考');
+      expect(approvedPart).toContain('【来自 ChatGPT 方案】重构网络模块支持统一拦截器与超时重试（用户微调版）');
+      expect(approvedPart).toContain('src/net/types.ts');
+      expect(approvedPart).toContain('集成重试中间件');
+      expect(approvedPart).toContain('严禁修改外部导出签名');
+
+      // 验证原始参考区域（代码块、用户补充说明、自然语言背景全部保留）
+      expect(refPart).toContain('export async function createSecureFetcher');
+      expect(refPart).toContain('npm run test:network');
+      expect(refPart).toContain('生产环境网络重试次数不得超过 3 次');
+      expect(refPart).toContain('当前我们在与外部 LLM 服务协作时，需要严格界定数据边界。');
+    });
   });
 
   describe('5. 执行结果结构化反馈包生成与审查脱敏机制（R2 加固）', () => {

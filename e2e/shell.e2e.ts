@@ -3876,7 +3876,7 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
       expect(openRes.ok).toBe(true);
       expect(openRes.status.isOpen).toBe(true);
 
-      // 1.1 在真实 Electron WebContents 与会话中验证真实服务端 302 重定向拦截与同步权限查询全拒绝
+      // 1.1 在真实 Electron WebContents 与会话中验证真实服务端 302 重定向、子框架导航拦截与真实权限拒绝（杜绝假阳性）
       const electronSec = await a.app.evaluate(
         async (_e, args) => {
           const { createRequire } = process.getBuiltinModule('module');
@@ -3886,6 +3886,9 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
             if (req.url === '/302-forbidden') {
               res.writeHead(302, { Location: 'https://attacker-phishing.com/steal-token' });
               res.end();
+            } else if (req.url === '/frame-test') {
+              res.writeHead(200, { 'Content-Type': 'text/html' });
+              res.end('<html><body><iframe id="sub" src="https://attacker-iframe.com/leak"></iframe></body></html>');
             } else {
               res.writeHead(200, { 'Content-Type': 'text/html' });
               res.end('<html><body>OK</body></html>');
@@ -3893,30 +3896,84 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
           });
           await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
           const port = (srv.address() as any).port;
-          const testUrl = `http://127.0.0.1:${port}/302-forbidden`;
+          const redirectTestUrl = `http://127.0.0.1:${port}/302-forbidden`;
+          const frameTestUrl = `http://127.0.0.1:${port}/frame-test`;
 
           const { chatgptCompanion } = req(args.companionPath);
           const compWin = chatgptCompanion.getCompanionWindow();
           if (!compWin) {
             srv.close();
-            throw new Error('未找到已打开的真实伴侣视界 BrowserWindow');
+            throw new Error('FAIL: 未找到已打开的真实伴侣视界 BrowserWindow');
           }
 
+          // A. 验证服务端 302 重定向被真实拦截，且最终 URL 未加载攻击者域名
           try {
-            await compWin.loadURL(testUrl);
+            await compWin.loadURL(redirectTestUrl);
           } catch {
-            // 被 will-redirect preventDefault 拦截导致加载中止为预期安全行为
+            // will-redirect preventDefault 导致加载中止为预期行为
+          }
+          const blockedRedirect = chatgptCompanion.getLastBlockedUrl();
+          const finalUrlAfter302 = compWin.webContents.getURL();
+          const loadedPhishing = finalUrlAfter302.includes('attacker-phishing.com');
+
+          // B. 验证子框架（iframe）跨域非法导航被真实拦截
+          try {
+            await compWin.loadURL(frameTestUrl);
+            await new Promise((r) => setTimeout(r, 300));
+          } catch {
+            // will-frame-navigate 拦截
+          }
+          const blockedFrameNav = chatgptCompanion.getLastBlockedUrl();
+          const hasPhishingFrame = compWin.webContents.getURL().includes('attacker-iframe.com');
+
+          // C. 严格校验真实 Electron session 的系统权限请求与同步权限查询全拒绝（严禁 fallback : true 假阳性）
+          const checkHandler = chatgptCompanion.getPermissionCheckHandler();
+          if (!checkHandler || typeof checkHandler !== 'function') {
+            srv.close();
+            throw new Error('FAIL: chatgptCompanion 未配置 permissionCheckHandler，存在检测盲区');
+          }
+          const permCheckResult = checkHandler(compWin.webContents, 'geolocation', 'https://chatgpt.com', {});
+          if (permCheckResult !== false) {
+            srv.close();
+            throw new Error(`FAIL: geolocation 权限检查未被拒绝，实际返回: ${permCheckResult}`);
           }
 
-          const blockedRedirect = chatgptCompanion.getLastBlockedUrl();
-          // 校验真实 Electron session 的同步权限查询全拒绝
-          const checkHandler = compWin.webContents.session.getPermissionCheckHandler?.();
-          const permDenied = checkHandler ? checkHandler(compWin.webContents, 'geolocation', 'https://chatgpt.com', {}) === false : true;
+          const reqHandler = chatgptCompanion.getPermissionRequestHandler();
+          if (!reqHandler || typeof reqHandler !== 'function') {
+            srv.close();
+            throw new Error('FAIL: chatgptCompanion 未配置 permissionRequestHandler，存在检测盲区');
+          }
+          let reqGranted: boolean | null = null;
+          reqHandler(compWin.webContents, 'geolocation', (granted: boolean) => {
+            reqGranted = granted;
+          });
+          if (reqGranted !== false) {
+            srv.close();
+            throw new Error(`FAIL: permissionRequestHandler 未返回 false，实际返回: ${reqGranted}`);
+          }
+
+          // D. 在真实 DOM 内验证 navigator.permissions.query 同步拒绝
+          let domPermState = 'unknown';
+          try {
+            domPermState = await compWin.webContents.executeJavaScript(
+              'navigator.permissions.query({ name: "geolocation" }).then(p => p.state).catch(() => "denied")'
+            );
+          } catch {
+            domPermState = 'denied';
+          }
+          if (domPermState !== 'denied') {
+            srv.close();
+            throw new Error(`FAIL: DOM 内 navigator.permissions.query 未返回 denied，实际状态: ${domPermState}`);
+          }
 
           srv.close();
           return {
             blockedRedirect,
-            permDenied,
+            loadedPhishing,
+            blockedFrameNav,
+            hasPhishingFrame,
+            permDenied: true,
+            domPermState,
           };
         },
         {
@@ -3926,7 +3983,11 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
       );
 
       expect(electronSec.blockedRedirect).toBe('https://attacker-phishing.com/steal-token');
+      expect(electronSec.loadedPhishing).toBe(false);
+      expect(electronSec.blockedFrameNav).toBe('https://attacker-iframe.com/leak');
+      expect(electronSec.hasPhishingFrame).toBe(false);
       expect(electronSec.permDenied).toBe(true);
+      expect(electronSec.domPermState).toBe('denied');
 
       const closeRes = await a.page.evaluate(async () => {
         // @ts-ignore
@@ -3949,7 +4010,13 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
       expect(curProjText).toContain('proj-p0-2-e2e');
 
       // 2.1 测试网页自动抓取失败时的降级感知（不伪造自动获取成功）
-      await a.page.getByRole('button', { name: '📥 提炼方案并转为任务' }).click();
+      await a.page.evaluate(() => {
+        // @ts-ignore
+        window.prompt = () => null;
+      });
+      const extractBtn = a.page.getByRole('button', { name: '📥 提炼方案并转为任务' });
+      await extractBtn.waitFor({ state: 'visible' });
+      await extractBtn.click();
       const fallbackHint = a.page.getByTestId('manual-fallback-hint');
       await fallbackHint.waitFor({ state: 'visible' });
       expect(await fallbackHint.innerText()).toContain('未能直接从网页抓取内容');
@@ -4013,8 +4080,31 @@ export function multiply(a, b) {
       const criteriaInput = a.page.getByTestId('preview-edited-criteria');
       await criteriaInput.fill('导出 multiply(a, b)\n通过精度边界测试');
 
+      // 5.1 验证目标项目下拉选择器与未选门禁拦截
+      const projSelect = a.page.getByTestId('target-project-select');
+      await projSelect.waitFor({ state: 'visible' });
+      const currentPid = await projSelect.inputValue();
+      expect(currentPid).toBeTruthy();
+      const selectedOptionText = await projSelect.locator('option:checked').innerText();
+      expect(selectedOptionText).toContain('proj-p0-2-e2e');
+
+      // 切换为未选择状态：确认按钮必须被禁用
+      await projSelect.selectOption({ value: '' });
+      const confirmBtn = a.page.getByTestId('confirm-import-plan-button');
+      expect(await confirmBtn.isDisabled()).toBe(true);
+
+      // 重新切回正确的目标项目
+      await projSelect.selectOption({ value: currentPid });
+      expect(await confirmBtn.isDisabled()).toBe(false);
+
+      // 5.2 验证清空目标门禁拦截：目标为空时确认按钮必须禁用，严禁回退旧值
+      await goalInput.fill('   ');
+      expect(await confirmBtn.isDisabled()).toBe(true);
+      await goalInput.fill('实现可靠乘法工具 multiply.mjs（已微调）');
+      expect(await confirmBtn.isDisabled()).toBe(false);
+
       // 6. 显式确认导入，任务受控创建
-      await a.page.getByTestId('confirm-import-plan-button').click();
+      await confirmBtn.click();
 
       // 验证跳转至讨论/计划页，且任务标题已为微调后的目标
       await a.page.getByTestId('task-page').waitFor();

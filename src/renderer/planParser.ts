@@ -175,6 +175,10 @@ export function serializePlanForTask(params: {
   rawPlanNotes?: string;
   rawText?: string;
 }): string {
+  if (!params.goal || !params.goal.trim()) {
+    throw new Error('任务目标不可为空，必须明确指定任务目标');
+  }
+
   const sections: string[] = [];
   sections.push(`【来自 ChatGPT 方案】${params.goal.trim()}`);
 
@@ -201,7 +205,7 @@ export function serializePlanForTask(params: {
     sections.push(`### 施工要求（用户核准要求为最高优先级约束）\n\n${approvedSections.join('\n\n')}`);
   }
 
-  // 参考级别：原始未结构化参考信息
+  // 参考级别：原始未结构化参考信息（代码块、用户补充说明与原始讨论文本互不排斥，全部完整保留）
   const referenceSections: string[] = [];
 
   if (params.codeBlocks && params.codeBlocks.length > 0) {
@@ -210,7 +214,9 @@ export function serializePlanForTask(params: {
 
   if (params.rawPlanNotes && params.rawPlanNotes.trim()) {
     referenceSections.push(`#### 原始方案补充说明\n${params.rawPlanNotes.trim()}`);
-  } else if (params.rawText && params.rawText.trim()) {
+  }
+
+  if (params.rawText && params.rawText.trim()) {
     referenceSections.push(`#### 原始讨论文本（未结构化参考）\n${params.rawText.trim()}`);
   }
 

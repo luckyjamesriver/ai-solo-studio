@@ -1,12 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { extractContentFromWebview } from './webBridge.js';
 import { CHATGPT_WEB_URL, validateApprovedExternalUrl } from './externalServices.js';
 import { parsePlanFromText, serializePlanForTask, type ParsedPlan } from './planParser.js';
 import { studio } from './api.js';
 
+export interface ProjectOption {
+  id: string;
+  name: string;
+}
+
 interface ChatGPTViewProps {
   currentProjectName?: string;
-  onImportPlanToTask: (content: string) => Promise<void> | void;
+  currentProjectId?: string;
+  projects?: readonly ProjectOption[];
+  onImportPlanToTask: (targetProjectId: string, content: string) => Promise<void> | void;
   onBackToProject: () => void;
 }
 
@@ -22,6 +29,8 @@ if (!urlValidation.ok) {
 
 export function ChatGPTView({
   currentProjectName,
+  currentProjectId,
+  projects = [],
   onImportPlanToTask,
   onBackToProject,
 }: ChatGPTViewProps) {
@@ -29,6 +38,7 @@ export function ChatGPTView({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [rawPlanText, setRawPlanText] = useState('');
   const [previewPlan, setPreviewPlan] = useState<ParsedPlan | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(currentProjectId || '');
   const [editedGoal, setEditedGoal] = useState('');
   const [editedScopeText, setEditedScopeText] = useState('');
   const [editedCriteriaText, setEditedCriteriaText] = useState('');
@@ -39,6 +49,14 @@ export function ChatGPTView({
   const [extractionFallback, setExtractionFallback] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const isSubmittingRef = useRef(false);
+
+  // 同步外部传入的当前项目 ID（例如在不同项目中导航切换）
+  useEffect(() => {
+    if (currentProjectId) {
+      setSelectedProjectId(currentProjectId);
+    }
+  }, [currentProjectId]);
 
   // 0. 定时与挂载同步伴侣视界状态（感知真实崩溃、加载失败与关闭）
   useEffect(() => {
@@ -132,7 +150,22 @@ export function ChatGPTView({
 
   // 5. 用户主动确认后，才真正导入为 Studio 任务（核心门禁与异步安全保护）
   const handleConfirmImport = async () => {
-    if (!previewPlan || importing) return;
+    if (!previewPlan || importing || isSubmittingRef.current) return;
+
+    // 门禁 A：多项目环境必须明确指定目标项目，不得未选导入
+    if (!selectedProjectId) {
+      setImportError('未明确选定目标归属项目。多项目环境下必须指定归属项目，不可未选导入。');
+      return;
+    }
+
+    // 门禁 B：任务目标不可为空，严禁静默恢复旧目标
+    const trimmedGoal = editedGoal.trim();
+    if (!trimmedGoal) {
+      setImportError('任务目标不可为空，请补充任务目标后再确认导入，绝不自动恢复旧目标。');
+      return;
+    }
+
+    isSubmittingRef.current = true;
     setImporting(true);
     setImportError(null);
     setFeedback(null);
@@ -152,7 +185,7 @@ export function ChatGPTView({
         .filter(Boolean);
 
       const finalContent = serializePlanForTask({
-        goal: editedGoal.trim() || previewPlan.goal || previewPlan.title,
+        goal: trimmedGoal,
         inScope: scopes,
         criteria: criteria,
         constraints: constraints,
@@ -161,7 +194,7 @@ export function ChatGPTView({
         rawText: previewPlan.rawText,
       });
 
-      await onImportPlanToTask(finalContent);
+      await onImportPlanToTask(selectedProjectId, finalContent);
       setPreviewPlan(null);
       setFeedback('方案已成功通过确认门禁，已导入为 Studio 任务。');
     } catch (e: any) {
@@ -169,6 +202,7 @@ export function ChatGPTView({
       setImportError(msg);
       setFeedback(`创建任务失败: ${msg}。原方案与编辑状态已完整保留，请重试。`);
     } finally {
+      isSubmittingRef.current = false;
       setImporting(false);
     }
   };
@@ -546,17 +580,55 @@ export function ChatGPTView({
                 <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--color-ink)' }}>
                   📋 方案预览与确认门禁
                 </span>
-                <span
-                  style={{
-                    fontSize: '11px',
-                    padding: '2px 8px',
-                    borderRadius: 'var(--radius-pill)',
-                    background: 'var(--color-selected-bg)',
-                    color: 'var(--color-primary)',
-                  }}
-                >
-                  目标项目：{currentProjectName || '当前项目'}
-                </span>
+                {currentProjectName && (
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      padding: '2px 8px',
+                      borderRadius: 'var(--radius-pill)',
+                      background: 'var(--color-selected-bg)',
+                      color: 'var(--color-primary)',
+                    }}
+                  >
+                    当前上下文：{currentProjectName}
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-muted)', display: 'block', marginBottom: '4px' }}>
+                  目标归属项目（必须明确指定，禁止未选导入）：
+                </label>
+                {projects.length > 0 ? (
+                  <select
+                    data-testid="target-project-select"
+                    value={selectedProjectId}
+                    onChange={(e) => {
+                      setSelectedProjectId(e.target.value);
+                      setImportError(null);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '6px 10px',
+                      fontSize: '13px',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--color-border)',
+                      background: 'var(--color-bg)',
+                      color: 'var(--color-ink)',
+                    }}
+                  >
+                    <option value="">-- 请选择目标归属项目 --</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name || p.id} ({p.id})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div data-testid="target-project-empty-hint" style={{ fontSize: '12px', color: 'var(--color-warn)' }}>
+                    {selectedProjectId ? `已绑定项目: ${selectedProjectId}` : '⚠️ Studio 中尚未打开任何项目，请先打开或创建项目后再导入。'}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -749,14 +821,14 @@ export function ChatGPTView({
                 type="button"
                 data-testid="confirm-import-plan-button"
                 onClick={handleConfirmImport}
-                disabled={importing}
+                disabled={importing || !selectedProjectId || !editedGoal.trim()}
                 style={{
                   padding: '8px 16px',
                   fontSize: '13px',
                   fontWeight: 600,
                   marginTop: '4px',
-                  opacity: importing ? 0.7 : 1,
-                  cursor: importing ? 'wait' : 'pointer',
+                  opacity: (importing || !selectedProjectId || !editedGoal.trim()) ? 0.6 : 1,
+                  cursor: (importing || !selectedProjectId || !editedGoal.trim()) ? 'not-allowed' : 'pointer',
                 }}
               >
                 {importing ? '正在创建任务...' : '✅ 确认导入为 Studio 任务'}
