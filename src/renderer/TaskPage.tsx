@@ -7,6 +7,7 @@ import { RunView } from './RunView.js';
 import { StoppedPage } from './StoppedPage.js';
 import type { TaskView } from './api.js';
 import { COPY } from './copy.js';
+import { buildChatGPTFeedbackPacket } from './chatgptFeedback.js';
 
 interface TaskPageProps {
   projectId: string;
@@ -45,9 +46,21 @@ export function TaskPage({
   onOpenTask,
 }: TaskPageProps) {
   const [ackStopToken, setAckStopToken] = useState<string | null>(null);
+  const [copiedFeedback, setCopiedFeedback] = useState(false);
   useEffect(() => {
     setAckStopToken(null);
   }, [task.id]);
+
+  const handleCopyChatGPTFeedback = async () => {
+    try {
+      const packet = buildChatGPTFeedbackPacket(task, projectName);
+      await navigator.clipboard.writeText(packet);
+      setCopiedFeedback(true);
+      setTimeout(() => setCopiedFeedback(false), 3000);
+    } catch (e) {
+      console.warn('Failed to copy feedback packet', e);
+    }
+  };
 
   const showRun = task.running || task.state === 'running';
   useEffect(() => {
@@ -83,7 +96,18 @@ export function TaskPage({
           </div>
           <h1 data-testid="task-title">{task.goal}</h1>
         </div>
-        <div className="stages" aria-label="任务阶段" data-testid="stage-bar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button
+            type="button"
+            className="secondary"
+            data-testid="copy-chatgpt-feedback"
+            onClick={handleCopyChatGPTFeedback}
+            style={{ fontSize: '12px', padding: '4px 10px' }}
+            title="生成并复制当前任务的结构化执行结果反馈包，用于粘贴至 ChatGPT 网页继续讨论"
+          >
+            {copiedFeedback ? '✓ 已复制反馈包' : '📋 复制 ChatGPT 反馈包'}
+          </button>
+          <div className="stages" aria-label="任务阶段" data-testid="stage-bar">
           <span
             className={`st${planDone ? ' done' : planCur ? ' cur' : ''}`}
             data-testid="stage-plan"
@@ -106,6 +130,7 @@ export function TaskPage({
             {acceptDone ? '3 验收 ✓' : '3 验收'}
           </span>
         </div>
+      </div>
       </div>
 
       {error && <p role="alert" className="error" data-testid="task-error">{error}</p>}

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setSupplementalPath } from '../core/env/host-env.js';
@@ -45,6 +45,7 @@ import { TaskController } from '../core/app/task-controller.js';
 import { TaskPrefs } from '../core/app/prefs.js';
 import { OpenProjectManager, type WorkbenchEntry } from '../core/app/open-projects.js';
 import { localApfsProbe, RecordStore, VolumeNotSupportedError, WriterLockedError, type OpenOptions } from '../core/persistence/index.js';
+import { chatgptCompanion } from './chatgpt-companion.js';
 
 /**
  * 持久化服务的打开选项（ADR 0005）：数据目录必须在本地 APFS；取不到数据目录租约时最多等 12 秒
@@ -734,6 +735,12 @@ ipcMain.handle('subscriptions:disable', async (_e, id: unknown) => {
   return getGlobalAiView();
 });
 
+// 阶段 P0-2：ChatGPT 独立安全伴侣视界 IPC 处理程序
+ipcMain.handle('chatgpt:openCompanion', () => chatgptCompanion.openCompanion());
+ipcMain.handle('chatgpt:closeCompanion', () => chatgptCompanion.closeCompanion());
+ipcMain.handle('chatgpt:getStatus', () => chatgptCompanion.getStatus());
+ipcMain.handle('chatgpt:openSystemBrowser', () => chatgptCompanion.openSystemBrowser());
+
 // 单实例（ADR 0005）：第二个实例只唤起已有窗口，不启动，更不会写数据——所有写入都来自同一个主进程。
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -746,47 +753,8 @@ if (!gotSingleInstanceLock) {
     }
   });
   app.whenReady().then(() => {
-    // 1. 全局 User-Agent 伪装为纯正桌面 Chrome，彻底去除 Electron 标识，解决 Google OAuth "此浏览器不安全" 拦截
-    const cleanChromeUa = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-    if (app.userAgentFallback) {
-      app.userAgentFallback = cleanChromeUa;
-    }
-
-    // 2. 为 ChatGPT 专区配置一致的请求头与 Client Hints
-    const chatGptSession = session.fromPartition('persist:ai_solo_chatgpt');
-    chatGptSession.setUserAgent(cleanChromeUa);
-    chatGptSession.webRequest.onBeforeSendHeaders((details, callback) => {
-      const requestHeaders = { ...details.requestHeaders };
-      requestHeaders['User-Agent'] = cleanChromeUa;
-      requestHeaders['sec-ch-ua'] = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"';
-      requestHeaders['sec-ch-ua-mobile'] = '?0';
-      requestHeaders['sec-ch-ua-platform'] = '"macOS"';
-      callback({ cancel: false, requestHeaders });
-    });
-
     createWindow();
     app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
-  });
-
-  // 3. 处理 webview 内部弹出的 OAuth 登录弹窗，保持在同分区沙箱中
-  app.on('web-contents-created', (_event, contents) => {
-    if (contents.getType() === 'webview') {
-      contents.setWindowOpenHandler(({ url }) => {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 520,
-            height: 680,
-            autoHideMenuBar: true,
-            webPreferences: {
-              nodeIntegration: false,
-              contextIsolation: true,
-              partition: 'persist:ai_solo_chatgpt',
-            },
-          },
-        };
-      });
-    }
   });
 }
 // 退出时释放数据目录租约（异常退出时租约会在一段时间后过期）
