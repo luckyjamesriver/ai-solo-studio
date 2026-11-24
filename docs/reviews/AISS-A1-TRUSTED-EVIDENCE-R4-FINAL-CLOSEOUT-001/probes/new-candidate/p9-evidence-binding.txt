@@ -1,0 +1,18 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r4-probes/p9-evidence-binding.probe.ts (4 tests) 16595ms
+   ✓ R4-04 探针 A：试检查证据绑定本次 trialCommit 及其 tree (1)
+     ✓ trialChecks 证据身份带 trialCommit，且 testedTree === treeOf(trialCommit) 5288ms
+   ✓ R4-04 探针 B：历史展示不得用 historical 模式绕过树/版本身份 (1)
+     ✓ 已保存证据的 testedTree 与绑定不一致 → 不得显示 verified 5281ms
+   ✓ R4-04 探针 C：失败证据不得显示为“检查通过” (1)
+     ✓ trialChecks 里是真实失败 → 保存历史文案不得包含“检查通过” 5331ms
+   ✓ R4-04 探针 D：未执行检查 vs 真实启动失败 (1)
+     ✓ not_available（未启动）不得被当成真实失败；真实启动失败必须是 failed 693ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  23:12:25
+   Duration  16.90s (tests 99%, import 1%)
+

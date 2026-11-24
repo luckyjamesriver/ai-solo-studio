@@ -1,0 +1,17 @@
+# 远程证据逐文件读取与指纹核验
+repo: luckyjamesriver/ai-solo-studio
+ref: ef6700575a1e36363a69300d7cb6db5c426a827c
+at: 2026-11-24T16:58:37Z
+
+OK d518415ea6418c7e8a273027072b3ceccaebbcf5992042da090df18f82ba6a68 src/core/evidence/adjudicate.ts
+OK 92ae914a4a3b6aa89d2c5ecf3482614ac169795f1aa49b79dde32e036e8d54ce src/core/evidence/vitest.ts
+OK ea95969d47eaa556e72a5e7814ea8dd4a66c54c3121e4416d9e6e627f6c600fb src/core/task/model.ts
+OK c575dccf4779bc34e959e0c59000e28fd9e27ee4500bcc443c0f44efbea2ec29 src/core/task/runner.ts
+OK c316457efdb16c48dc9f3c632318b3e1b64823c45c84b9a429da25567a3d959d tests/r3-trusted-evidence.test.ts
+OK 3ed8c904228a883fc265a1af49dfc57d2c60aee43be6f960d3f89de28af5ae3b tests/r4-probes/p11-evidence-set.probe.ts
+OK 82db1c9958d54f9f54a181289c31a989abeeaa22684c2bd9961e859d09711210 tests/r4-probes/p12-recovery-set.probe.ts
+OK 39a81f8cdabb9bf613382dcd9fb67e8a47dc2d2c070449f7f7778b8dcf9747a4 tests/r4-probes/p13-failure-first.probe.ts
+OK 73b2967da0b2d1afa8f963eaa32cf20c8fdbf17cc96e9f469538c6debdeec07b tests/r4-probes/p14-case-name-tail.probe.ts
+OK 559d1f816c53c871727c61bc059d15a7920182a0b2c17059828c41daef9fd2f8 tests/r4-probes/p15-confirm-missing-evidence.probe.ts
+OK 2abaf12e540366582485e248fbb59369ad6650936555fbab461e30aa725e36ca tests/r4-trusted-evidence.test.ts
+checked=11 mismatch=0

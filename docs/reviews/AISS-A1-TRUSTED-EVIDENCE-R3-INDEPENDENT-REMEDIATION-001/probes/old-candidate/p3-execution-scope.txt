@@ -1,0 +1,48 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3-old
+
+ ❯ tests/r3-probes/p3-execution-scope.probe.ts (2 tests | 2 failed) 8277ms
+   ❯ R3-03 探针 A：同一测试文件内用例被动态跳过（文件与配置不变） (1)
+     × 完整运行 vs 动态少执行一条：可信结论与范围指纹都必须不同 2729ms
+   ❯ R3-03 探针 B：验收完整运行 → 保存试检查时部分用例动态跳过 → 必须阻断可信保存 (1)
+     × 保存不得在“试检查覆盖率下降”的情况下记录为检查通过 5547ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r3-probes/p3-execution-scope.probe.ts > R3-03 探针 A：同一测试文件内用例被动态跳过（文件与配置不变） > 完整运行 vs 动态少执行一条：可信结论与范围指纹都必须不同
+AssertionError: expected 'passed' not to be 'passed' // Object.is equality
+ ❯ tests/r3-probes/p3-execution-scope.probe.ts:104:32
+    102|
+    103|     // 反向断言：动态少跑一条不得再取得可信通过
+    104|     expect(partial.status).not.toBe('passed');
+       |                                ^
+    105|     expect(partial.evidence!.scope.kind).not.toBe('assessed_unchanged'…
+    106|     expect(partial.evidence!.scope.reasons.join('\n')).toMatch(/用例|跳过|…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/r3-probes/p3-execution-scope.probe.ts > R3-03 探针 B：验收完整运行 → 保存试检查时部分用例动态跳过 → 必须阻断可信保存 > 保存不得在“试检查覆盖率下降”的情况下记录为检查通过
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/r3-probes/p3-execution-scope.probe.ts:155:23
+    153|     // 旧候选：保存成功且 saveRecord.checked === true（可信通过），但试检查实际少跑了用例
+    154|     // 新候选：必须硬阻断（不能用“仍然保存”的人工确认绕过），且不留下任何保存记录
+    155|     expect(result.ok).toBe(false);
+       |                       ^
+    156|     expect(result.view.saveOutcome?.kind).not.toBe('saved');
+    157|     expect(result.message).toMatch(/不一致|范围/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  20:24:17
+   Duration  8.61s (tests 98%, import 1%, transform 1%)
+

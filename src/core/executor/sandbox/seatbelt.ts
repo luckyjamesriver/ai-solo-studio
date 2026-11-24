@@ -104,6 +104,9 @@ export function buildSeatbeltProfile(opts: SeatbeltProfileOptions): string {
     '(allow mach*)',
     '(allow ipc-posix*)',
     '(allow signal (target self))',
+    // 检查进程（如 Vitest）会启动子进程并在结束时杀掉它们；只允许向自己的子进程发信号，
+    // 不允许向沙箱外的其他进程发信号。
+    '(allow signal (target children))',
     '(allow file-read*)',
   ];
 
@@ -142,6 +145,8 @@ export interface SeatbeltSandboxRunnerOptions {
  *   一律返回 `{ status: 'unavailable', reason }`，绝不回退到无沙箱宿主直跑。
  */
 export class SeatbeltSandboxRunner implements SandboxCommandRunner {
+  /** 证据记录用：真实运行环境种类 */
+  readonly kind = 'seatbelt';
   private readonly command: string;
   private readonly extraEnv: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;

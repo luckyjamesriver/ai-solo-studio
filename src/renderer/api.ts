@@ -53,6 +53,7 @@ export type {
   ReworkContextView,
   ExternalReportView,
   ViewItem,
+  ViewItemStatus,
   ViewChange,
   ActionState,
   SaveRecordView,
@@ -183,6 +184,7 @@ interface StudioApi {
   confirmOverall(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   ackDenied(projectId: string, id: string, itemId: string, version: string): Promise<AcceptanceActionResult>;
   recheck(projectId: string, id: string): Promise<AcceptanceActionResult>;
+  confirmScopeChange(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   saveTask(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   saveUncheckedTask(projectId: string, id: string, version: string): Promise<AcceptanceActionResult>;
   discardTask(projectId: string, id: string): Promise<AcceptanceActionResult>;

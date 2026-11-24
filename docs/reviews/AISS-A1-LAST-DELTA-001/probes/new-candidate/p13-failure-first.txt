@@ -1,0 +1,12 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r4-probes/p13-failure-first.probe.ts (1 test) 899ms
+   ✓ LAST-DELTA 探针 P13：not_available 外围状态不得掩盖真实失败 (1)
+     ✓ 真实未执行 → not_checked；真实启动失败/非零退出 + 外围 not_available → failed 898ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  00:18:47
+   Duration  1.10s (tests 95%, import 2%, transform 2%)
+

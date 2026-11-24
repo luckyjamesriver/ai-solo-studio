@@ -1,0 +1,6 @@
+=== A1 + R1 专项反向矩阵（从同一次全量运行中提取） ===
+a1-evidence-chain.test.ts => 16 tests, 16 passed, 0 failed
+a1-trusted-evidence.test.ts => 20 tests, 20 passed, 0 failed
+r1-git-integrity.test.ts => 4 tests, 4 passed, 0 failed
+r1-trusted-evidence.test.ts => 17 tests, 17 passed, 0 failed
+total: 57 tests

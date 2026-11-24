@@ -300,8 +300,9 @@ describe('安全基线（防回归）', () => {
     // 阶段 8A（ADR 0010）：新增 listProviderCatalog、listProviderProfiles、fetchProviderModels、saveAndTestProvider、deleteProviderProfile、saveDefaultExecutor、saveProjectExecutor 与 setTaskExecutor
     // 阶段 8B（ADR 0010）：新增 listSubscriptionClis、enableSubscriptionCli、disableSubscriptionCli
     // 阶段 P0-2（ChatGPT 安全交互）：新增 openChatGPTCompanion、closeChatGPTCompanion、getChatGPTCompanionStatus、openChatGPTInSystemBrowser
-    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'listProviderCatalog', 'listProviderProfiles', 'fetchProviderModels', 'saveAndTestProvider', 'deleteProviderProfile', 'saveDefaultExecutor', 'listSubscriptionClis', 'enableSubscriptionCli', 'disableSubscriptionCli', 'getProjectRoles', 'saveProjectRoles', 'saveProjectExecutor', 'listTasks', 'createTask', 'getTask', 'setTaskExecutor', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'exportExternalTask', 'importExternalReport', 'revealHandoff', 'stopTask', 'continueTask', 'reworkTask', 'reworkExternalTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'reworkConflictTask', 'getSaveHistory', 'undoFromHistory', 'revealProject', 'openChatGPTCompanion', 'closeChatGPTCompanion', 'getChatGPTCompanionStatus', 'openChatGPTInSystemBrowser']);
-    expect(entries).toHaveLength(77);
+    // AISS-A1（可信证据）：新增 confirmScopeChange（参数 projectId: string, id: string, version: string，不放宽任何参数形态）
+    expect(entries.map((e) => e.name)).toEqual(['detectEnvironment', 'chooseProject', 'recentProjects', 'openRecent', 'listOpenProjects', 'closeProject', 'getWorkbench', 'projectStatus', 'getProjectBrief', 'saveProjectBrief', 'initProject', 'getDisclosure', 'acceptDisclosure', 'getClaudeKeyStatus', 'saveClaudeKey', 'deleteClaudeKey', 'getAiSettings', 'saveAiRoles', 'listProviderCatalog', 'listProviderProfiles', 'fetchProviderModels', 'saveAndTestProvider', 'deleteProviderProfile', 'saveDefaultExecutor', 'listSubscriptionClis', 'enableSubscriptionCli', 'disableSubscriptionCli', 'getProjectRoles', 'saveProjectRoles', 'saveProjectExecutor', 'listTasks', 'createTask', 'getTask', 'setTaskExecutor', 'savePlan', 'addExtraDir', 'removeExtraDir', 'startTask', 'exportExternalTask', 'importExternalReport', 'revealHandoff', 'stopTask', 'continueTask', 'reworkTask', 'reworkExternalTask', 'editReworkPermissions', 'getDiscussionView', 'startDiscussion', 'confirmDiscussionSend', 'confirmDiscussionRequirements', 'resolveDiscussionFailure', 'adjudicateDiscussion', 'decideDiscussionApproval', 'modifyDiscussionRequirements', 'sendDiscussionChat', 'skipDiscussion', 'getAcceptanceView', 'openPreview', 'skipPreview', 'confirmCriterion', 'rejectCriterion', 'confirmOverall', 'ackDenied', 'recheck', 'confirmScopeChange', 'saveTask', 'saveUncheckedTask', 'discardTask', 'undoSave', 'retryCleanup', 'reworkConflictTask', 'getSaveHistory', 'undoFromHistory', 'revealProject', 'openChatGPTCompanion', 'closeChatGPTCompanion', 'getChatGPTCompanionStatus', 'openChatGPTInSystemBrowser']);
+    expect(entries).toHaveLength(78);
     const SHAPES = ['', 'id: string', 'secret: string', 'input: ProviderModelFetchInput', 'input: ProviderSaveInput', 'input: SubscriptionEnableInput', 'chief: string, reviewer: string, model: string', 'projectId: string', 'projectId: string, brief: ProjectBriefInput', 'projectId: string, mode: string, chief: string, reviewer: string', 'projectId: string, mode: string, id: string', 'consent: boolean', 'projectId: string, request: string', 'projectId: string, id: string', 'projectId: string, id: string, executorId: string', 'projectId: string, id: string, feedback: string', 'projectId: string, id: string, plan: PlanInput', 'projectId: string, id: string, key: string', 'projectId: string, id: string, ack: boolean', 'projectId: string, id: string, version: string', 'projectId: string, id: string, itemId: string, version: string', 'projectId: string, id: string, itemId: string, version: string, reason: string', 'projectId: string, id: string, preset: string', 'projectId: string, id: string, service: string, allow: boolean', 'projectId: string, id: string, edits: RequirementEditInput[]', 'projectId: string, id: string, choice: string, note: string', 'projectId: string, id: string, kind: string, key: string, decision: string, reason: string', 'projectId: string, id: string, decision: string', 'projectId: string, id: string, newRequest: string', 'projectId: string, id: string, target: string, message: string', 'projectId: string, id: string, target: string'];
     for (const e of entries) {
       expect(SHAPES, `${e.name}(${e.params})`).toContain(e.params);
@@ -618,8 +619,9 @@ describe('安全基线（防回归）', () => {
 
     it('B4-2-fix：解析 Git 文件名输出一律用 -z（diffSummary、import 的 status）；不再按行拆分带引号的文件名', () => {
       const g = read('src/core/git/git.ts');
-      expect(g).toContain("['diff', '--name-status', '-z', '-M'");
-      expect(g).toContain("['diff', '--numstat', '-z', '-M'");
+      // R1：改动清单改为对「同一任务内容 tree」做 diff-tree（不写工作树索引），但 -z 解析要求不变
+      expect(g).toContain("['diff-tree', '-r', '--no-commit-id', '--name-status', '-z', '-M'");
+      expect(g).toContain("['diff-tree', '-r', '--no-commit-id', '--numstat', '-z', '-M'");
       expect(read('src/core/thinking/handoff/import.ts')).toContain("'status', '--porcelain=v1', '-z'");
       for (const [f, s] of sources) expect(s, f).not.toMatch(/'--name-status'(?!,\s*'-z')|'--numstat'(?!,\s*'-z')|'status',\s*'--porcelain'\]/);
     });
@@ -676,6 +678,8 @@ describe('安全基线（防回归）', () => {
     });
 
     it('持久化文件原语（persistence/files）只能被这几个模块引用（清单只许减少）', () => {
+      // AISS-A1-R3：evidence/vitest.ts 不再使用旧的 removeSafeSubtree（它重新信任可被替换的父路径），
+      // 改为 persistence/owned-dir.ts 的「创建时所有权 + 身份/真实路径复核」；清单只减少、不放宽。
       const ALLOWED = ['src/core/checks/scripts.ts', 'src/core/git/git.ts', 'src/core/thinking/claude-cli.ts', 'src/core/thinking/codex.ts', 'src/core/thinking/flow/store.ts'];
       const users = sources.filter(([f, s]) => !inPersistence(f) && importsOf(stripComments(s)).some((i) => PERSIST_FILES.test(i))).map(([f]) => rel(f));
       expect(users.sort()).toEqual(ALLOWED);
@@ -765,7 +769,7 @@ describe('安全基线（防回归）', () => {
       const { makeRepo, tmpDir, testSandboxRunner } = await import('./helpers.js');
 
       const untilReady = async (ctl: InstanceType<typeof TaskController>, id: string) => {
-        for (let i = 0; i < 400; i++) {
+        for (let i = 0; i < 2000; i++) {
           const v = await ctl.getAcceptanceView(id);
           if (v.state === 'reviewing' && !v.busy) return v;
           await new Promise((r) => setTimeout(r, 25));
@@ -803,7 +807,7 @@ describe('安全基线（防回归）', () => {
         return { repo, ctl, id: t.id, v };
       };
 
-      // 1) 试检查失败（checks_failed）：saveTask 与 saveUncheckedTask 必须同样拦截
+      // 1) 试检查真实失败：saveTask 与 saveUncheckedTask 必须同样拦截（真实失败绝不能被“未检查保存”放行）
       const f1 = await makeCtlTask({
         files: {
           'package.json': JSON.stringify({ scripts: { test: 'node check.cjs' } }),
@@ -822,7 +826,12 @@ describe('安全基线（防回归）', () => {
       expect(s1.ok).toBe(false);
       expect(u1.ok).toBe(false);
       expect(u1.message).toBe(s1.message);
-      expect(u1.message).toContain('未通过');
+      // AISS-A1：非 Vitest 脚本（node check.cjs）即使退出 0 也只有「未核实」证据，不能算测试通过。
+      // 验收证据是 unverified、合并后试检查是真实 failed：这是“合并后自动检查未通过”，
+      // 与“原验收证据可信通过、合并后不再通过”的 acceptance_inconsistent 区分开，二者都阻断保存。
+      expect(u1.message).toContain('合并后自动检查未通过');
+      expect(s1.saveOutcome?.kind).toBe('checks_failed');
+      expect(u1.saveOutcome?.kind).toBe('checks_failed');
       expect(await G.headSha(f1.repo)).toBe(head1);
 
       // 2) 冲突（conflict）：saveUncheckedTask 同样触发 save_failed_unmerged，不写入主项目
@@ -864,15 +873,35 @@ describe('安全基线（防回归）', () => {
       expect(s4).toMatchObject({ ok: false, message: MESSAGES.acceptanceInvalid });
       expect(u4).toMatchObject({ ok: false, message: MESSAGES.acceptanceInvalid });
       expect(fs.readFileSync(path.join(f4.repo, 'index.html'), 'utf8')).toBe('old\n');
-    }, 60_000);
+
+      // 5) 新增的「未核实」路径：非 Vitest 测试脚本退出 0 只获得 unverified（不是 passed）。
+      //    saveTask 必须要求确认未检查；saveUncheckedTask 明确确认后才允许保存——即「只放行未检查」，绝不伪造通过。
+      const f5 = await makeCtlTask({
+        files: {
+          'package.json': JSON.stringify({ scripts: { test: 'node ok.cjs' } }),
+          'ok.cjs': 'process.exit(0);\n',
+          'a.txt': 'a0\n',
+        },
+        script: [{ do: 'write', path: 'a.txt', content: 'a1\n' }],
+        withSandbox: true,
+      });
+      const s5 = await f5.ctl.saveTask(f5.id, f5.v.version);
+      expect(s5.ok).toBe(false);
+      expect(s5.view.uncheckedConfirm?.kind).toBe('unverified');
+      expect(s5.message).toContain('没有取得可信的结构化测试证据');
+      expect(fs.readFileSync(path.join(f5.repo, 'a.txt'), 'utf8')).toBe('a0\n');
+      const u5 = await f5.ctl.saveUncheckedTask(f5.id, f5.v.version);
+      expect(u5.ok).toBe(true);
+      expect(fs.readFileSync(path.join(f5.repo, 'a.txt'), 'utf8')).toBe('a1\n');
+    }, 120_000);
   });
 
   describe('阶段 2 第一部分：多项目归属校验（只增不减）', () => {
     it('每个接收 projectId 的 IPC 处理函数都先校验 projectId 在已打开项目表中', () => {
       const handlerPattern = /ipcMain\.handle\('([^']+)',\s*\(([^)]*)\)\s*=>\s*([^\n]+)\);/g;
       const guarded = [...main.matchAll(handlerPattern)].filter((m) => /\bprojectId\b/.test(m[2]!));
-      // 1 个 projects:close + 4 个 project:status/saveHistory/undoHistory + 2 个 project:Brief + 3 个 project:Roles/Executor + 16 个 tasks:* + 10 个 discussion:* + 14 个 acceptance:* = 49 个带 projectId 的处理函数
-      expect(guarded).toHaveLength(49);
+      // 1 个 projects:close + 8 个 project:* + 16 个 tasks:* + 10 个 discussion:* + 15 个 acceptance:*（A1 新增 confirm-scope-change）= 50 个带 projectId 的处理函数
+      expect(guarded).toHaveLength(50);
       const validBody = /^(?:controllerFor\(projectId\)\.\w+\(|projectStatus\(projectId\)|openProjects\.close\(projectId\))/;
       for (const m of guarded) {
         expect(m[3], `handler ${m[1]} 必须首先通过 openProjects 校验 projectId`).toMatch(validBody);

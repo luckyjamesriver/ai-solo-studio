@@ -1,0 +1,34 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-lastdelta-old
+
+ ❯ tests/r4-probes/p15-confirm-missing-evidence.probe.ts (1 test | 1 failed) 4265ms
+   ❯ LAST-DELTA 探针 P15：确认后重新执行没有有效新证据 → 必须保持待确认 (1)
+     × 重新执行时沙箱不可用（not_available、无执行清单）→ 不得 confirmedAt 4264ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r4-probes/p15-confirm-missing-evidence.probe.ts > LAST-DELTA 探针 P15：确认后重新执行没有有效新证据 → 必须保持待确认 > 重新执行时沙箱不可用（not_available、无执行清单）→ 不得 confirmedAt
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/r4-probes/p15-confirm-missing-evidence.probe.ts:109:20
+    107|     expect(calls).toBe(2);
+    108|     // 旧候选：ok=true 且 confirmedAt 落盘（用旧指纹回填）；新候选：保持待确认
+    109|     expect(res.ok).toBe(false);
+       |                    ^
+    110|     expect(after.scopeReview?.confirmedAt).toBeFalsy();
+    111|   }, 120_000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  00:17:40
+   Duration  4.69s (tests 94%, import 3%, transform 3%)
+

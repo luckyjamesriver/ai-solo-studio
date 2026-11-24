@@ -1,0 +1,7 @@
+{"event":"clone","clone":"<tmp>
+{"event":"planned","taskId":"20261124042239-2b7e13"}
+{"event":"acceptance","state":"reviewing","acceptedTree":"ad09aa0c938a7e21fb4a9c1cf30cd4ae27fd2e49","acceptanceRev":1,"buildStatus":"passed","testStatus":"passed","testCounts":{"total":749,"passed":711,"failed":0,"skipped":38,"todo":0},"reportSha256":"7ec0c5c4df50ad867cb08413ca81c772aad530cedf9070acb4d425590c49b54e","reportIntegrity":{"ok":true,"problems":[]},"runner":{"name":"vitest","version":"5.0.5","packageJsonSha256":"d00333f3a13ed44fedc77184c8675bae45246534f06684d94cff5e4f8a9f7c10"},"scope":"assessed_unchanged","itemStatuses":[["build","verified"],["test","verified"]]}
+{"event":"confirmed","version":"ad09aa0c938a-1"}
+{"event":"save","ok":true,"outcome":"saved","message":"已保存到项目。"}
+{"event":"saved","state":"saved","mergeCommit":"1b0c93c596af7e35469f4175078a6ab61cc20d13","taskCommit":"96e75ea499fdb796f3fd2b7ff6ba0db7c46c853f","checked":true,"checksSummary":{"passed":2,"failed":0},"headAfter":"1b0c93c596af7e35469f4175078a6ab61cc20d13","markerCommitted":false}
+{"event":"done","root":"<tmp>

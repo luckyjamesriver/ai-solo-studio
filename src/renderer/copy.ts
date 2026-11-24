@@ -131,6 +131,8 @@ export const COPY = {
   // B4-2 验收区的固定标签与按钮（结论、失败原因、不可用原因都来自主进程的视图，不在这里）
   saveButton: '保存',
   recheckButton: '重新检查',
+  scopeChangeTitle: '测试范围变化需要你确认',
+  scopeChangeConfirm: '我已核对范围变化，按当前范围验收',
   discardButton: '放弃',
   deferButton: '暂不处理',
   undoButton: '撤销这次保存',

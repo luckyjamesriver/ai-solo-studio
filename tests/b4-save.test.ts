@@ -5,7 +5,7 @@ import { TaskRunner } from '../src/core/task/runner.js';
 import { FakeExecutor, type FakeStep } from '../src/core/executor/adapters/fake.js';
 import { MESSAGES } from '../src/core/task/messages.js';
 import * as G from '../src/core/git/git.js';
-import { makeRepo, tmpDir, testSandboxRunner } from './helpers.js';
+import { makeRepo, tmpDir, testSandboxRunner, realVitestScript } from './helpers.js';
 
 /** M3-B4-1 验收矩阵：保存 / 放弃 / 撤销 / 清理 / 中断恢复（模拟执行体 + 真实 Git，无需 Codex） */
 
@@ -153,20 +153,37 @@ describe('B4-1 保存', () => {
   });
 
   it('检查改动了文件：检查结果作废并如实提示，改动清单列出新增文件', async () => {
+    // 真实 Vitest 用例在运行期间写入 process.cwd()（任务副本根目录）：
+    // 检查证据虽然来自可信结构化报告，但被测内容在检查期间被改动 → 结果必须作废，绝不显示为通过。
+    // R1：存储凭证仍是 unverified；统一裁决把「自标失效（valid=false）」升级为更准确的 invalidated。
     const files = {
-      'package.json': JSON.stringify({ scripts: { test: 'node -e "require(\'fs\').writeFileSync(\'generated.txt\',\'x\')"' } }),
+      'package.json': JSON.stringify({ scripts: { test: realVitestScript() } }),
+      'tests/writes.test.ts': [
+        "import fs from 'node:fs';",
+        "import { it, expect } from 'vitest';",
+        "it('检查运行时写了文件', () => { fs.writeFileSync('generated.txt', 'x'); expect(1 + 1).toBe(2); });",
+      ].join('\n'),
       'index.html': '<h1>old</h1>\n',
     };
     const { runner, id, task } = await confirmed({ files, runChecks: true });
     expect(task.checksVoid).toBe(MESSAGES.checksModified);
     const test = task.card!.items.find((i) => i.key === 'test')!;
-    expect(test.status).toBe('not_checked');
-    expect(test.evidence).toContain(MESSAGES.checksModified);
+    expect(test.status).toBe('invalidated');
+    expect(test.status).not.toBe('verified');
+    // 失效原因可能来自「运行期间内容变化」或「被测内容与冻结内容不一致」，两者都如实说明证据已作废
+    expect(test.evidence).toMatch(/检查改动了文件，检查结果已作废|证据已失效/);
+    // 存储的证据必须标记为失效（检查期间源码被改动）
+    const storedTest = task.currentChecks?.find((c) => c.name === 'test');
+    expect(storedTest).toMatchObject({ status: 'unverified', unavailableReason: MESSAGES.checksModified });
+    expect(storedTest?.evidence?.valid).toBe(false);
+    expect(storedTest?.evidence?.invalidReason).toBe('source_changed_during_check');
+    expect(task.card!.items.find((i) => i.key === 'checks_modified')?.status).toBe('invalidated');
     expect(task.card!.items.find((i) => i.key === 'checks_modified')?.evidence).toBe(MESSAGES.checksModified);
     expect(task.card!.changes.map((c) => c.path)).toContain('generated.txt');
     // 确认操作（重建验收卡）不会把“作废”标记弄丢
     const again = await runner.confirm(id, { previewed: true });
     expect(again.card!.items.find((i) => i.key === 'checks_modified')).toBeDefined();
+    expect(again.card!.items.find((i) => i.key === 'test')?.status).toBe('invalidated');
   });
 
   it('主项目不干净：拒绝保存，列出文件，副本保留，没有提交或暂存任何用户文件', async () => {

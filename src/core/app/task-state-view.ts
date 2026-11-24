@@ -1,5 +1,6 @@
 import { scrubAiText } from '../acceptance/texts.js';
 import type { Task, TimelineEntry } from '../task/model.js';
+import { saveChecksTextFor } from '../evidence/adjudicate.js';
 import type { TaskState } from '../task/state.js';
 import { classifyServiceError } from '../thinking/errors.js';
 
@@ -426,9 +427,11 @@ export function classifyTaskState(
         runStatus: null,
         outcome: 'saved',
         workbenchGroup: 'recent_ended',
-        impact: t.saveRecord?.checked
-          ? '已保存到项目（检查通过），需要时可在保存记录里撤销'
-          : '已保存到项目（未检查），需要时可在保存记录里撤销',
+        impact: !t.saveRecord?.checked
+          ? '已保存到项目（未检查），需要时可在保存记录里撤销'
+          : saveChecksTextFor(t) === '检查通过'
+            ? '已保存到项目（检查通过），需要时可在保存记录里撤销'
+            : '已保存到项目（检查记录见保存记录），需要时可在保存记录里撤销',
         actionLabel: '保存记录',
         actionKind: 'open_history',
       });

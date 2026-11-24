@@ -6,7 +6,7 @@ import { Channel } from '../src/core/executor/channel.js';
 import type { Executor, ExecutorEvent } from '../src/core/executor/types.js';
 import { FakeExecutor, type FakeStep } from '../src/core/executor/adapters/fake.js';
 import * as G from '../src/core/git/git.js';
-import { makeRepo, testSandboxRunner } from './helpers.js';
+import { makeRepo, realVitestScript, testSandboxRunner, useRealVitest } from './helpers.js';
 
 const plan = {
   goal: '加入深色模式',
@@ -17,8 +17,15 @@ const plan = {
   irreversible: [],
 };
 
-async function setup(script: FakeStep[], extra: Partial<ConstructorParameters<typeof TaskRunner>[0]> = {}, files?: Record<string, string>) {
+async function setup(
+  script: FakeStep[],
+  extra: Partial<ConstructorParameters<typeof TaskRunner>[0]> = {},
+  files?: Record<string, string>,
+  afterRepo?: (repo: string) => Promise<void>,
+) {
   const repo = await makeRepo(files);
+  // 真实测试夹具必须在创建任务副本之前提交进仓库历史，否则副本里没有测试文件。
+  if (afterRepo) await afterRepo(repo);
   const runner = new TaskRunner({ repo, executor: new FakeExecutor(script), runChecks: false, ...extra });
   const t = await runner.create('给首页加深色模式');
   await runner.setPlan(t.id, plan);
@@ -261,22 +268,74 @@ describe('任务闭环（模拟执行体 + 真实 Git）', () => {
   });
 
   it('真实运行项目的 build / test 脚本，失败时如实标记', async () => {
+    // P0-1 回归：这是真实进程测试，必须跑真实的 Vitest 结构化报告，不能用 mock 或 echo。
+    // 失败场景通过 failWhen 标记文件让真实断言失败（而不是靠退出码伪装失败）。
     const files = {
       'package.json': JSON.stringify({
-        scripts: { build: 'node -e "process.exit(0)"', test: 'node check.js' },
+        scripts: { build: 'node -e "process.exit(0)"', test: realVitestScript() },
       }),
-      'check.js': 'const s=require("fs").readFileSync("index.html","utf8"); process.exit(s.includes("dark")?0:1);\n',
       'index.html': 'light\n',
+      // 真实 Vitest 会在副本里写 node_modules/.vite 缓存；与真实项目一样忽略它，避免被算成“检查期间源码变化”
+      '.gitignore': 'node_modules/\n',
     };
-    const good = await setup([{ do: 'write', path: 'index.html', content: 'dark\n' }, { do: 'exit', code: 0 }], { runChecks: true, sandboxRunner: testSandboxRunner() }, files);
+    // 真实 vitest 只开一个 worker：整仓测试并行时避免多个 vitest 进程风暴拖垮共享的 git/进程资源
+    const vitestFixture = (repo: string) =>
+      useRealVitest(repo, { testScript: `${realVitestScript()} --maxWorkers=1`, failWhen: '.fail-marker' });
+
+    const good = await setup(
+      [{ do: 'write', path: 'index.html', content: 'dark\n' }, { do: 'exit', code: 0 }],
+      { runChecks: true, sandboxRunner: testSandboxRunner() },
+      files,
+      vitestFixture,
+    );
     const tg = await good.runner.start(good.id);
     expect(tg.card?.items.find((i) => i.key === 'build')?.status).toBe('verified');
     expect(tg.card?.items.find((i) => i.key === 'test')?.status).toBe('verified');
+    const goodTest = tg.currentChecks?.find((p) => p.name === 'test');
+    expect(goodTest?.status).toBe('passed');
+    expect(goodTest?.evidence?.verdict).toBe('passed');
+    const counts = goodTest?.evidence?.report?.counts;
+    expect(counts).toBeDefined();
+    expect(counts).toMatchObject({ failed: 0, skipped: 0 });
+    expect(counts!.total).toBeGreaterThanOrEqual(2);
+    expect(counts!.passed).toBeGreaterThanOrEqual(2);
 
-    const bad = await setup([{ do: 'write', path: 'index.html', content: 'still light\n' }, { do: 'exit', code: 0 }], { runChecks: true, sandboxRunner: testSandboxRunner() }, files);
+    // 真实失败：第二条用例的断言确实失败，报告里能看到真实失败计数
+    const bad = await setup(
+      [
+        { do: 'write', path: 'index.html', content: 'still light\n' },
+        { do: 'write', path: '.fail-marker', content: 'x' },
+        { do: 'exit', code: 0 },
+      ],
+      { runChecks: true, sandboxRunner: testSandboxRunner() },
+      files,
+      vitestFixture,
+    );
     const tb = await bad.runner.start(bad.id);
     expect(tb.card?.items.find((i) => i.key === 'test')?.status).toBe('failed');
+    const badTest = tb.currentChecks?.find((p) => p.name === 'test');
+    expect(badTest?.status).toBe('failed');
+    expect(badTest?.evidence?.verdict).toBe('failed');
+    expect(badTest?.evidence?.report?.counts.failed).toBeGreaterThan(0);
     await bad.runner.confirm(bad.id, { criterion: 0, decision: 'confirmed' });
     expect((await bad.runner.save(bad.id)).ok).toBe(false);
-  });
+
+    // 非 Vitest 的 echo 类脚本：即使退出 0 也只是「执行了」，不能算测试通过（unverified，非 PASS）
+    const echoFiles = {
+      'package.json': JSON.stringify({ scripts: { test: 'echo ok' } }),
+      'index.html': 'light\n',
+    };
+    const echo = await setup(
+      [{ do: 'write', path: 'index.html', content: 'dark\n' }, { do: 'exit', code: 0 }],
+      { runChecks: true, sandboxRunner: testSandboxRunner() },
+      echoFiles,
+    );
+    const te = await echo.runner.start(echo.id);
+    expect(te.card?.items.find((i) => i.key === 'test')?.status).toBe('unverified');
+    const echoTest = te.currentChecks?.find((p) => p.name === 'test');
+    expect(echoTest?.status).toBe('unverified');
+    expect(echoTest?.status).not.toBe('passed');
+    expect(echoTest?.evidence?.verdict).toBe('unverified');
+    expect(echoTest?.evidence?.reason).toBe('unsupported_test_runner');
+  }, 120_000);
 });

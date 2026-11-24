@@ -13,6 +13,7 @@ import { FakeExecutor } from '../src/core/executor/adapters/fake.js';
 import { createStandaloneSandboxRunner } from '../src/core/executor/sandbox/index.js';
 import { RecordStore } from '../src/core/persistence/index.js';
 import { SettingsPage } from '../src/renderer/SettingsPage.js';
+import { realVitestScript, useRealVitest } from './helpers.js';
 
 const cleanDirs: string[] = [];
 const cleanServers: http.Server[] = [];
@@ -29,6 +30,9 @@ async function makeGitRepo(files: Record<string, string>): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-s8c-ctl-'));
   cleanDirs.push(dir);
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+  // 本地提交身份：useRealVitest 会在夹具上再提交一次真实测试运行器，需要仓库级身份
+  execFileSync('git', ['config', 'user.name', 'test'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'test@local'], { cwd: dir });
   for (const [rel, content] of Object.entries(files)) {
     const abs = path.join(dir, rel);
     await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -195,7 +199,8 @@ describe('阶段 8C · 独立检查沙箱与控制器/验收/设置页全链路�
     async () => {
       const repo = await makeGitRepo({
         'math.mjs': 'export const add = (a, b) => a - b;\n',
-        'math.test.mjs': `import test from 'node:test';\nimport assert from 'node:assert';\nimport { add } from './math.mjs';\ntest('add passes cleanly', () => assert.equal(add(2, 3), 5));\n`,
+        // AISS-A1：检查通过必须有可信结构化测试证据，因此夹具使用真实 Vitest（不是只关心退出码的 node --test）。
+        'math.test.mjs': `import { describe, it, expect } from 'vitest';\nimport { add } from './math.mjs';\ndescribe('math', () => {\n  it('add passes cleanly', () => { expect(add(2, 3)).toBe(5); });\n});\n`,
         'package.json': JSON.stringify({
           name: 's8c-mac-direct-save',
           scripts: {
@@ -203,7 +208,11 @@ describe('阶段 8C · 独立检查沙箱与控制器/验收/设置页全链路�
             test: 'node --test math.test.mjs',
           },
         }),
+        // 真实 Vitest 会在副本里写 node_modules/.vite 缓存；与真实项目一样忽略它
+        '.gitignore': 'node_modules/\n',
       });
+      // 真实 Vitest 运行器：改写 package.json 的 test 脚本并提交一份真实测试文件
+      await useRealVitest(repo, { testScript: `${realVitestScript()} --maxWorkers=1` });
       const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-s8c-mac-data-'));
       cleanDirs.push(dataDir);
       const endpoint = await startFixMathServer();
@@ -251,7 +260,7 @@ describe('阶段 8C · 独立检查沙箱与控制器/验收/设置页全链路�
       const created = await ctl.create('用 DeepSeek 修复 add 函数并自动检查保存');
       await ctl.savePlan(created.id, { goal: '修复 add', criteria: [], mode: 'standard', network: false });
       await ctl.start(created.id, false);
-      await waitUntil(async () => (await ctl.get(created.id)).state === 'reviewing', 15_000);
+      await waitUntil(async () => (await ctl.get(created.id)).state === 'reviewing', 60_000);
 
       const acc = await ctl.getAcceptanceView(created.id);
       const checkItems = acc.items.filter((i) => i.key === 'build' || i.key === 'test');
@@ -261,7 +270,12 @@ describe('阶段 8C · 独立检查沙箱与控制器/验收/设置页全链路�
       expect(acc.proof.build.envLabel).toBe('沙箱环境');
       expect(acc.proof.test.status).toBe('passed');
       expect(acc.proof.test.envLabel).toBe('沙箱环境');
-      expect(acc.proof.test.cases.some((c) => c.name.includes('add passes cleanly') && c.status === 'passed')).toBe(true);
+      // AISS-A1：测试数量必须来自真实结构化报告（CI 下默认报告器不逐条打印用例名，因此不虚构逐项名称）
+      expect(acc.proof.test.countsSource).toBe('structured_report');
+      expect(acc.proof.test.counts).toBeDefined();
+      expect(acc.proof.test.counts!.total).toBeGreaterThanOrEqual(1);
+      expect(acc.proof.test.counts!.passed).toBeGreaterThanOrEqual(1);
+      expect(acc.proof.test.counts!.failed).toBe(0);
 
       await ctl.confirmOverall(created.id, acc.version);
       const saveRes = await ctl.saveTask(created.id, acc.version);
@@ -271,6 +285,6 @@ describe('阶段 8C · 独立检查沙箱与控制器/验收/设置页全链路�
       expect(savedView.saveCheckText).toBe('检查通过');
       expect(await fs.readFile(path.join(repo, 'math.mjs'), 'utf8')).toBe('export const add = (a, b) => a + b;\n');
     },
-    30_000,
+    120_000,
   );
 });

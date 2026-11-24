@@ -40,6 +40,8 @@ export const MESSAGES = {
   writerLocked: '这个项目的数据正被另一个窗口或进程使用，为避免互相覆盖，这次操作没有执行。',
   /** B4-2-fix：重试清理前无法确认执行体已停止（或归属对不上）时，不删除，显示这一句 */
   cleanupBusy: 'AI 可能还在使用这个任务的临时文件，暂时不能清理，请稍后再试。',
+  /** R1-04：范围重新确认失效（查看后内容/范围又变了）时的固定文案 */
+  scopeConfirmInvalid: '你查看之后任务内容或测试范围又发生了变化，旧的确认已失效，请重新检查后再确认。',
   /** B4-2：核心层返回“操作没有成功、项目保持原样”时，界面统一显示这一句（不展示 Git 原文） */
   opFailed: '这次操作没有成功，项目保持原样。你可以稍后重试。',
   /** B4-2：未知错误的固定文案（原始内容只写入受保护的诊断记录） */
@@ -56,11 +58,16 @@ export function uncheckedReasonText(kind: UncheckedKind, unavailableReason?: Una
   if (kind === 'none') {
     return '项目没有配置可用的自动检查脚本，合并后无法自动验证，请先预览确认后再决定是否仍然保存。';
   }
+  if (kind === 'unverified') {
+    return '自动测试执行了，但没有取得可信的结构化测试证据（例如测试没有真实执行、全部被跳过、报告不可信，或测试范围/配置被改动），因此不能算通过。请先预览确认后再决定是否仍然保存。';
+  }
   switch (unavailableReason) {
     case 'scripts_changed_reauth':
       return '这次合并改动了项目的检查方式，所以没法自动检查。';
     case 'sandbox_unavailable':
       return '当前没有可用的受限运行环境，检查未能运行，所以没法自动检查。';
+    case 'evidence_unverified':
+      return '自动测试没有取得可信的结构化测试证据，所以不能算通过。';
     default:
       return '合并后的自动检查未能运行，所以没法自动检查。';
   }

@@ -25,17 +25,25 @@ import {
 import type { Decision, DeniedOperation, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
 import {
+  collectApprovedScopeBaseline,
+  currentScopeSnapshot,
   detectScripts,
   runCheck,
   runProjectChecks,
   scriptsDigest,
   type CheckName,
   type CheckResult,
+  type EvidenceIdentityContext,
   type ProjectChecksOutcome,
   type SandboxCommandRunner,
   type UnavailableReason,
   type UncheckedKind,
 } from '../checks/scripts.js';
+import type { CheckUnknownReason, HostCheckEvidence } from '../evidence/model.js';
+import { configFingerprintKey, pathIdentityHash } from '../evidence/model.js';
+import { configFingerprintProblems, evidenceIdentityProblem, hasTrustedBuildPass, hasTrustedTestPass } from '../evidence/validate.js';
+import { adjudicateCheckResult, adjudicateStoredProof, adjudicateTaskEvidence, adjudicateTrialEvidenceSet } from '../evidence/adjudicate.js';
+import { detectTestRunner, readConfigFingerprints, readPackageLockDigest } from '../evidence/inventory.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
 import { filterProofOutput, parseTestCases } from '../acceptance/proof.js';
 import { extractConflictSnippet, PREVIEW_LIMITS } from '../acceptance/snippets.js';
@@ -54,6 +62,9 @@ export type OpFailReason =
   | 'acceptance_invalid'
   | 'conflict'
   | 'checks_failed'
+  | 'acceptance_inconsistent'
+  | 'evidence_invalid'
+  | 'evidence_scope_unconfirmed'
   | 'unchecked_needs_confirm'
   | 'project_changed'
   | 'failed_restored'
@@ -314,8 +325,17 @@ export class TaskRunner extends EventEmitter {
     // 批准同时授权“将运行的脚本”：记录当前 package.json 中 build/test（含 pre/post）脚本的内容摘要；
     // 之后脚本内容变化（包括被 AI 改动）则授权失效，对应检查标“未检查”。
     const digest = await scriptsDigest(this.opts.repo);
-    if (digest) t.checkAuth = { digest, at: new Date().toISOString() };
-    else delete t.checkAuth;
+    if (digest) {
+      // 同时记录测试范围基线（批准那一刻的测试清单 / 配置 / 运行器 / 锁文件指纹），
+      // 之后执行体削弱测试范围或替换验证基础设施时，自动通过会被阻断并要求明确重新确认。
+      let scope: Awaited<ReturnType<typeof collectApprovedScopeBaseline>> | undefined;
+      try {
+        scope = await collectApprovedScopeBaseline(this.opts.repo);
+      } catch {
+        scope = undefined;
+      }
+      t.checkAuth = { digest, at: new Date().toISOString(), ...(scope ? { scope } : {}) };
+    } else delete t.checkAuth;
     delete t.reapproveNotice;
     await this.fire(t, 'approve');
     return t;
@@ -792,7 +812,23 @@ export class TaskRunner extends EventEmitter {
    * 先检测外部驱动（命中则不读取任何内容、不运行检查）→ 算 tree（冻结）→ 跑检查 → 再算 tree；
    * 检查改动了文件则检查结果作废，并把检查之后的内容作为新的验收内容（改动清单如实列出，用户看到的就是将要保存的）。
    */
-  private async buildEvidence(t: Task): Promise<void> {
+  /** 统一证据身份上下文：验收卡/试检查/保存门禁都用它做同一套身份校验。 */
+  private evidenceContextFor(t: Task) {
+    const round = t.currentRound ?? 1;
+    return {
+      taskId: t.id,
+      round,
+      ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
+      ...(t.acceptanceRev !== undefined && t.acceptedTree ? { acceptanceVersion: `${t.acceptedTree.slice(0, 12)}-${t.acceptanceRev}` } : {}),
+      ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}),
+      ...(t.binding?.repoPath ? { projectRoot: t.binding.repoPath } : {}),
+      ...(t.worktree?.path ? { worktreePath: t.worktree.path } : {}),
+      ...(t.evidenceInvalid?.reason ? { deepInvalidReason: t.evidenceInvalid.reason } : {}),
+      ...(t.scopeReview ? { scopeReview: t.scopeReview } : {}),
+    };
+  }
+
+  private async buildEvidence(t: Task, opts: { acceptCurrentScope?: boolean } = {}): Promise<void> {
     const wt = t.worktree!;
     const repo = this.opts.repo;
     const start = t.gitStart ?? { mainHeadAtStart: await G.headSha(repo), worktreeHeadAtStart: await G.headSha(wt.path), worktreePath: wt.path };
@@ -801,6 +837,7 @@ export class TaskRunner extends EventEmitter {
     delete t.acceptedTree;
     delete t.checksVoid;
     delete t.uncheckedConfirm;
+    delete t.evidenceInvalid;
     t.acceptanceRev = (t.acceptanceRev ?? 0) + 1; // 每次生成验收证据（含重新检查）版本加一：旧版本的确认请求一律作废
 
     let drivers = await G.detectExternalDrivers(wt.path);
@@ -817,6 +854,16 @@ export class TaskRunner extends EventEmitter {
     const checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
     const roundNo = t.currentRound ?? 1;
     t.roundEndedAt = new Date().toISOString();
+    // 证据身份：任务 / 轮次 / 验收版本 / 被验收内容 tree / 任务基线提交（用于核对测试范围是否被削弱）
+    const identity: EvidenceIdentityContext = {
+      projectRoot: repo,
+      taskId: t.id,
+      round: roundNo,
+      acceptanceRev: t.acceptanceRev,
+      testedTree: tree1,
+      baselineRev: wt.baseSha,
+      ...(t.checkAuth?.scope ? { approvedScope: t.checkAuth.scope } : {}),
+    };
     let checks: CheckResult[] = [];
     let checkProofs: StoredCheckProof[] = [];
     if (this.opts.runChecks !== false) {
@@ -827,8 +874,11 @@ export class TaskRunner extends EventEmitter {
           ...(t.plan?.capabilities ? { capabilities: t.plan.capabilities } : {}),
           taskId: t.id,
           fullTrustRecords: this.store,
+          identity,
+          ...(checkSandbox?.kind ? { sandboxKind: checkSandbox.kind } : {}),
+          ...(opts.acceptCurrentScope ? { acceptCurrentScope: true } : {}),
         });
-        this.log(t, 'check', `${name}: ${c.status}`);
+        this.log(t, 'check', `${name}: ${c.status}${c.status === 'unverified' ? `（${c.unknownReason}）` : ''}`);
         checks.push(c);
       }
       checkProofs = toStoredCheckProofs(checks, checkEnv, new Date().toISOString());
@@ -837,16 +887,55 @@ export class TaskRunner extends EventEmitter {
     if (checks.length) {
       const tree2 = await G.computeTree(repo, wt.path);
       if (tree2 !== tree1) {
+        // 检查期间被测源码被改动：检查结果作废（证据失效），绝不当作通过
         t.checksVoid = MESSAGES.checksModified;
         this.log(t, 'check', MESSAGES.checksModified, 'host');
-        checks = checks.map((c): CheckResult => ({ name: c.name, status: 'not_available', reason: `${MESSAGES.checksModified}因此未检查。` }));
-        checkProofs = checkProofs.map((p): StoredCheckProof => ({ name: p.name, status: 'not_available', env: checkEnv, unavailableReason: `${MESSAGES.checksModified}因此未检查。` }));
+        checks = checks.map((c): CheckResult => ({
+          name: c.name,
+          status: 'unverified',
+          unknownReason: 'source_changed_during_check',
+          reason: MESSAGES.checksModified,
+          output: '',
+          durationMs: 0,
+          ...(c.evidence ? { evidence: { ...c.evidence, verdict: 'unverified', valid: false, invalidReason: 'source_changed_during_check' } } : {}),
+        }));
+        checkProofs = checkProofs.map((p): StoredCheckProof => ({
+          ...p,
+          status: 'unverified',
+          unavailableReason: MESSAGES.checksModified,
+          ...(p.evidence ? { evidence: { ...p.evidence, verdict: 'unverified', valid: false, invalidReason: 'source_changed_during_check' } } : {}),
+        }));
         changes = await G.diffSummary(wt);
         tree = tree2;
       }
     }
+    // 测试范围被削弱 / 内容变化 / 验证基础设施被修改：记录复核要求，自动通过被阻断，等待用户明确重新确认。
+    const testProof = checkProofs.find((p) => p.name === 'test');
+    const scopeKind = testProof?.evidence?.scope.kind;
     t.currentChecks = checkProofs;
     t.acceptedTree = tree;
+    if (!opts.acceptCurrentScope && testProof?.evidence && (scopeKind === 'assessed_weakened' || scopeKind === 'assessed_needs_review')) {
+      const key = testProof.evidence.scope.fingerprint ?? configFingerprintKey(testProof.evidence.config);
+      const execKey = testProof.evidence.scope.executionFingerprint;
+      const prev = t.scopeReview;
+      // 用户确认必须绑定「其实际查看的内容 + 静态范围 + 实际执行清单」：任一变化都会让旧确认失效。
+      const stillSame = !!prev?.confirmedAt && prev.scopeFingerprint === key
+        && (prev.executionFingerprint ?? '') === (execKey ?? '')
+        && prev.contentFingerprint === tree && prev.acceptanceVersion === acceptanceVersion(t);
+      if (!stillSame) {
+        t.scopeReview = {
+          kind: scopeKind === 'assessed_weakened' ? 'weakened' : 'changed',
+          reasons: testProof.evidence.scope.reasons,
+          scopeFingerprint: key,
+          ...(execKey ? { executionFingerprint: execKey } : {}),
+          contentFingerprint: tree,
+          acceptanceVersion: acceptanceVersion(t),
+          detectedAt: new Date().toISOString(),
+        };
+      }
+    } else if (!opts.acceptCurrentScope) {
+      delete t.scopeReview;
+    }
     const savedRoundRef = await G.saveRoundRef(repo, {
       taskId: t.id,
       round: roundNo,
@@ -866,6 +955,7 @@ export class TaskRunner extends EventEmitter {
       overallConfirmed: t.overallConfirmed === true,
       notes: this.cardNotes(t),
       ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
+      evidenceContext: this.evidenceContextFor(t),
     });
     this.syncCurrentRound(t, {
       roundBaseSha: wt.baseSha,
@@ -900,8 +990,113 @@ export class TaskRunner extends EventEmitter {
       delete t.overallNote;
       delete t.lastSave;
       delete t.trialChecks;
+      delete t.scopeReview;
+      delete t.evidenceInvalid;
       t.deniedAcks = t.denied.map(() => false);
       await this.buildEvidence(t);
+      await this.persist(t);
+      return t;
+    } finally {
+      this.leave(id);
+    }
+  }
+
+  /**
+   * 用户明确确认「已知晓测试范围被削弱 / 验证基础设施被修改，仍按当前范围验收」。
+   * 只有用户主动操作才会走到这里；自动反馈闭环不得调用本方法。
+   * 确认会绑定当前验收版本与测试范围指纹，内容和验收版本变化后自动失效。
+   */
+  async confirmScopeChange(id: string): Promise<Task> {
+    if (!this.enter(id)) throw new Error(MESSAGES.busy);
+    try {
+      const t = await this.load(id);
+      if (t.state !== 'reviewing' && t.state !== 'save_failed_unmerged') throw new Error('任务不在验收阶段。');
+      if (!t.scopeReview || t.scopeReview.confirmedAt) throw new Error('这个任务没有需要重新确认的测试范围变化。');
+      if (!t.worktree) throw new Error('任务副本不存在，不能重新确认范围。');
+      // 1) 确认必须绑定「用户实际查看的内容」：版本、内容 tree、范围指纹任一变化都拒绝旧确认
+      if (t.scopeReview.acceptanceVersion !== acceptanceVersion(t)) throw new Error('验收版本已经变化，请重新检查后再确认。');
+      const currentTree = await G.computeTree(this.opts.repo, t.worktree.path);
+      if (!t.acceptedTree || currentTree !== t.acceptedTree || t.scopeReview.contentFingerprint !== currentTree) {
+        throw new Error('你查看之后任务内容又发生了变化，旧的确认已失效，请重新检查后再确认。');
+      }
+      const testProof = (t.currentChecks ?? []).find((c) => c.name === 'test');
+      const snap = await currentScopeSnapshot(t.worktree.path, testProof?.evidence?.report?.execution);
+      const staticSame = snap.scopeFingerprint === t.scopeReview.scopeFingerprint;
+      const executionSame = (snap.executionFingerprint ?? '') === (t.scopeReview.executionFingerprint ?? '');
+      if (!staticSame || !executionSame) {
+        throw new Error('测试范围（含实际执行的测试用例清单）在你查看之后又发生了变化，请重新检查后再确认。');
+      }
+      const reasons = [...t.scopeReview.reasons];
+      // R4-03：记录“用户实际查看/确认”的绑定快照，重新执行后必须逐项复核
+      const reviewedTree = currentTree;
+      const reviewedStatic = t.scopeReview.scopeFingerprint;
+      const reviewedExecution = t.scopeReview.executionFingerprint;
+      // 2) 重新确认前清空旧的验收决定（确认针对的是新的范围/内容，旧确认不能沿用）
+      t.criteria.forEach((c) => {
+        delete c.decision;
+        delete c.note;
+      });
+      t.previewed = false;
+      t.previewSkipped = false;
+      delete t.overallConfirmed;
+      delete t.overallDecision;
+      delete t.overallNote;
+      delete t.lastSave;
+      delete t.trialChecks;
+      delete t.evidenceInvalid;
+      delete t.uncheckedConfirm;
+      t.deniedAcks = t.denied.map(() => false);
+      // 3) 按用户确认的当前范围重新生成证据
+      await this.buildEvidence(t, { acceptCurrentScope: true });
+      // 4) 绑定确认：新验收版本 + 新内容指纹 + 已核对的静态范围与实际执行清单（保存/试合并会消费它）
+      const newTest = (t.currentChecks ?? []).find((c) => c.name === 'test');
+      // R4-LAST-DELTA：重新执行必须产生**有效的新证据与执行清单**；缺失时不得用旧指纹回填。
+      const newStatic = newTest?.evidence?.scope.fingerprint;
+      const newExecution = newTest?.evidence?.scope.executionFingerprint;
+      const missingNewEvidence = !newTest?.evidence || !newStatic || !newExecution;
+      // CLOSEOUT-01 修订二：只凭 evidence 对象 / 静态指纹 / 执行指纹“存在”不能认定重跑证据有效。
+      // 新的 test 证据必须通过与保存门禁完全相同的统一裁决（失败优先、身份、报告完整性、
+      // stdout 交叉核对、范围确认）才算有效；裁决不过就继续待确认，并继续阻断保存。
+      const rerunAdj = adjudicateTaskEvidence(t);
+      const newTestTrusted = newTest !== undefined && rerunAdj.test?.status === 'verified';
+      // R4-03：重新执行的结果必须与用户查看时的内容/静态范围/实际执行清单完全一致；
+      // 任何变化（含缺少有效新证据或证据未通过裁决）都重新进入待确认，绝不把新结果自动登记为用户已授权。
+      const rerunChanged = missingNewEvidence
+        || !newTestTrusted
+        || (t.acceptedTree ?? '') !== reviewedTree
+        || newStatic !== reviewedStatic
+        || (newExecution ?? '') !== (reviewedExecution ?? '');
+      if (rerunChanged) {
+        t.scopeReview = {
+          kind: 'changed',
+          reasons: [
+            ...reasons,
+            missingNewEvidence
+              ? '确认后重新执行检查没有取得有效的测试证据或实际执行清单'
+              : !newTestTrusted
+                ? '确认后重新执行检查没有取得经统一裁决可信的测试结果（报告完整性或 stdout 交叉核对未通过）'
+                : '确认后重新执行检查时，内容/静态范围/实际执行的测试清单发生了变化',
+          ],
+          scopeFingerprint: newStatic ?? reviewedStatic,
+          ...(newExecution ?? reviewedExecution ? { executionFingerprint: newExecution ?? reviewedExecution } : {}),
+          contentFingerprint: t.acceptedTree ?? reviewedTree,
+          acceptanceVersion: acceptanceVersion(t),
+          detectedAt: new Date().toISOString(),
+        };
+        await this.persist(t);
+        throw new Error('确认后重新执行检查时没有取得有效证据或内容/范围发生变化，请重新检查后再确认。');
+      }
+      t.scopeReview = {
+        kind: 'changed',
+        reasons,
+        scopeFingerprint: newStatic,
+        ...(newExecution ? { executionFingerprint: newExecution } : {}),
+        contentFingerprint: t.acceptedTree ?? currentTree,
+        acceptanceVersion: acceptanceVersion(t),
+        detectedAt: t.scopeReview?.detectedAt ?? new Date().toISOString(),
+        confirmedAt: new Date().toISOString(),
+      };
+      this.log(t, 'message', `你已确认：已知晓测试范围/内容变化（${reasons.join('；')}），并按当前范围重新验收。`, 'host');
       await this.persist(t);
       return t;
     } finally {
@@ -966,12 +1161,8 @@ export class TaskRunner extends EventEmitter {
       t.deniedAcks[update.deniedAck] = true;
     }
     const prev = t.card;
-    const auto = prev.items.filter((i) => ['build', 'test'].includes(i.key));
-    const checks: CheckResult[] = auto.map((i) =>
-      i.status === 'not_checked'
-        ? { name: i.key as 'build' | 'test', status: 'not_available', reason: i.evidence }
-        : { name: i.key as 'build' | 'test', status: i.status === 'verified' ? 'passed' : 'failed', outcome: { kind: 'exited', code: i.status === 'verified' ? 0 : 1 }, output: '', durationMs: 0 },
-    );
+    // 用存储的宿主证据重建检查结果：用户确认只改用户输入，绝不把人工确认变成「自动检查通过」
+    const checks = checkResultsFromStored(t.currentChecks);
     t.card = buildCard({
       exit: t.exit!,
       changes: prev.changes,
@@ -984,13 +1175,10 @@ export class TaskRunner extends EventEmitter {
       notes: this.cardNotes(t),
       ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}),
       ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
+      ...(t.evidenceInvalid ? { evidenceInvalid: t.evidenceInvalid.reason } : {}),
       ...(t.gitBinding ? { git: t.gitBinding } : {}),
+      evidenceContext: this.evidenceContextFor(t),
     });
-    // 保留原始检查的证据文字
-    for (const item of t.card.items) {
-      const old = prev.items.find((i) => i.key === item.key);
-      if (old && (item.key === 'build' || item.key === 'test')) item.evidence = old.evidence;
-    }
     this.syncCurrentRound(t);
     await this.persist(t);
     return t;
@@ -1383,7 +1571,7 @@ export class TaskRunner extends EventEmitter {
     await this.persist(t);
   }
 
-  private async runTrialChecks(t: Task, trialPath: string): Promise<ProjectChecksOutcome> {
+  private async runTrialChecks(t: Task, trialPath: string, testedTree: string, trialCommit: string): Promise<ProjectChecksOutcome> {
     if (this.opts.runChecks === false) {
       const detected = await detectScripts(trialPath);
       const hasScripts = Object.keys(detected).length > 0;
@@ -1396,6 +1584,7 @@ export class TaskRunner extends EventEmitter {
             checked: false,
             summary: { passed: 0, failed: 0 },
             failed: [],
+            unverified: [],
           }
         : {
             kind: 'none',
@@ -1404,13 +1593,33 @@ export class TaskRunner extends EventEmitter {
             checked: false,
             summary: { passed: 0, failed: 0 },
             failed: [],
+            unverified: [],
           };
     }
+    // R4-02：普通验收与人工重新确认都必须绑定“实际执行清单”。
+    // 期望值优先取用户确认的范围；否则取本次验收的真实测试证据（普通验收路径）。
+    const acceptedTest = (t.currentChecks ?? []).find((p) => p.name === 'test')?.evidence;
+    const expectedScopeFingerprint = t.scopeReview?.confirmedAt ? t.scopeReview.scopeFingerprint : acceptedTest?.scope.fingerprint;
+    const expectedExecutionFingerprint = t.scopeReview?.confirmedAt
+      ? t.scopeReview.executionFingerprint
+      : acceptedTest?.scope.executionFingerprint;
     return runProjectChecks(trialPath, await this.sandboxForTask(t), {
       authorizedDigest: t.checkAuth?.digest,
       ...(t.plan?.capabilities ? { capabilities: t.plan.capabilities } : {}),
       taskId: t.id,
       fullTrustRecords: this.store,
+      identity: {
+        projectRoot: this.opts.repo,
+        taskId: t.id,
+        round: t.currentRound ?? 1,
+        acceptanceRev: t.acceptanceRev ?? 0,
+        testedTree,
+        trialCommit,
+        baselineRev: t.worktree?.baseSha ?? '',
+        ...(t.checkAuth?.scope ? { approvedScope: t.checkAuth.scope } : {}),
+        ...(expectedScopeFingerprint ? { expectedScopeFingerprint } : {}),
+        ...(expectedExecutionFingerprint ? { expectedExecutionFingerprint } : {}),
+      },
     });
   }
 
@@ -1424,9 +1633,30 @@ export class TaskRunner extends EventEmitter {
     }
   }
 
+  /**
+   * 保存核心门禁：主动裁决当前证据。证据失效 / 范围未确认 / 真实失败一律在此拦截，
+   * 不能依赖界面是否禁用了保存按钮。返回 null 表示可以继续保存流程。
+   */
+  private evidenceSaveGate(t: Task): SaveResult | null {
+    const adj = adjudicateTaskEvidence(t);
+    if (adj.hasInvalidated) {
+      return { ok: false, reason: 'evidence_invalid', detail: '检查证据已失效（内容、验收版本、项目/副本身份或检查配置发生变化），请重新检查后再保存。' };
+    }
+    if (adj.needsScopeConfirm) {
+      return { ok: false, reason: 'evidence_scope_unconfirmed', detail: '测试范围发生了无法静态证明安全的变化，请先核对并明确重新确认后再保存。' };
+    }
+    if (adj.hasFailed) {
+      return { ok: false, reason: 'not_ready', detail: '还有自动检查没有通过，请先修复或退回修改。' };
+    }
+    return null;
+  }
+
   private async doSave(id: string, opts: SaveTaskOptions = {}): Promise<SaveResult> {
     const t = await this.load(id);
     const repo = this.opts.repo;
+    // R1-03/R1-04：保存核心门禁主动调用统一证据裁决（不依赖 UI 状态、不依赖可能过期的卡片）。
+    const evidenceGate = this.evidenceSaveGate(t);
+    if (evidenceGate) return evidenceGate;
     const prevPendingPreHead = t.uncheckedConfirm && t.uncheckedConfirm.version === acceptanceVersion(t) ? t.uncheckedConfirm.preHead : undefined;
     const saveSteps = initialSaveSteps();
     const recordSnapshot = (
@@ -1539,6 +1769,7 @@ export class TaskRunner extends EventEmitter {
 
     await this.opPhase(t, 'trial_merging', { trialWorktreePath: trialPath });
     let checked = false;
+    let checkedFinal = false;
     let uncheckedKind: UncheckedKind | undefined;
     let unavailableReason: UnavailableReason | undefined;
     let uncheckedConfirmedAt: string | undefined;
@@ -1611,16 +1842,47 @@ export class TaskRunner extends EventEmitter {
       this.emitSaveProgress(t.id, saveSteps, false);
 
       // b. 在临时 worktree 里运行项目的自动检查（复用 checks/scripts.ts 的识别结果）
+      let checkOutcomeRef: ProjectChecksOutcome | undefined;
       let checksSummary = { passed: 0, failed: 0 };
       let checkedAt: string | undefined;
+      let checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
+      let ranTime = new Date().toISOString();
+      let trialCommitTree = '';
+      let expectedChecks: ('build' | 'test')[] = [];
       try {
-        const checkOutcome = await this.runTrialChecks(t, trialPath);
+        const trialTreeBefore = await G.computeTree(repo, trialPath);
+        // R4-04：试检查证据必须绑定本次 trialCommit 及其 tree；工作区内容与提交 tree 不同就说明
+        // 试检查跑的不是这次合并结果，证据不能算数。
+        trialCommitTree = (await G.treeOf(repo, trialCommit)).trim();
+        if (trialCommitTree !== trialTreeBefore) {
+          await cleanupTrial();
+          delete t.uncheckedConfirm;
+          t.lastSave = { reason: 'failed', at: new Date().toISOString(), saveSteps };
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'acceptance_inconsistent', detail: '试合并提交的内容与试检查工作区不一致，试检查结果已作废。请重新检查后再保存。' };
+        }
+        const detectedForSave = await detectScripts(trialPath);
+        expectedChecks = (['build', 'test'] as const).filter((n) => typeof detectedForSave[n] === 'string');
+        const checkOutcome = await this.runTrialChecks(t, trialPath, trialTreeBefore, trialCommit);
+        checkOutcomeRef = checkOutcome;
+        const trialTreeAfter = await G.computeTree(repo, trialPath);
+        if (trialTreeAfter !== trialTreeBefore) {
+          // 试检查期间内容被改动：证据作废，阻断保存并要求重新检查
+          await cleanupTrial();
+          delete t.uncheckedConfirm;
+          t.lastSave = { reason: 'failed', at: new Date().toISOString(), saveSteps };
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'acceptance_inconsistent', detail: '合并后检查期间内容发生了变化，试检查结果已作废。请重新检查后再保存。' };
+        }
         checked = checkOutcome.checked;
         checksSummary = checkOutcome.summary;
         checkedAt = checkOutcome.checkedAt;
-        const checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
-        const ranTime = checkedAt ?? new Date().toISOString();
+        checkEnv = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
+        ranTime = checkedAt ?? new Date().toISOString();
         const trialSummary = summarizeTrialChecks(checkOutcome.results, { repoPath: repo, worktreePath: trialPath });
+        // 保存前试合并结果必须与原验收证据一致；不一致则阻断保存并要求重新验收
         if (checkOutcome.failed.length > 0) {
           const failedNames = checkOutcome.failed.map((c) => c.name);
           delete t.uncheckedConfirm;
@@ -1647,9 +1909,38 @@ export class TaskRunner extends EventEmitter {
             totalFailedItems: trialSummary.totalFailedItems,
           };
         }
-        // 未检查（none 或 unavailable）：未传 confirmUnchecked 时不写入主项目，清理临时副本并返回待确认
+        const inconsistent = trialEvidenceInconsistency(t, checkOutcome.results);
+        if (inconsistent) {
+          delete t.uncheckedConfirm;
+          this.opStep(t, '试检查', false, `inconsistent:${inconsistent}`);
+          await cleanupTrial();
+          saveSteps[2] = { ...saveSteps[2]!, status: 'failed', detail: '合并后检查结果与原验收证据不一致' };
+          skipRemaining(3);
+          this.emitSaveProgress(t.id, saveSteps, true);
+          recordSnapshot('failed');
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'acceptance_inconsistent', detail: '合并后的检查结果与原验收证据不一致，本次没有保存。请重新检查后再保存。' };
+        }
+        // 试合并阶段的「范围变化/证据失效」属于硬阻断：不能用「仍要保存」的人工确认绕过
+        const scopeBlocked = checkOutcome.unverified.some((c) =>
+          c.status === 'unverified' && (c.unknownReason === 'test_scope_weakened' || c.unknownReason === 'test_scope_changed'),
+        );
+        if (scopeBlocked) {
+          delete t.uncheckedConfirm;
+          await cleanupTrial();
+          this.opStep(t, '试检查', false, 'scope_blocked');
+          saveSteps[2] = { ...saveSteps[2]!, status: 'failed', detail: '合并后的测试范围与已确认范围不一致' };
+          skipRemaining(3);
+          this.emitSaveProgress(t.id, saveSteps, true);
+          recordSnapshot('failed');
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'evidence_scope_unconfirmed', detail: '合并后的测试范围与已确认的范围不一致，本次没有保存。请重新检查并重新确认后再保存。' };
+        }
+        // 未检查（none / unavailable / 无可信证据）：未传 confirmUnchecked 时不写入主项目，清理临时副本并返回待确认
         if (!checkOutcome.checked) {
-          const kind: UncheckedKind = checkOutcome.kind === 'none' ? 'none' : 'unavailable';
+          const kind: UncheckedKind = checkOutcome.kind === 'none' ? 'none' : checkOutcome.kind === 'unverified' ? 'unverified' : 'unavailable';
           const reasonText = checkOutcome.reasonText ?? uncheckedReasonText(kind, checkOutcome.unavailableReason);
           if (!opts.confirmUnchecked) {
             this.opStep(t, '试检查', false, `needs_confirm:${kind}${checkOutcome.unavailableReason ? `:${checkOutcome.unavailableReason}` : ''}`);
@@ -1657,7 +1948,7 @@ export class TaskRunner extends EventEmitter {
             saveSteps[2] = {
               ...saveSteps[2]!,
               status: 'skipped',
-              detail: kind === 'none' ? '未检查（项目没有配置检查脚本）' : '未检查（自动检查未能运行）',
+              detail: kind === 'none' ? '未检查（项目没有配置检查脚本）' : kind === 'unverified' ? '未检查（没有取得可信测试证据）' : '未检查（自动检查未能运行）',
             };
             skipRemaining(3);
             this.emitSaveProgress(t.id, saveSteps, true);
@@ -1697,10 +1988,15 @@ export class TaskRunner extends EventEmitter {
         this.emitSaveProgress(t.id, saveSteps, false);
 
         this.opStep(t, '试检查', true, checked ? `passed=${checksSummary.passed}` : `unchecked_confirmed:${uncheckedKind}`);
+        const opTrialProofs = checkOutcomeRef ? toStoredCheckProofs(checkOutcomeRef.results, checkEnv, ranTime) : undefined;
+        const opTrialEvIds = this.collectEvidenceIds(checkOutcomeRef);
         await this.opPhase(t, 'trial_checked', {
           checked,
           checksSummary,
           ...(checkedAt ? { checkedAt } : {}),
+          ...(opTrialProofs?.length ? { trialChecks: opTrialProofs } : {}),
+          ...(opTrialEvIds.build || opTrialEvIds.test ? { trialEvidenceIds: opTrialEvIds } : {}),
+          ...(expectedChecks.length ? { expectedChecks } : {}),
           ...(!checked && uncheckedKind
             ? {
                 uncheckedKind,
@@ -1746,6 +2042,44 @@ export class TaskRunner extends EventEmitter {
         return { ok: false, reason: 'project_changed', detail: MESSAGES.projectChanged };
       }
       this.opStep(t, '写入前核对项目未变', true);
+
+      // CLOSEOUT-01 修订一：完整证据集合裁决必须在 `git merge --ff-only` 写入主项目之前完成。
+      // 写入前用“即将写入的试合并提交”作为期望的 merge 身份；写入后仍强制核对实际 HEAD 与它严格相等，
+      // 两者都不成立就不能当作保存成功。这里复用唯一的 adjudicateTrialEvidenceSet（正常保存/持久化/恢复同一口径）。
+      const trialEvidenceIds = this.collectEvidenceIds(checkOutcomeRef);
+      const trialProofsToPersist = checkOutcomeRef ? toStoredCheckProofs(checkOutcomeRef.results, checkEnv, ranTime) : undefined;
+      const setCheck = adjudicateTrialEvidenceSet({
+        taskId: t.id,
+        round: t.currentRound ?? 1,
+        acceptanceRev: t.acceptanceRev,
+        trialCommit,
+        trialCommitTree,
+        mergeCommit: trialCommit,
+        projectRootHash: pathIdentityHash(repo),
+        trialWorktreePathHash: pathIdentityHash(trialPath),
+        expectedChecks,
+        evidenceIds: trialEvidenceIds,
+        checks: trialProofsToPersist ?? [],
+      });
+      // 真实失败 / 身份失效（含集合不一致）是既定硬阻断：即使调用方带着「未检查也保存」的用户确认也不得绕过。
+      // 合法的未检查保存（证据缺项但身份自洽）仍由前面的用户明确确认机制放行，不在这里额外放行或额外阻断。
+      const setHardBlock = checkOutcomeRef !== undefined && (setCheck.status === 'failed' || setCheck.status === 'invalidated');
+      if (setHardBlock || (checked && !setCheck.ok)) {
+        delete t.uncheckedConfirm;
+        this.opStep(t, '试检查证据集合', false, (setCheck.problems.join('；') || setCheck.status).slice(0, 500));
+        await cleanupTrial();
+        saveSteps[2] = { ...saveSteps[2]!, status: 'failed', detail: '试检查证据集合未通过核对，没有写入项目' };
+        skipRemaining(3);
+        this.emitSaveProgress(t.id, saveSteps, true);
+        recordSnapshot('failed');
+        this.endOp(t, 'interrupted');
+        await this.persist(t);
+        return {
+          ok: false,
+          reason: 'evidence_invalid',
+          detail: '试检查证据集合未通过核对（缺项、重复、身份或提交绑定不一致），本次没有保存，你的项目保持原样。请重新检查后再保存。',
+        };
+      }
       await this.opPhase(t, 'writing');
 
       // d. 写入：主项目执行 git merge --ff-only trialCommit
@@ -1790,23 +2124,83 @@ export class TaskRunner extends EventEmitter {
       }
 
       const mergeCommit = await G.headSha(repo);
+      // R3-04：--ff-only 成功时 HEAD 必须就是本次 trialCommit；否则本次写入身份不可确认，绝不能继续当作保存成功。
+      if (mergeCommit !== trialCommit) {
+        await cleanupTrial();
+        const postDirty = await G.dirtyFiles(repo).catch(() => ['?']);
+        const intact = postDirty.length === 0 && (await G.currentBranch(repo).catch(() => '')) === binding.branch;
+        this.opStep(t, '写入后核对提交身份', false, `head=${mergeCommit} trial=${trialCommit}`);
+        t.manualReview = {
+          reason: `写入主项目后，项目 HEAD（${mergeCommit}）不是本次试合并提交（${trialCommit}），无法确认保存内容归属，已停止自动处理。`,
+          at: new Date().toISOString(),
+          ...(intact ? {} : { files: postDirty.filter((x) => x !== '?') }),
+        };
+        saveSteps[3] = { ...saveSteps[3]!, status: 'failed', detail: '写入后无法确认提交身份，需要人工处理' };
+        this.emitSaveProgress(t.id, saveSteps, true);
+        recordSnapshot('abnormal');
+        this.endOp(t, 'interrupted');
+        await this.persist(t);
+        return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
+      }
+      // R1 数据完整性：真实保存后核对「任务内容被完整应用」——任务改动过的路径在合并结果里必须与冻结的验收内容逐字节一致。
+      // 发现漂移就恢复到保存前并如实返回 failed_restored（绝不静默保留一个与验收内容不同的结果）。
+      const drift = await this.verifySavedTaskContent(repo, t, mergeCommit);
+      if (drift.length) {
+        await cleanupTrial();
+        // R2-04：恢复前必须核验当前分支、HEAD、工作区状态，确保恢复安全
+        const curHead = await G.headSha(repo).catch(() => '');
+        const curBranch = await G.currentBranch(repo).catch(() => '');
+        const dirty = await G.dirtyFiles(repo).catch(() => ['?']);
+        const canSafelyRestore = curHead === mergeCommit && curBranch === binding.branch && dirty.length === 0;
+
+        if (!canSafelyRestore) {
+          // 发现外部有其他合法提交或状态不明确，转入人工接管，严禁强行覆盖
+          t.manualReview = {
+            reason: `保存后核对发现任务内容漂移，且主项目在尝试自动恢复前状态已发生变动（HEAD=${curHead}，分支=${curBranch}，修改文件数=${dirty.length}），为保护主项目数据已暂停自动恢复。`,
+            at: new Date().toISOString(),
+            files: drift,
+          };
+          this.opStep(t, '保存后核对任务内容漂移且恢复受阻', false, `无法安全恢复: ${drift.join(',')}`);
+          saveSteps[3] = { ...saveSteps[3]!, status: 'failed', detail: '保存后核对发现改动漂移，且主项目状态变动，需人工处理' };
+          this.emitSaveProgress(t.id, saveSteps, true);
+          recordSnapshot('abnormal', { files: drift });
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal, files: drift };
+        }
+
+        await G.restoreTo(repo, preHead, `studio: 保存后核对失败，已恢复「${t.plan?.goal ?? t.request}」`);
+        delete t.uncheckedConfirm;
+        delete t.trialChecks;
+        this.opStep(t, '保存后核对任务内容', false, drift.join(','));
+        saveSteps[3] = { ...saveSteps[3]!, status: 'failed', detail: '保存后核对发现任务内容与验收内容不一致，已恢复' };
+        this.emitSaveProgress(t.id, saveSteps, true);
+        recordSnapshot('failed_restored', { files: drift });
+        this.endOp(t, 'interrupted');
+        await this.persist(t);
+        return { ok: false, reason: 'failed_restored', detail: MESSAGES.failedRestored, files: drift };
+      }
       delete t.uncheckedConfirm;
       delete t.trialChecks;
       delete t.conflict;
+      delete t.scopeReview;
       saveSteps[3] = { ...saveSteps[3]!, status: 'done', detail: '期间没有新的改动，已写入主项目' };
       this.emitSaveProgress(t.id, saveSteps, true);
       recordSnapshot('saved');
 
       const execName = t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex');
       const executorText = t.model ? `${execName} · ${t.model}` : execName;
+      // CLOSEOUT-01 修订一：集合裁决已在写入前完成（见上），这里复用同一结果落盘，
+      // 配合上面「写入后实际 HEAD 必须等于 trialCommit」的核对，不再存在“先写后判”的窗口。
+      checkedFinal = checked && setCheck.ok;
       t.saveRecord = {
         preMergeHead: preHead,
         taskCommit,
         mergeCommit,
         branch: binding.branch,
         savedAt: new Date().toISOString(),
-        checked,
-        ...(!checked && uncheckedKind
+        checked: checkedFinal,
+        ...(!checkedFinal && uncheckedKind
           ? {
               uncheckedKind,
               ...(unavailableReason ? { unavailableReason } : {}),
@@ -1818,6 +2212,13 @@ export class TaskRunner extends EventEmitter {
         savedRound: t.currentRound ?? 1,
         executorText,
         trialCommit,
+        ...(trialCommitTree ? { trialCommitTree } : {}),
+        ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
+        projectRootHash: pathIdentityHash(repo),
+        trialWorktreePathHash: pathIdentityHash(trialPath),
+        expectedChecks,
+        ...(trialEvidenceIds.build || trialEvidenceIds.test ? { evidenceIds: trialEvidenceIds } : {}),
+        ...(trialProofsToPersist?.length ? { trialChecks: trialProofsToPersist } : {}),
       };
       this.opStep(t, '合并到项目', true, mergeCommit);
       await this.opPhase(t, 'merged', { mergeCommit }); // 合并完成立刻落盘，之后即使中断也能据此核对
@@ -1831,10 +2232,65 @@ export class TaskRunner extends EventEmitter {
       }
     }
 
-    return this.finishSave(t, false, checked);
+    return this.finishSave(t, false, checkedFinal);
+  }
+
+  /**
+   * R3-04：核对“写入主项目的提交”是否就是本任务本次试合并产生的提交：
+   * 第一个父提交 = 保存前版本，第二个父提交 = 任务提交；有 trialCommit 时必须严格相等。
+   */
+  private async verifyMergeIdentity(repo: string, op: { preHead?: string | undefined; taskCommit?: string | undefined; trialCommit?: string | undefined }, merged: string): Promise<string | undefined> {
+    if (!op.preHead || !op.taskCommit) return '保存记录缺少合并前版本或任务提交，无法核对写入身份。';
+    let line: string;
+    try {
+      line = (await G.git(repo, ['rev-list', '--parents', '-n', '1', merged])).trim();
+    } catch (e) {
+      return `无法读取写入提交的父提交：${(e as Error).message}`;
+    }
+    const [commit, first, second] = line.split(' ');
+    if (commit !== merged) return `写入提交对象不一致（${commit}）。`;
+    if (first !== op.preHead) return `写入提交的第一个父提交不是保存前版本（${first}）。`;
+    if (second !== op.taskCommit) return `写入提交的第二个父提交不是本任务提交（${second}）。`;
+    if (op.trialCommit && merged !== op.trialCommit) return `写入提交不是本次试合并提交（${merged} ≠ ${op.trialCommit}）。`;
+    return undefined;
   }
 
   /** 保存的收尾：清理副本与分支，再迁移到 saved / saved_cleanup_pending。保存与启动核对共用。 */
+  /**
+   * 保存后核对：任务改动过的全部路径在合并结果里必须与冻结的验收内容（acceptedTree）完全逐字节一致。
+   * R2-04 取消前 500 个路径抽样限制，采用全量分批比较（每批 200 个），严格使用字面路径语义。
+   */
+  private async verifySavedTaskContent(repo: string, t: Task, mergeCommit: string): Promise<string[]> {
+    if (!t.acceptedTree || !t.worktree) return [];
+    const taskCommit = await G.commitTree(repo, t.acceptedTree, t.worktree.baseSha, `verify: ${t.id}`);
+    const taskTree = await G.treeOf(repo, taskCommit);
+    if (taskTree !== t.acceptedTree) return ['accepted_tree_mismatch'];
+    const taskPaths = await G.diffTreePaths(repo, t.worktree.baseSha, t.acceptedTree);
+    if (!taskPaths.length) return [];
+    const mergedTree = await G.treeOf(repo, mergeCommit);
+
+    const changedPaths: string[] = [];
+    const BATCH_SIZE = 200;
+    for (let i = 0; i < taskPaths.length; i += BATCH_SIZE) {
+      const batch = taskPaths.slice(i, i + BATCH_SIZE);
+      const changed = await G.diffTreePaths(repo, t.acceptedTree, mergedTree, batch);
+      if (changed.length) {
+        changedPaths.push(...changed);
+        if (changedPaths.length >= 20) break;
+      }
+    }
+    return changedPaths.slice(0, 20);
+  }
+
+  /** 收集本次试检查的结构化证据 id（用于保存记录区分“当时有证据”与“历史未核实”）。 */
+  private collectEvidenceIds(outcome: { results: { name: 'build' | 'test'; evidence?: { identity: { evidenceId: string } } }[] } | undefined): { build?: string; test?: string } {
+    const ids: { build?: string; test?: string } = {};
+    for (const r of outcome?.results ?? []) {
+      if (r.evidence?.identity.evidenceId) ids[r.name] = r.evidence.identity.evidenceId;
+    }
+    return ids;
+  }
+
   private async finishSave(t: Task, fromReconcile = false, checked = false): Promise<SaveResult> {
     let cleanup: G.CleanupResult;
     if (fromReconcile) {
@@ -1945,6 +2401,13 @@ export class TaskRunner extends EventEmitter {
       const dirty = await G.dirtyFiles(repo);
       if (dirty.length) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused, files: dirty };
 
+      // R3-04：恢复前核实“要撤销的这次写入”确实是本任务的保存提交（父提交身份 + trialCommit 绑定）
+      const writeIdentity = await this.verifyMergeIdentity(repo, {
+        ...(rec.preMergeHead ? { preHead: rec.preMergeHead } : {}),
+        ...(rec.taskCommit ? { taskCommit: rec.taskCommit } : {}),
+        ...(rec.trialCommit ? { trialCommit: rec.trialCommit } : {}),
+      }, rec.mergeCommit);
+      if (writeIdentity) return { ok: false, reason: 'undo_refused', detail: MESSAGES.undoRefused };
       this.beginOp(t, 'undo', { preHead: rec.mergeCommit });
       await this.persist(t);
       try {
@@ -2027,8 +2490,20 @@ export class TaskRunner extends EventEmitter {
       if (t.state !== 'reviewing' && t.state !== 'save_failed_unmerged') return { kind: 'manual', reason: '保存中断，但任务状态已经不是验收阶段。' };
       const head = await G.headSha(repo);
       const inMerge = await G.mergeInProgress(repo);
-      const merged = op.taskCommit ? await G.findMergeCommit(repo, pre, op.taskCommit) : null;
-      if (merged && !inMerge) return { kind: 'save_merged', merged, phase: op.phase };
+      if (op.trialCommit) {
+        // R3-04：保存写入的就是本次试合并提交；只有 HEAD 仍严格等于它时才能确认“这次保存仍然有效”。
+        if (!inMerge && head === op.trialCommit) return { kind: 'save_merged', merged: op.trialCommit, phase: op.phase };
+        if (!inMerge && head !== pre) {
+          return { kind: 'manual', reason: '保存已经写入，但之后项目又有新的提交（或写入提交无法确认），不能自动当作本次保存有效。' };
+        }
+      } else {
+        // 旧记录没有 trialCommit：退回按合并提交查找，但只接受“它仍是当前 HEAD”的情况
+        const merged = op.taskCommit ? await G.findMergeCommit(repo, pre, op.taskCommit) : null;
+        if (merged && !inMerge) {
+          if (merged === head) return { kind: 'save_merged', merged, phase: op.phase };
+          return { kind: 'manual', reason: '保存已经写入，但之后项目又有新的提交，不能自动当作本次保存有效。' };
+        }
+      }
       if (!inMerge && head === pre && (await G.dirtyFiles(repo)).length === 0) return { kind: 'save_not_merged', phase: op.phase };
       return { kind: 'manual', reason: '保存中断后，项目的版本或文件状态无法判定。' };
     }
@@ -2076,8 +2551,85 @@ export class TaskRunner extends EventEmitter {
     t.reconciled = { at: new Date().toISOString(), note };
   }
 
+  /**
+   * 启动时的证据深度复核（AISS-A1）：应用异常重启后，核对验收记录里的宿主证据是否仍然成立。
+   * - 身份（任务/轮次/验收版本/被测内容）必须一致；
+   * - 检查脚本 / 测试配置 / 运行器 / 锁文件必须在验收之后没有被改动。
+   * 不一致时记录事实（evidenceInvalid），界面显示「证据失效」并阻断保存；不改写任何历史轮次记录。
+   */
+  private async revalidateEvidence(t: Task): Promise<boolean> {
+    if (!['reviewing', 'save_failed_unmerged'].includes(t.state)) return false;
+    const proofs = (t.currentChecks ?? []).filter((p) => p.evidence);
+    if (!proofs.length || !t.worktree) return false;
+    const identity = { taskId: t.id, round: t.currentRound ?? 1, ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}), ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}) };
+    const problems: string[] = [];
+    const dir = t.worktree.path;
+    let scripts: string | undefined;
+    let configFiles: { path: string; sha256: string }[] = [];
+    let lock: string | undefined;
+    try {
+      scripts = await scriptsDigest(dir);
+      configFiles = await readConfigFingerprints(dir);
+      lock = await readPackageLockDigest(dir);
+    } catch {
+      return false;
+    }
+    const detected = await detectScripts(dir).catch(() => ({} as Partial<Record<CheckName, string>>));
+    const runner = detected.test ? await detectTestRunner(dir, detected.test).catch(() => undefined) : undefined;
+    for (const p of proofs) {
+      const ev = p.evidence!;
+      if (evidenceIdentityProblem(ev, identity)) continue; // 身份已失效：界面按失效展示，无需深度复核
+      // 「未检查」的检查项没有真实运行，也没有完整配置指纹：深度复核只针对真实运行过的证据
+      if (ev.verdict === 'not_available' || ev.trust === 'none') continue;
+      problems.push(
+        ...configFingerprintProblems(ev, {
+          scriptsDigest: scripts,
+          configFiles,
+          ...(lock ? { packageLockDigest: lock } : {}),
+          runnerPackage: runner ? { name: runner.name, version: runner.version, packageJsonSha256: runner.packageJsonSha256 } : undefined,
+          ...(runner?.entry ? { runnerEntry: runner.entry } : {}),
+          ...(runner?.deps ? { deps: runner.deps } : {}),
+        }),
+      );
+    }
+    if (!problems.length) {
+      if (t.evidenceInvalid) {
+        delete t.evidenceInvalid;
+        return true;
+      }
+      return false;
+    }
+    const reason = `重建后复核发现检查配置已被改动（${[...new Set(problems)].join('；')}），原检查证据已失效，请重新检查。`;
+    if (t.evidenceInvalid?.reason === reason) return false;
+    t.evidenceInvalid = { reason, at: new Date().toISOString() };
+    this.log(t, 'check', reason, 'host');
+    return true;
+  }
+
+  /** 启动核对前的证据复核（每个任务一次；单个任务失败不影响其他任务）。 */
+  private async revalidateStoredEvidence(): Promise<void> {
+    let listed: { id: string }[] = [];
+    try {
+      listed = await this.store.list();
+    } catch {
+      return;
+    }
+    for (const item of listed) {
+      if (!this.enter(item.id)) continue;
+      try {
+        const t = await this.load(item.id);
+        if (await this.revalidateEvidence(t)) await this.persist(t);
+      } catch {
+        // 复核失败不影响启动；不伪造任何结论
+      } finally {
+        this.leave(item.id);
+      }
+    }
+  }
+
   /** 第二步（有写入）：按识别结果安全收尾，并清理超过 30 天的已放弃任务轮次 Git 引用。 */
   async reconcileTasks(now = new Date()): Promise<ReconcileEntry[]> {
+    await this.revalidateStoredEvidence().catch(() => undefined);
     const out: ReconcileEntry[] = [];
     for (const { taskId: id, finding: first } of await this.identifyTasks()) {
       if (!this.enter(id)) continue;
@@ -2120,20 +2672,66 @@ export class TaskRunner extends EventEmitter {
           await this.persist(t);
           out.push({ taskId: id, action: `需要人工查看：${f.reason}` });
         } else if (f.kind === 'save_merged') {
-          // 合并已经落在分支上：清理残留临时副本，补记合并结果，并完成收尾
+          // 合并已经落在分支上：先核实写入身份与内容完整性，再补记合并结果并收尾
           const op = t.op!;
+          const identityProblem = await this.verifyMergeIdentity(repo, op, f.merged);
+          if (identityProblem) {
+            t.manualReview = { reason: `保存中断后的恢复未通过提交身份核对：${identityProblem}`, at: new Date().toISOString() };
+            this.opStep(t, '启动核对：提交身份核对', false, identityProblem);
+            this.markReconciled(t, '上次保存的写入提交无法确认归属，需要人工查看。');
+            await this.persist(t);
+            out.push({ taskId: id, action: `需要人工查看：${identityProblem}` });
+            continue;
+          }
+          const drift = await this.verifySavedTaskContent(repo, t, f.merged);
+          if (drift.length) {
+            t.manualReview = {
+              reason: `保存中断后的恢复发现：合并结果里任务改动内容与验收冻结内容不一致（${drift.slice(0, 5).join('、')}），已停止自动恢复。`,
+              at: new Date().toISOString(),
+              files: drift,
+            };
+            this.opStep(t, '启动核对：保存内容完整性', false, drift.slice(0, 5).join(','));
+            this.markReconciled(t, '上次保存写入的内容与验收内容不一致，需要人工处理。');
+            await this.persist(t);
+            out.push({ taskId: id, action: '保存内容与验收内容不一致，已转入人工处理' });
+            continue;
+          }
           if (op.trialWorktreePath) {
             const tc = await G.removeTrialWorktree(repo, op.trialWorktreePath).catch((err) => ({ ok: false as const, error: String(err) }));
             this.opStep(t, '清理临时副本', tc.ok, tc.error);
           }
+          // R4-04：试检查结论必须重新经过统一裁决，并且必须绑定本次 trialCommit 及其 tree；
+          // 没有试检查证据时绝不能沿用 op.checked 记成“检查通过”。
+          let recoveredTrialTree = '';
+          try {
+            recoveredTrialTree = (await G.treeOf(repo, f.merged)).trim();
+          } catch {
+            recoveredTrialTree = '';
+          }
+          const recoveredSet = adjudicateTrialEvidenceSet({
+            taskId: t.id,
+            round: t.currentRound ?? 1,
+            acceptanceRev: t.acceptanceRev,
+            trialCommit: op.trialCommit,
+            trialCommitTree: recoveredTrialTree || undefined,
+            mergeCommit: f.merged,
+            projectRootHash: pathIdentityHash(repo),
+            trialWorktreePathHash: op.trialWorktreePath ? pathIdentityHash(op.trialWorktreePath) : undefined,
+            expectedChecks: op.expectedChecks,
+            evidenceIds: op.trialEvidenceIds,
+            checks: op.trialChecks ?? [],
+          });
+          const recoveredChecked = op.checked === true && recoveredSet.ok;
+          const recoveredUnchecked = op.checked === true && !recoveredChecked;
           t.saveRecord ??= {
             preMergeHead: op.preHead!,
             taskCommit: op.taskCommit!,
             mergeCommit: f.merged,
             branch: t.binding?.branch ?? (await G.currentBranch(repo)),
             savedAt: new Date().toISOString(),
-            checked: op.checked ?? false,
-            ...(!op.checked && op.uncheckedKind
+            checked: recoveredChecked,
+            ...(recoveredUnchecked ? { uncheckedKind: 'unverified' as const } : {}),
+            ...(!recoveredChecked && op.uncheckedKind
               ? {
                   uncheckedKind: op.uncheckedKind,
                   ...(op.unavailableReason ? { unavailableReason: op.unavailableReason } : {}),
@@ -2147,13 +2745,20 @@ export class TaskRunner extends EventEmitter {
               ? `${t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex')} · ${t.model}`
               : (t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex')),
             ...(op.trialCommit ? { trialCommit: op.trialCommit } : {}),
+            ...(recoveredTrialTree ? { trialCommitTree: recoveredTrialTree } : {}),
+            ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
+            projectRootHash: pathIdentityHash(repo),
+            ...(op.trialWorktreePath ? { trialWorktreePathHash: pathIdentityHash(op.trialWorktreePath) } : {}),
+            ...(op.expectedChecks?.length ? { expectedChecks: op.expectedChecks } : {}),
+            ...(op.trialEvidenceIds ? { evidenceIds: op.trialEvidenceIds } : {}),
+            ...(op.trialChecks?.length ? { trialChecks: op.trialChecks } : {}),
           };
           delete t.uncheckedConfirm;
           this.opStep(t, '启动核对：合并已在分支上', true, f.merged);
           op.mergeCommit = f.merged;
           this.markReconciled(t, '上次保存在写入项目后中断，核对后确认内容已经保存到项目。');
           await this.opPhase(t, 'merged');
-          const r = await this.finishSave(t, true, op.checked ?? false);
+          const r = await this.finishSave(t, true, t.saveRecord?.checked === true);
           out.push({ taskId: id, action: r.ok && r.task.state === 'saved' ? '已修正为 saved' : '已修正为 saved_cleanup_pending' });
         } else if (f.kind === 'save_not_merged') {
           const op = t.op!;
@@ -2261,6 +2866,8 @@ export class TaskRunner extends EventEmitter {
   async previewSave(t: Task): Promise<OpFail | null> {
     const repo = this.opts.repo;
     if (t.manualReview) return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
+    const gate = this.evidenceSaveGate(t);
+    if (gate && !gate.ok) return { ok: false, reason: gate.reason, detail: gate.detail };
     const lock = await this.findProjectLock(t.id);
     if (lock) return this.projectLockFail(lock);
     const wt = t.worktree;
@@ -2365,20 +2972,111 @@ function initialSaveSteps(): SaveProgressStep[] {
 }
 
 function toStoredCheckProofs(checks: CheckResult[], env: 'sandbox' | 'local', ranAt: string): StoredCheckProof[] {
-  return checks.map((c): StoredCheckProof =>
-    c.status === 'not_available'
-      ? { name: c.name, status: 'not_available', env, unavailableReason: c.reason }
-      : {
-          name: c.name,
-          status: c.status,
-          ranAt,
-          durationMs: c.durationMs,
-          env,
-          rawOutput: c.output,
-          exitKind: c.outcome.kind,
-          ...(c.outcome.kind === 'exited' ? { exitCode: c.outcome.code } : {}),
-        },
+  return checks.map((c): StoredCheckProof => {
+    if (c.status === 'not_available') {
+      return { name: c.name, status: 'not_available', env, unavailableReason: c.reason, ...(c.evidence ? { evidence: c.evidence } : {}) };
+    }
+    if (c.status === 'unverified') {
+      return {
+        name: c.name,
+        status: 'unverified',
+        ranAt,
+        durationMs: c.durationMs,
+        env,
+        rawOutput: c.output,
+        unavailableReason: c.reason,
+        ...(c.outcome ? { exitKind: c.outcome.kind, ...(c.outcome.kind === 'exited' ? { exitCode: c.outcome.code } : {}) } : {}),
+        ...(c.evidence ? { evidence: c.evidence } : {}),
+      };
+    }
+    return {
+      name: c.name,
+      status: c.status,
+      ranAt,
+      durationMs: c.durationMs,
+      env,
+      rawOutput: c.output,
+      exitKind: c.outcome.kind,
+      ...(c.outcome.kind === 'exited' ? { exitCode: c.outcome.code } : {}),
+      ...(c.evidence ? { evidence: c.evidence } : {}),
+    };
+  });
+}
+
+/** 从任务记录里的宿主证据恢复检查结果（用于重新生成验收卡，不重跑进程）。 */
+function checkResultsFromStored(proofs: StoredCheckProof[] | undefined): CheckResult[] {
+  return (proofs ?? []).map((p): CheckResult => {
+    if (p.status === 'not_available') {
+      return {
+        name: p.name,
+        status: 'not_available',
+        unknownReason: (p.evidence?.invalidReason as CheckUnknownReason | undefined) ?? (p.evidence?.reason as CheckUnknownReason | undefined) ?? 'no_script',
+        reason: p.unavailableReason ?? '未检查。',
+        ...(p.evidence ? { evidence: p.evidence } : {}),
+      };
+    }
+    if (p.status === 'unverified') {
+      return {
+        name: p.name,
+        status: 'unverified',
+        unknownReason: (p.evidence?.invalidReason as CheckUnknownReason | undefined) ?? (p.evidence?.reason as CheckUnknownReason | undefined) ?? 'no_structured_evidence',
+        reason: p.unavailableReason ?? '未取得可信证据。',
+        output: p.rawOutput ?? '',
+        durationMs: p.durationMs ?? 0,
+        ...(p.evidence ? { evidence: p.evidence } : {}),
+      };
+    }
+    return {
+      name: p.name,
+      status: p.status === 'passed' ? 'passed' : 'failed',
+      outcome: { kind: 'exited', code: p.exitCode ?? (p.status === 'passed' ? 0 : 1) },
+      output: p.rawOutput ?? '',
+      durationMs: p.durationMs ?? 0,
+      ...(p.evidence ? { evidence: p.evidence } : {}),
+    };
+  });
+}
+
+/**
+ * R3-02：保存前试合并结果与原验收证据是否一致 —— 必须消费统一裁决，而不是 status 字符串。
+ * 原验收“可信通过”的检查项，试检查也必须是可信通过（trust / 完整性 / 真实退出状态 / 范围全部成立）。
+ */
+function trialEvidenceInconsistency(t: Task, trialResults: CheckResult[]): string | undefined {
+  if (!t.currentChecks?.length) return undefined;
+  const round = t.currentRound ?? 1;
+  const acceptedCtx = {
+    taskId: t.id,
+    round,
+    ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
+    ...(t.acceptanceRev !== undefined && t.acceptedTree ? { acceptanceVersion: `${t.acceptedTree.slice(0, 12)}-${t.acceptanceRev}` } : {}),
+    ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}),
+    ...(t.binding?.repoPath ? { projectRoot: t.binding.repoPath } : {}),
+    ...(t.worktree?.path ? { worktreePath: t.worktree.path } : {}),
+    ...(t.scopeReview ? { scopeReview: t.scopeReview } : {}),
+  } as const;
+  const acceptedAdj = t.currentChecks.map((p) => adjudicateStoredProof(p, acceptedCtx));
+  const trialAdj = trialResults.map((c) =>
+    adjudicateCheckResult(c, {
+      taskId: t.id,
+      round,
+      ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
+      // 试检查在合并结果上运行：以该证据自己的被测 tree 作为上下文，避免把“不同 tree”误判成失效
+      ...(c.evidence?.identity.testedTree ? { acceptedTree: c.evidence.identity.testedTree } : {}),
+      ...(t.scopeReview ? { scopeReview: t.scopeReview } : {}),
+    }),
   );
+  for (const name of ['build', 'test'] as const) {
+    const a = acceptedAdj.find((x) => x.name === name);
+    const tr = trialAdj.find((x) => x.name === name);
+    if (!a || !tr) continue;
+    if (a.status === 'invalidated') return `${name}:accepted_invalidated`;
+    if (a.status === 'verified' && tr.status !== 'verified') {
+      return `${name}:accepted_verified_trial_${tr.status}${tr.reason ? `:${tr.reason}` : ''}`;
+    }
+    if (tr.status === 'failed' && a.status !== 'failed') return `${name}:trial_failed`;
+    if (a.status === 'unverified' && tr.status === 'failed') return `${name}:accepted_unverified_trial_failed`;
+  }
+  return undefined;
 }
 
 function summarizeTrialChecks(
@@ -2395,13 +3093,21 @@ function summarizeTrialChecks(
   let testFailedCount = 0;
   let hasExplicitTestCount = false;
   if (testRes && testRes.status !== 'not_available') {
-    const filtered = filterProofOutput(testRes.output, filterOpts);
-    const parsed = parseTestCases(filtered, testRes.status);
-    testPassedCount = parsed.passedCount;
-    testFailedCount = testRes.status === 'failed' ? Math.max(1, parsed.failedCount) : parsed.failedCount;
-    hasExplicitTestCount =
-      parsed.parsedNames ||
-      /\b\d+\s+(?:passed|failed|passing|failing)\b|^(?:pass|fail)\s+\d+/im.test(filtered);
+    // 数量只取真正的可信来源（结构化报告 > stdout 显式数字摘要）；取不到就是未知，绝不默认生成
+    const counts = testRes.evidence?.report?.counts;
+    if (counts) {
+      testPassedCount = counts.passed;
+      testFailedCount = Math.max(counts.failed, testRes.status === 'failed' ? 1 : 0);
+      hasExplicitTestCount = true;
+    } else {
+      const filtered = filterProofOutput('output' in testRes ? testRes.output : '', filterOpts);
+      const parsed = parseTestCases(filtered);
+      if (parsed.counts) {
+        testPassedCount = parsed.counts.passed;
+        testFailedCount = Math.max(parsed.counts.failed, testRes.status === 'failed' ? 1 : 0);
+        hasExplicitTestCount = true;
+      }
+    }
   }
   const buildFailCount = buildRes?.status === 'failed' ? 1 : 0;
   const totalFailedItems = buildFailCount + (testRes?.status === 'failed' ? testFailedCount : 0);
@@ -2410,8 +3116,9 @@ function summarizeTrialChecks(
     ...(testRes?.status === 'failed' && testFailedCount > 0 ? { test: testFailedCount } : {}),
   };
 
-  const buildOk = buildRes?.status === 'passed';
-  const testOk = testRes?.status === 'passed';
+  // 结论文案必须来自可信证据（verdict/trust/完整性），不得只凭 status 字符串
+  const buildOk = hasTrustedBuildPass(buildRes?.evidence);
+  const testOk = hasTrustedTestPass(testRes?.evidence);
   let passedText = '检查通过';
   if (buildOk && testOk) {
     passedText = hasExplicitTestCount ? `构建与 ${testPassedCount} 项测试通过` : '构建与测试通过';

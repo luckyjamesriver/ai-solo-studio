@@ -3,6 +3,7 @@
 **更新时间：** 2026-11-24  
 **权威基线分支：** `rebuild` (`origin/rebuild`)  
 **产品代码交付基线 (Product Code Merge SHA)：** `9aecd45d94f0574930f833d83633cf9ac76ae744` (PR #3 Merged)  
+**当前任务基线（Reference HEAD）：** `e69ca8511a17acfc4427954af13ef6d364ffb553`（`AISS-A1-TRUSTED-EVIDENCE-001`；本工作树 HEAD，分支 `feat/aiss-a1-trusted-evidence-001`）  
 **工程状态声明：** `AISS_P0_2_CHATGPT_SECURE_INTERACTION_COMPLETE`  
 **基线解耦与治理原则：** 明确解耦产品代码合入基准与动态 Git HEAD。产品代码基线以 PR #3 合入提交 `9aecd45` 为静态唯一准绳；文档修订、工程地图与基线维护提交正常推进 Git 主干 HEAD，严禁因文档自身提交产生 SHA 循环修改。
 
@@ -66,6 +67,20 @@
 
 ## 四、 本地代码索引与辅助机制有效性声明 (Code Review Graph)
 
-- **CRG 索引状态**：`VALID` (已完成全量图索引更新，覆盖 218 文件，3060 节点，48324 边；`head_matches_build: true`)
-- **检索验证**：经 `query_graph_tool`（`file_summary`、`tests_for`）实测检索，`ChatGPTCompanionManager` 14 个节点与 4 项关键测试引用均能高精度秒级命中，图谱索引健康有效。
-- **失效降级策略**：若 HEAD 推进导致 `head_matches_build: false`，开发代理立即降级为 Git / Ripgrep 原生源码检索，严禁阻塞开发，不引入任何常驻索引守护进程。
+本节以三个**分离字段**登记索引身份，禁止把「源码等价」误读为「exact-HEAD 匹配」。依据：`docs/reports/2026-11-24-final-baseline-sync-evidence.md` 的构建记录，以及本工作树只读 Git 核查。
+
+- **`build_sha`**：`9ce89e2b54a43054130487c12587abe3a040807a` — 仓库文档记录的索引构建来源提交（见 `docs/reports/2026-11-24-final-baseline-sync-evidence.md:46`）；该值为**仓库记录值，本次未复验**。
+- **`source_equivalence`**：`true`（构建后至当前 HEAD 的改动仅涉及文档，源码/测试等价）。
+  - 证据方法：`git diff --stat 9ce89e2b54a43054130487c12587abe3a040807a..e69ca8511a17acfc4427954af13ef6d364ffb553`
+  - 实测结果：`3 files changed, 128 insertions(+), 11 deletions(-)`，全部为 `docs/CURRENT_BASELINE.md`、`docs/engineering/CODE_MAP.md`、`docs/reports/2026-11-24-final-baseline-sync-evidence.md`；`git diff --name-only <build_sha>..<current> -- src tests` 输出为空。
+- **`exact_head_match`**：`false` — `build_sha`（`9ce89e2`）≠ 当前 HEAD（`e69ca8511a17acfc4427954af13ef6d364ffb553`）。
+- **索引注册状态**：`STALE_PENDING_SYNC`（exact-HEAD 未被证明，**不得**标记 `VALID`）。该索引仅可用于「源码等价」前提下的符号/引用检索辅助；**不得**作为 exact-HEAD 的 PR 审查、验收或发布证据。按 `docs/engineering/INDEX_PILOT_EVALUATION.md` 原则 1，凡与精确 HEAD 相关的结论一律降级为 Git / Ripgrep 原生源码检索。
+- **实时索引核验：`OPEN / 未核实`。** 当前工作区未检出 `.code-review-graph/` 索引库（`ls .code-review-graph` → `No such file or directory`），且本任务被限定只能修改 `docs/`，故未重建/读取实时索引。历史记录中的 218 文件 / 3060 节点 / 48324 边与 `query_graph_tool` 检索命中均为**仓库文档记录值，本次未复验**；`code-review-graph 2.4.0` 二进制本机存在（`which code-review-graph` → `/Users/jamesho/.local/bin/code-review-graph`），仅证明工具可用，不证明索引有效。
+- **失效降级策略**：HEAD 推进或 `exact_head_match: false` 时，开发代理立即降级为 Git / Ripgrep 原生源码检索，严禁阻塞开发，不引入任何常驻索引守护进程。
+
+---
+
+## 五、 当前任务与能力登记 (AISS-A1-TRUSTED-EVIDENCE-001)
+
+- **任务基线（Reference HEAD）**：`AISS-A1-TRUSTED-EVIDENCE-001` 基于精确基线提交 `e69ca8511a17acfc4427954af13ef6d364ffb553`（本工作树 `/Users/jamesho/ai-solo-studio-a1` HEAD，分支 `feat/aiss-a1-trusted-evidence-001`）。
+- **能力边界**：本任务仅修订工程文档的事实准确性（webBridge 实际能力、真实符号与函数签名、CRG 索引注册），**A2–A6 能力均未实现**，本文件不预注册、不承诺、不描述其存在；任何后续能力须在其实现并有真实源码/测试证据后另行登记。

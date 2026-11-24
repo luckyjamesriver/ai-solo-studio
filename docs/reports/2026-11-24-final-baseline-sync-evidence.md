@@ -32,7 +32,7 @@
   - `src/renderer/ChatGPTView.tsx`（伴侣视界控制、加载错误提示、显式项目选择器、方案审查与防重锁）。
   - `src/renderer/planParser.ts`（结构化方案解析、全要素无静默丢失、用户批准优先级高于原始参考、空目标拦截）。
   - `src/renderer/chatgptFeedback.ts`（生成结构化反馈审查包、凭证与绝对路径脱敏、选项变动重置核验状态、强制人工确认门禁）。
-  - `src/renderer/webBridge.ts`（DOM 文本与划选安全提取、提取失败诚实报错与手工输入提示，绝不偷窃剪贴板）。
+  - `src/renderer/webBridge.ts`（提取辅助：主窗口 `webviewTag: false` 且 `#chatgpt-webview` 为普通 `<div>`，无法跨窗口读取独立伴侣窗口 DOM，恒返回诚实降级错误并引导人工粘贴，绝不偷窃剪贴板；证据 `src/main/index.ts:247`、`src/renderer/ChatGPTView.tsx:453-456`、`src/renderer/webBridge.ts:81-87`）。
   - `src/renderer/TaskPage.tsx`（反馈包模态框入口接入）。
 - **时序流**：新增《5. ChatGPT 网页交互、方案受控导入与反馈审查时序流 (P0-2 Flow)》。
 - **测试映射**：登记 `tests/chatgpt-secure-interaction.test.ts` 与 `e2e/shell.e2e.ts` 的真实断言边界。
@@ -43,11 +43,12 @@
   - 解析文件数：218
   - 节点总数：3060
   - 边总数：48324（含 CALLS: 28302, TESTED_BY: 13712, CONTAINS: 2835, REFERENCES: 2223）
-  - `built_at_sha`: `9ce89e2b54a43054130487c12587abe3a040807a`
-  - `head_matches_build`: `true`
-- **可检索性验证 (Query Evidence)**：
+  - `built_at_sha`: `9ce89e2b54a43054130487c12587abe3a040807a`（仓库文档记录值，本次未复验）
+  - `head_matches_build`: `true`（记录时点成立：构建时 HEAD 即 `9ce89e2`。此后 `1b8e9c9`/`e69ca85` 仅修改 `docs/`，当前 HEAD 为 `e69ca8511a17acfc4427954af13ef6d364ffb553`，故当前 `exact_head_match: false`，索引注册状态为 `STALE_PENDING_SYNC`；最新三字段注册见 `docs/CURRENT_BASELINE.md` §四）
+- **可检索性验证 (Query Evidence)**（均为仓库文档记录值，本次未复验）：
   - `query_graph_tool` (`file_summary` 目标 `src/main/chatgpt-companion.ts`)：秒级精准提取 14 个节点（类 `ChatGPTCompanionManager`、函数 `openCompanion`、`setupWebContentsSecurity`、`isAllowedChatGPTUrl` 等完整行号）。
   - `query_graph_tool` (`tests_for` 目标 `ChatGPTCompanionManager`)：秒级精准命中 4 项关联测试用例（真实 WebContents 拦截测试、LIVE_LOGIN_NOT_VERIFIED 标记测试、白名单限制测试、非法协议拦截测试）。
+- **时效性说明（2026-11-24）：** 上述 218 文件 / 3060 节点 / 48324 边与检索命中均为**仓库文档记录值**；当前工作区未检出 `.code-review-graph/` 索引库，本次未重建或读取实时索引，实时索引验证标记为 `OPEN / 未核实`。
 
 ---
 

@@ -1,0 +1,10 @@
+# 远程证据逐文件核验（commit a739d024233cd0a099ab63ef2b1cbceddcd38db1）
+# 方法：GitHub contents API 读取 ref=a739d024233cd0a099ab63ef2b1cbceddcd38db1 的内容，与本地 git show a739d024233cd0a099ab63ef2b1cbceddcd38db1:<path> 的 sha256 比对
+
+OK      src/core/task/runner.ts  b7ecbcfdefb96760db9a05be7916e8c3e52acd7406b082b1a8240c03eec62375
+OK      tests/closeout-probes/p16-save-set-gate.probe.ts  8b7e59df6dd08544f999625eb434d0357cb15917a1eb099fd1c5cffec0e77393
+OK      tests/closeout-probes/p17-unchecked-identity-bypass.probe.ts  c51248ca799660b84ba7bec8ba82a400e3a8bf815c5d5fbb2d4a25adc97239fe
+OK      tests/closeout-probes/p18-confirm-rerun-integrity.probe.ts  1144640284c8356a1652437588acfec7186877c46f1a9f3e482af58424849d70
+OK      vitest.probes.config.ts  b10ee279dbede88772f17f69d4c2d18a97940e5f8dddc9b87b06c8e5a47a2200
+
+checked=5 mismatch=0

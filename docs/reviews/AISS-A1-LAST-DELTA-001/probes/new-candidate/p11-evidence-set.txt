@@ -1,0 +1,12 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r4-probes/p11-evidence-set.probe.ts (1 test) 7862ms
+   ✓ LAST-DELTA 探针 P11：保存证据集合缺项/重复/错配/身份错配都不得可信通过 (1)
+     ✓ 正常保存记录带完整绑定与应执行集合；四类破坏均降级 7861ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  00:17:47
+   Duration  8.32s (tests 96%, transform 2%, import 1%)
+

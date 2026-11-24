@@ -1,0 +1,12 @@
+Updating code graph in . (no LLM needed)...
+[graphify watch] 28 file(s) not classified (no supported extension or shebang), skipped: .git, .gitignore, .nvmrc, InstrumentSerif-Regular.woff2, LICENSE, Lato-Bold.woff2 (+22 more)
+  AST cache: 0/335 files served from cache (0%); 335 to extract
+  AST extraction: 100/335 uncached files (29%) [8 workers]
+  AST extraction: 200/335 uncached files (59%) [8 workers]
+  AST extraction: 300/335 uncached files (89%) [8 workers]
+  AST extraction: 335/335 uncached files (100%) [8 workers]
+  warning: 31 code file(s) yielded no symbols (0.05 MB) — a data file, or source this extractor models no symbols for: docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R1-001/repro/real-project/tests/dates.test.ts, docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R1-001/repro/real-project/tests/math.test.ts, docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R1-001/repro/real-project/tests/slug.test.ts, docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R1-001/repro/real-project/tests/store.test.ts, docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R1-001/repro/real-project/tests/text.test.ts (+26 more)
+[graphify watch] Rebuilt (no clustering): 3518 nodes, 11036 edges
+[graphify watch] graph.json updated in graphify-out
+Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.
+Tip: set GEMINI_API_KEY or GOOGLE_API_KEY to use Gemini for semantic extraction.

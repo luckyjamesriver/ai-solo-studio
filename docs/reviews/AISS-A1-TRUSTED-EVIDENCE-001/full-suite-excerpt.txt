@@ -1,0 +1,7 @@
+=== 全量单元+集成（本机，HEAD 503179f）===
+command: npx vitest run (--reporter=json)
+timestamp: 2026-11-24T04:27Z
+JSON report written to /tmp/a1-full7.json
+
+JSON 汇总:
+{"numTotalTests":749,"numPassedTests":711,"numFailedTests":0,"numPendingTests":38,"numTotalTestSuites":239,"numPassedTestSuites":239}

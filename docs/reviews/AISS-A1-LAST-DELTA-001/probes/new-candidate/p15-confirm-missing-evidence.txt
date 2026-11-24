@@ -1,0 +1,12 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r4-probes/p15-confirm-missing-evidence.probe.ts (1 test) 3725ms
+   ✓ LAST-DELTA 探针 P15：确认后重新执行没有有效新证据 → 必须保持待确认 (1)
+     ✓ 重新执行时沙箱不可用（not_available、无执行清单）→ 不得 confirmedAt 3724ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  00:18:54
+   Duration  4.06s (tests 96%, import 2%, transform 2%)
+

@@ -21,7 +21,7 @@ import { CheckProofPage } from '../src/renderer/CheckProofPage.js';
 import { PlanCard } from '../src/renderer/PlanCard.js';
 import { RunView } from '../src/renderer/RunView.js';
 import type { Task } from '../src/core/task/model.js';
-import { testSandboxRunner } from './helpers.js';
+import { realVitestScript, testSandboxRunner } from './helpers.js';
 
 const tmpDirs: string[] = [];
 
@@ -223,21 +223,20 @@ describe('阶段 4 · 第二节：检查依据页、轮次绑定、测试解析�
     expect(cleaned).toContain('手机端卡片双列排版');
   });
 
-  it('parseTestCases 能逐项列出测试名；不可解析时回退为通过/失败数量；无检查显示「未检查」不标通过', () => {
+  it('parseTestCases 能逐项列出测试名；没有显式数字摘要时数量未知（绝不按检查状态补造通过数量）；无检查显示「未检查」不标通过', () => {
     const withNames = parseTestCases('✓ 首页能正常显示 (4ms)\n✓ 作品卡片数量正确 2ms\n✗ 窄屏排版对齐\nTests 1 failed | 2 passed (3)', 'failed');
     expect(withNames.parsedNames).toBe(true);
-    expect(withNames.passedCount).toBe(2);
-    expect(withNames.failedCount).toBe(1);
+    expect(withNames.counts).toEqual({ passed: 2, failed: 1, skipped: 0, total: 3 });
     expect(withNames.cases.map((c) => [c.name, c.status])).toEqual([
       ['首页能正常显示', 'passed'],
       ['作品卡片数量正确', 'passed'],
       ['窄屏排版对齐', 'failed'],
     ]);
 
+    // P0-2 回归：解析不出显式数字时，数量必须是未知，不能生成「1 项通过」
     const opaque = parseTestCases('all assertions succeeded', 'passed');
     expect(opaque.parsedNames).toBe(false);
-    expect(opaque.passedCount).toBe(1);
-    expect(opaque.failedCount).toBe(0);
+    expect(opaque.counts).toBeNull();
 
     const noScriptsProof = buildTaskProof(mkReviewingTask());
     expect(noScriptsProof.test.status).toBe('not_checked');
@@ -248,20 +247,29 @@ describe('阶段 4 · 第二节：检查依据页、轮次绑定、测试解析�
   });
 
   it('真实运行自动检查保存原始记录到本机，界面视图与 CheckProofPage 只拿到过滤结果且默认折叠详细记录', async () => {
+    // AISS-A1：自动测试的“通过”必须有可信结构化报告，因此用真实 Vitest 跑 2 条真实用例；
+    // 敏感样本行仍由 pretest 打印，验证界面只拿到过滤后的详细记录。
     const repo = initRepo({
       'package.json': JSON.stringify({
         scripts: {
           build: 'node build.cjs',
-          test: 'node run-tests.cjs',
+          pretest: 'node print-sensitive.cjs',
+          // --no-color：CI 环境下 picocolors 会强制颜色，带 ANSI 转义的逐项测试名无法被界面解析
+          test: `${realVitestScript()} --reporter=verbose --no-color`,
         },
       }),
       'build.cjs': 'console.log("built ok");',
-      'run-tests.cjs': [
+      'print-sensitive.cjs': [
         'console.log("> app@1.0.0 test");',
         'console.log("SECRET_API_KEY=sk-proj-9999999999abcdef");',
-        'console.log("✓ renders home title (5ms)");',
-        'console.log("✓ keeps card layout /Users/devuser/proj/a.test.js (3ms)");',
-        'console.log("Tests 2 passed (2)");',
+        'console.log("Trace in /Users/devuser/proj/a.test.js");',
+      ].join('\n'),
+      'tests/fixture.test.ts': [
+        "import { describe, it, expect } from 'vitest';",
+        "describe('fixture', () => {",
+        "  it('renders home title', () => { expect('home').toBe('home'); });",
+        "  it('keeps card layout', () => { expect([1, 2].length).toBe(2); });",
+        "});",
       ].join('\n'),
       'index.html': '<h1>old</h1>\n',
     });
@@ -288,7 +296,9 @@ describe('阶段 4 · 第二节：检查依据页、轮次绑定、测试解析�
     // 原始记录存在于本机记录里；界面只获得过滤后的数据
     const rawTasks = await ctl.listTasksRaw();
     const rawTest = rawTasks[0]?.currentChecks?.find((c) => c.name === 'test');
+    expect(rawTest?.status).toBe('passed');
     expect(rawTest?.rawOutput).toContain('sk-proj-9999999999abcdef');
+    expect(rawTest?.evidence?.report?.counts).toMatchObject({ total: 2, passed: 2, failed: 0 });
 
     expect(view.proof.round).toBe(1);
     expect(view.proof.test.originNote).toBe('由本应用运行，不是 AI 自报');
@@ -312,13 +322,13 @@ describe('阶段 4 · 第二节：检查依据页、轮次绑定、测试解析�
 
 describe('阶段 4 · 第三节：退回修改与多轮独立记录', () => {
   it('退回修改在同一副本开始第 2 轮，自动附上不符合标准与说明，且第 1 轮记录与证据不被覆盖', async () => {
+    // 真实 Vitest：第 1 轮 index.html 不含 round2 → 真实断言失败；第 2 轮写入 round2 → 真实通过。
     const repo = initRepo({
-      'package.json': JSON.stringify({ scripts: { test: 'node run-tests.cjs' } }),
-      'run-tests.cjs': [
-        'const fs = require("node:fs");',
-        'const html = fs.readFileSync("index.html", "utf8");',
-        'if (html.includes("round2")) { console.log("✓ round2 check (2ms)\\nTests 1 passed (1)"); process.exit(0); }',
-        'console.log("✗ round2 check (2ms)\\nTests 1 failed (1)"); process.exit(1);',
+      'package.json': JSON.stringify({ scripts: { test: `${realVitestScript()} --reporter=verbose` } }),
+      'tests/round2.test.ts': [
+        "import fs from 'node:fs';",
+        "import { it, expect } from 'vitest';",
+        "it('index.html 包含 round2 标记', () => { expect(fs.readFileSync('index.html', 'utf8')).toContain('round2'); });",
       ].join('\n'),
       'index.html': '<h1>v0</h1>\n',
     });

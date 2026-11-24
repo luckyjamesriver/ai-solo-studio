@@ -1,0 +1,93 @@
+
+ RUN  v5.0.5 /private/tmp/a1-closeout-old
+
+ ❯ tests/closeout-probes/p17-unchecked-identity-bypass.probe.ts (1 test | 1 failed) 5273ms
+   ❯ CLOSEOUT-01 修订一：未检查确认只放行“未检查”，不得绕过身份失效 (1)
+     × confirmUnchecked 保存期间副本身份失效 → 仍不得改写主项目 5272ms
+ ❯ tests/closeout-probes/p16-save-set-gate.probe.ts (1 test | 1 failed) 5438ms
+   ❯ CLOSEOUT-01 修订一：集合裁决必须在写入主项目之前（正常保存入口） (1)
+     × 试检查后副本身份失效 → 未经任何未检查确认，不得改写主项目 HEAD/tree/工作区 5437ms
+ ❯ tests/closeout-probes/p18-confirm-rerun-integrity.probe.ts (3 tests | 2 failed) 15304ms
+   ❯ CLOSEOUT-01 修订二：确认后重跑必须取得有效的新证据 (3)
+     × 重跑执行清单相同但 stdout 摘要缺失（报告完整性失败）→ 保持待确认，不登记 confirmedAt 5272ms
+     × 重跑执行清单相同但 stdout 摘要与报告不一致（报告完整性失败）→ 保持待确认，不登记 confirmedAt 5038ms
+     ✓ 正向：正常有效重跑（执行清单一致且证据可信）仍然允许用户确认 4993ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/closeout-probes/p16-save-set-gate.probe.ts > CLOSEOUT-01 修订一：集合裁决必须在写入主项目之前（正常保存入口） > 试检查后副本身份失效 → 未经任何未检查确认，不得改写主项目 HEAD/tree/工作区
+AssertionError: expected '0a8c27681e6681e9f04ee42d91c430539df4f…' to be '34088abdcadbe4317fe2f6c4f6a355d34a3a2…' // Object.is equality
+
+Expected: "34088abdcadbe4317fe2f6c4f6a355d34a3a2176"
+Received: "0a8c27681e6681e9f04ee42d91c430539df4fc6d"
+
+ ❯ tests/closeout-probes/p16-save-set-gate.probe.ts:126:34
+    124|
+    125|       // 新候选：集合裁决在写入前 → 主项目完全没被改动（旧候选会先写入，HEAD 已被改写）
+    126|       expect(await headOf(repo)).toBe(preHead);
+       |                                  ^
+    127|       expect(await treeOfHead(repo)).toBe(preTree);
+    128|       expect(await porcelain(repo)).toBe('');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/closeout-probes/p17-unchecked-identity-bypass.probe.ts > CLOSEOUT-01 修订一：未检查确认只放行“未检查”，不得绕过身份失效 > confirmUnchecked 保存期间副本身份失效 → 仍不得改写主项目
+AssertionError: expected '6dca64267b4b85d7327b284b19d7792f94c64…' to be '491bd512c02f0cc65792a5538b2f45306fe37…' // Object.is equality
+
+Expected: "491bd512c02f0cc65792a5538b2f45306fe37b4b"
+Received: "6dca64267b4b85d7327b284b19d7792f94c64d51"
+
+ ❯ tests/closeout-probes/p17-unchecked-identity-bypass.probe.ts:129:34
+    127|
+    128|       // 新候选：身份失效是硬阻断，confirmUnchecked 不能绕过（旧候选会写入主项目并落未检查保存记录）
+    129|       expect(await headOf(repo)).toBe(preHead);
+       |                                  ^
+    130|       expect(await treeOfHead(repo)).toBe(preTree);
+    131|       expect(await porcelain(repo)).toBe('');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/closeout-probes/p18-confirm-rerun-integrity.probe.ts > CLOSEOUT-01 修订二：确认后重跑必须取得有效的新证据 > 重跑执行清单相同但 stdout 摘要缺失（报告完整性失败）→ 保持待确认，不登记 confirmedAt
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/closeout-probes/p18-confirm-rerun-integrity.probe.ts:142:20
+    140|
+    141|     // 新候选：不得登记 confirmedAt，不得自动解除范围门禁
+    142|     expect(res.ok).toBe(false);
+       |                    ^
+    143|     expect(after.scopeReview).toBeTruthy();
+    144|     expect(after.scopeReview?.confirmedAt).toBeFalsy();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/closeout-probes/p18-confirm-rerun-integrity.probe.ts > CLOSEOUT-01 修订二：确认后重跑必须取得有效的新证据 > 重跑执行清单相同但 stdout 摘要与报告不一致（报告完整性失败）→ 保持待确认，不登记 confirmedAt
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/closeout-probes/p18-confirm-rerun-integrity.probe.ts:158:20
+    156|     expect(afterProof?.evidence?.scope.executionFingerprint).toBe(befo…
+    157|
+    158|     expect(res.ok).toBe(false);
+       |                    ^
+    159|     expect(after.scopeReview).toBeTruthy();
+    160|     expect(after.scopeReview?.confirmedAt).toBeFalsy();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  4 failed | 1 passed (5)
+   Start at  01:31:25
+   Duration  15.69s (tests 97%, transform 2%, import 1%)
+

@@ -162,7 +162,7 @@ describe('多项目后台与工作台汇总（阶段 2 第一部分）', () => {
     expect(lockedRes.ok).toBe(false);
     expect(lockedRes.message).toContain('项目 A 恢复未确认');
     expect(fs.readFileSync(path.join(repoA, 'a.txt'), 'utf8')).toBe('a0\n');
-  });
+  }, 30_000); // 同时驱动两个真实项目 + 多次保存/撤销，并行跑全量测试时需要更多时间
 
   it('有任务施工中时拒绝关闭项目；停止后允许关闭并释放存储锁；伪造 projectId 立即拒绝', async () => {
     const dataDir = mk('appdata');

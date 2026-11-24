@@ -594,6 +594,7 @@ ipcMain.handle('acceptance:rejectCriterion', (_e, projectId: unknown, id: unknow
 ipcMain.handle('acceptance:confirmOverall', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).confirmOverall(id, version));
 ipcMain.handle('acceptance:ackDenied', (_e, projectId: unknown, id: unknown, itemId: unknown, version: unknown) => controllerFor(projectId).ackDenied(id, itemId, version));
 ipcMain.handle('acceptance:recheck', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).recheck(id));
+ipcMain.handle('acceptance:confirm-scope-change', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).confirmScopeChange(id, version));
 ipcMain.handle('acceptance:save', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).saveTask(id, version));
 ipcMain.handle('acceptance:saveUnchecked', (_e, projectId: unknown, id: unknown, version: unknown) => controllerFor(projectId).saveUncheckedTask(id, version));
 ipcMain.handle('acceptance:discard', (_e, projectId: unknown, id: unknown) => controllerFor(projectId).discardTask(id));

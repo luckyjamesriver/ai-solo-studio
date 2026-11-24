@@ -17,6 +17,7 @@ import type { DeniedOperation, ExitOutcome } from '../executor/types.js';
 import type { FileChange } from '../git/git.js';
 import type { AcceptanceCard } from './card.js';
 import { extractIncomplete, type IncompleteReport } from './incomplete.js';
+import { adjudicateRoundChecks, adjudicateTaskEvidence, saveChecksTextFor, type CheckAdjudication } from './verdict.js';
 import { buildRoundProof, buildTaskProof, buildTaskProofFromParts, type ProofChangeEntry, type ProofDeniedEntry, type ProofTab, type SingleCheckProof, type TaskProofView, type TestCaseProof } from './proof.js';
 import type { ChangePreview } from './snippets.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from './texts.js';
@@ -29,7 +30,8 @@ export type { ProofChangeEntry, ProofDeniedEntry, ProofTab, SingleCheckProof, Ta
  * 渲染层只拿到 UserAcceptanceView：不含底层验收卡、证据原文、命令、Git 错误文本和绝对路径。
  * 所有文案由本文件按状态生成，或取自 messages.ts；原始内容只存在于受保护的诊断记录（.studio/）里。
  */
-export type ViewItemStatus = 'verified' | 'not_checked' | 'failed' | 'pending_user';
+/** 界面条目状态：unverified = 执行了但缺乏可信证据；invalidated = 证据失效。两者都绝不是「通过」。 */
+export type ViewItemStatus = 'verified' | 'not_checked' | 'unverified' | 'invalidated' | 'failed' | 'pending_user';
 
 export interface ViewItem {
   key: string;
@@ -54,8 +56,8 @@ export interface ActionState {
 }
 export interface SaveRecordView {
   checked: boolean;
-  /** 保存记录界面的检查结论：只显示“检查通过”或“未检查”，不显示命令 */
-  checksText: '检查通过' | '未检查';
+  /** 保存记录界面的检查结论：只有真实结构化证据支持才显示“检查通过”；历史记录标注未核实 */
+  checksText: '检查通过' | '未检查' | '检查通过（历史记录未核实）' | '检查未通过（历史记录）' | '证据不可信（历史记录）';
   uncheckedKind?: UncheckedKind;
   uncheckedConfirmedAt?: string;
   passedCount: number;
@@ -238,6 +240,8 @@ export interface UserAcceptanceView {
   saveRecord: SaveRecordView | null;
   /** 最近一次保存返回“未检查待确认”且验收版本一致时的界面确认信息与按钮文案 */
   uncheckedConfirm: UncheckedConfirmView | null;
+  /** 测试范围/验证基础设施相对基线被削弱：必须先明确重新确认，自动通过已被阻断（null = 无） */
+  scopeChange: { needed: boolean; reasons: string[]; text: string; confirmLabel: string } | null;
   /** 检查依据详情页数据（按当前轮次绑定，已做命令行/环境变量/密钥/~路径过滤） */
   proof: TaskProofView;
   /** 最近一次保存尝试失败时的试检查依据（供 #10-save-result 查看失败项跳转到 #08-evidence） */
@@ -261,7 +265,7 @@ export interface UserAcceptanceView {
 
 /** view.ts 新增文案（待规划会话审定）。其余文案取自 messages.ts。 */
 export const VIEW_TEXT = {
-  verdictReady: '所有检查都已通过，可以保存。',
+  verdictReady: '所有检查都取得了可信通过证据，可以保存。',
   verdictReadyUnchecked: '可以保存。注意：部分项目没有自动检查。',
   verdictChecksFailed: '有检查未通过，还不能保存。',
   verdictNotReady: (reason: string) => `还不能保存：${reason}`,
@@ -274,7 +278,11 @@ export const VIEW_TEXT = {
   exitOk: '正常结束',
   checkPassed: (name: string, sec: number | null) => `项目自带的${name}全部通过${sec === null ? '' : `（${sec} 秒）`}`,
   checkFailed: (name: string) => `项目自带的${name}没有通过`,
+  checkUnverified: (name: string) => `项目自带的${name}没有取得可信证据，不能算通过`,
+  checkInvalidated: (name: string) => `项目自带的${name}证据已失效，请重新检查`,
   checkVoid: '检查改动了文件，检查结果已作废，请重新检查。',
+  verdictUnverified: '有自动检查没有取得可信证据（不能算通过）。你可以重新检查，或明确接受未检查风险后保存。',
+  verdictInvalidated: '检查证据已失效，请重新检查后再保存。',
   unexpected: '出现了意外的权限请求，已自动拦下。',
   saveSupersedes: '保存后，上一次保存就不能单独撤销了。',
   undoNeedsCleanup: '临时文件还没清理干净，请先重试清理。',
@@ -297,6 +305,8 @@ export const VIEW_TEXT = {
     exec_not_ok: 'AI 的执行没有正常结束。',
     build_failed: '项目构建没有通过。',
     test_failed: '自动测试没有通过。',
+    evidence_invalid: '检查证据已失效（内容、验收版本、项目/副本身份或检查配置发生了变化），请重新检查。',
+    evidence_scope_unconfirmed: '测试范围发生了无法静态证明安全的变化，请先核对并明确重新确认后再保存。',
     isolation: '施工环境的隔离出现异常，工作台不允许保存。',
     denied_unacked: '有被拦下的操作，请逐条确认你知晓。',
     overall_unconfirmed: '请先确认“我已看过改动，结果符合我的要求”。',
@@ -312,6 +322,7 @@ const ITEM_LABEL: Record<string, string> = {
   build: '项目能成功构建',
   test: '自动测试通过',
   checks_modified: '检查是否改动了文件',
+  checks_evidence: '检查证据是否有效',
   denied: 'AI 请求的操作是否都已执行',
   preview: '你已经试用过效果',
   drivers: '项目文件类型受工作台支持',
@@ -328,7 +339,18 @@ export function hasExternalImpact(t: Task): boolean {
   return !!caps && (caps.extraWritableDirs.length > 0 || caps.constructionMode === 'full_trust');
 }
 
-const mapStatus = (s: string): ViewItemStatus => (s === 'verified' || s === 'user_confirmed' ? 'verified' : s === 'failed' || s === 'user_rejected' ? 'failed' : s === 'not_checked' ? 'not_checked' : 'pending_user');
+const mapStatus = (s: string): ViewItemStatus =>
+  s === 'verified' || s === 'user_confirmed'
+    ? 'verified'
+    : s === 'failed' || s === 'user_rejected'
+      ? 'failed'
+      : s === 'not_checked'
+        ? 'not_checked'
+        : s === 'unverified'
+          ? 'unverified'
+          : s === 'invalidated'
+            ? 'invalidated'
+            : 'pending_user';
 
 function formatShortTime(iso: string): string {
   const d = new Date(iso);
@@ -351,6 +373,12 @@ export function mapFailure(f: OpFail): { message: string; files?: string[] } {
     case 'external_driver': return withFiles(MESSAGES.externalDriver);
     case 'acceptance_invalid': return withFiles(MESSAGES.acceptanceInvalid);
     case 'conflict': return withFiles(MESSAGES.conflict);
+    case 'acceptance_inconsistent':
+      return withFiles('合并后的检查结果与原验收证据不一致，本次没有保存。请重新检查后再保存。');
+    case 'evidence_invalid':
+      return withFiles('检查证据已失效（内容、验收版本、项目/副本身份或检查配置发生了变化），请重新检查后再保存。');
+    case 'evidence_scope_unconfirmed':
+      return withFiles('测试范围发生了无法静态证明安全的变化，请先核对并明确重新确认后再保存。');
     case 'checks_failed': {
       const names = (f.failedChecks ?? []).map((k) => CHECK_NAME[k]).filter(Boolean);
       return withFiles(names.length ? `合并后自动检查未通过（${names.join('、')}），本次没有保存，你的项目保持原样。` : MESSAGES.checksFailed);
@@ -423,7 +451,7 @@ export interface ViewContext {
 const off = (reason: string, extra: Partial<ActionState> = {}): ActionState => ({ enabled: false, reason, ...extra });
 const on = (extra: Partial<ActionState> = {}): ActionState => ({ enabled: true, ...extra });
 
-function verdictFor(t: Task, blockers: BlockerCode[], saveFail: { message: string } | null, anyFailed: boolean, anyUnchecked: boolean): string {
+function verdictFor(t: Task, blockers: BlockerCode[], saveFail: { message: string } | null, anyFailed: boolean, anyUnchecked: boolean, anyUnverified: boolean, anyInvalidated: boolean): string {
   if (t.manualReview) return MESSAGES.abnormal;
   switch (t.state) {
     case 'saved':
@@ -440,8 +468,10 @@ function verdictFor(t: Task, blockers: BlockerCode[], saveFail: { message: strin
     case 'reviewing': {
       if (blockers.includes('external_driver')) return VIEW_TEXT.blockers.external_driver;
       if (anyFailed) return VIEW_TEXT.verdictChecksFailed;
+      if (anyInvalidated) return VIEW_TEXT.verdictInvalidated;
       if (blockers.length) return VIEW_TEXT.verdictNotReady(VIEW_TEXT.blockers[blockers[0]!]);
       if (saveFail) return VIEW_TEXT.verdictNotReady(saveFail.message);
+      if (anyUnverified) return VIEW_TEXT.verdictUnverified;
       return anyUnchecked ? VIEW_TEXT.verdictReadyUnchecked : VIEW_TEXT.verdictReady;
     }
     default: return STATE_TEXT[t.state];
@@ -451,7 +481,7 @@ function verdictFor(t: Task, blockers: BlockerCode[], saveFail: { message: strin
 /** 核心层计算验收状态：验收通过 / 验收未完成 / 验收未通过（v1.0 不做部分通过） */
 export function computeAcceptanceStatus(
   t: Pick<Task, 'state' | 'manualReview' | 'criteria' | 'overallConfirmed' | 'overallDecision'>,
-  opts: { save: ActionState; deniedAllAcked: boolean; anyUnchecked: boolean; verdict: string; showSaveWhenOpen?: boolean },
+  opts: { save: ActionState; deniedAllAcked: boolean; anyUnchecked: boolean; anyUnverified?: boolean; verdict: string; showSaveWhenOpen?: boolean },
 ): AcceptanceStatusView {
   if (t.manualReview) {
     return { kind: 'incomplete', label: '验收未完成', reason: MESSAGES.abnormal, showSaveButton: false };
@@ -480,6 +510,15 @@ export function computeAcceptanceStatus(
       kind: 'incomplete',
       label: '验收未完成',
       reason: VIEW_TEXT.blockers.denied_unacked,
+      showSaveButton: opts.showSaveWhenOpen ?? true,
+    };
+  }
+  if (opts.anyUnverified) {
+    // 证据缺失不得显示为「验收通过」：可以继续保存（需明确接受未检查风险），但结论必须如实
+    return {
+      kind: 'incomplete',
+      label: '验收未完成',
+      reason: '有自动检查没有取得可信证据，不能算通过。可以重新检查，或明确接受未检查风险后保存。',
       showSaveButton: opts.showSaveWhenOpen ?? true,
     };
   }
@@ -522,10 +561,13 @@ function mapCardItems(
           const m = it.evidence.match(/（(\d{1,6}) 秒）/); // 只取数字
           text = VIEW_TEXT.checkPassed(name, m ? Number(m[1]) : null);
         } else if (status === 'failed') text = VIEW_TEXT.checkFailed(name);
+        else if (status === 'unverified') text = VIEW_TEXT.checkUnverified(name);
+        else if (status === 'invalidated') text = VIEW_TEXT.checkInvalidated(name);
         else text = notCheckedText(it.key, it.evidence);
         break;
       }
       case 'checks_modified': text = MESSAGES.checksModified; break;
+      case 'checks_evidence': text = VIEW_TEXT.verdictInvalidated; break;
       case 'denied':
         text = denied.length === 0 ? VIEW_TEXT.deniedNone : status === 'verified' ? VIEW_TEXT.deniedAcked(denied.length) : VIEW_TEXT.deniedSome(denied.length);
         break;
@@ -537,6 +579,36 @@ function mapCardItems(
     items.push({ key: it.key, label, status: it.key === 'preview' ? 'not_checked' : status, text });
   }
   return items;
+}
+
+const ADJ_STATUS: Record<CheckAdjudication['status'], ViewItemStatus> = {
+  verified: 'verified',
+  failed: 'failed',
+  not_checked: 'not_checked',
+  unverified: 'unverified',
+  invalidated: 'invalidated',
+};
+
+/** 把统一裁决结果合并进展示条目：状态与文案只来自裁决入口。 */
+function applyAdjudications(items: ViewItem[], adjudications: CheckAdjudication[]): void {
+  for (const adj of adjudications) {
+    const idx = items.findIndex((i) => i.key === adj.name);
+    const name = adj.name === 'build' ? CHECK_NAME.build : CHECK_NAME.test;
+    const text =
+      adj.status === 'failed'
+        ? VIEW_TEXT.checkFailed(name)
+        : adj.status === 'not_checked'
+          ? notCheckedText(adj.name, adj.detail)
+          : adj.detail;
+    const item: ViewItem = {
+      key: adj.name,
+      label: idx >= 0 ? items[idx]!.label : adj.name === 'build' ? '项目能成功构建' : '自动测试通过',
+      status: ADJ_STATUS[adj.status],
+      text,
+    };
+    if (idx >= 0) items[idx] = item;
+    else items.push(item);
+  }
 }
 
 function mapChanges(changes: FileChange[] | undefined, previews: Map<string, ChangePreview> | undefined): ViewChange[] {
@@ -588,6 +660,7 @@ function buildRoundSnapshot(
   const roundDenied = r.denied ?? [];
   const roundAcks = r.deniedAcks ?? [];
   const items = mapCardItems(r.card, r.exit, roundDenied, roundAcks);
+  applyAdjudications(items, adjudicateRoundChecks(r.checks, { taskId: t.id, round: r.round, ...(r.acceptedTree ? { acceptedTree: r.acceptedTree } : {}) }));
   const anyUnchecked = items.some((i) => i.status === 'not_checked' && i.key !== 'preview');
   const deniedAllAcked = roundDenied.every((_, i) => roundAcks[i] === true);
   const acceptanceStatus = computeAcceptanceStatus(
@@ -647,9 +720,15 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
   const acks = t.deniedAcks ?? [];
   const items = mapCardItems(card, t.exit, denied, acks);
 
+  // R1-03：build/test 状态一律由统一裁决入口决定（不沿用可能过期的验收卡结论）。
+  const adjudications = adjudicateTaskEvidence(t);
+  applyAdjudications(items, adjudications.items);
+
   const blockers = t.state === 'reviewing' || t.state === 'save_failed_unmerged' ? saveBlockerCodes(t) : [];
   const anyFailed = items.some((i) => i.status === 'failed');
   const anyUnchecked = items.some((i) => i.status === 'not_checked' && i.key !== 'preview');
+  const anyUnverified = items.some((i) => i.status === 'unverified' && i.key !== 'preview');
+  const anyInvalidated = items.some((i) => i.status === 'invalidated');
   const saveFail = ctx.saveCheck ? mapFailure(ctx.saveCheck) : null;
 
   const changes = mapChanges(card?.changes, ctx.previews);
@@ -718,9 +797,9 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
           : on();
 
   const extra = hasExternalImpact(t);
-  const verdict = verdictFor(t, blockers, saveFail, anyFailed, anyUnchecked);
+  const verdict = verdictFor(t, blockers, saveFail, anyFailed, anyUnchecked, anyUnverified, anyInvalidated);
   const deniedAllAcked = denied.every((_, i) => acks[i] === true);
-  const acceptanceStatus = computeAcceptanceStatus(t, { save, deniedAllAcked, anyUnchecked, verdict });
+  const acceptanceStatus = computeAcceptanceStatus(t, { save, deniedAllAcked, anyUnchecked, anyUnverified, verdict });
   const acceptedRisks: AcceptedRiskView[] = (t.acceptedRisks ?? [])
     .filter((r) => typeof r?.title === 'string' && r.title.trim())
     .map((r) => ({ title: scrubAiText(r.title), reason: scrubAiText(r.reason ?? '') }));
@@ -746,6 +825,21 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
           reason: uncheckedReasonText(t.uncheckedConfirm.kind, t.uncheckedConfirm.unavailableReason),
           previewButtonText: VIEW_TEXT.uncheckedOpenPreview,
           confirmButtonText: VIEW_TEXT.uncheckedSaveAnyway,
+        }
+      : null;
+
+  // R1-04：范围复核确认必须绑定「内容指纹 + 范围指纹 + 验收版本」；未确认前阻断自动通过。
+  const scopeReview = t.scopeReview;
+  const scopeConfirmValid = !!scopeReview?.confirmedAt
+    && scopeReview.contentFingerprint === (t.acceptedTree ?? '')
+    && scopeReview.acceptanceVersion === acceptanceVersion(t);
+  const scopeChange: UserAcceptanceView['scopeChange'] =
+    !readOnly && scopeReview && !scopeConfirmValid && t.state === 'reviewing'
+      ? {
+          needed: true,
+          reasons: scopeReview.reasons.map(scrubAiText),
+          text: '测试范围/测试内容发生了无法静态证明安全的变化，自动通过已被阻断。请先查看检查依据；确认你核对的就是当前内容后，点下方按钮明确重新确认（确认后需要重新完成验收）。',
+          confirmLabel: '我已核对当前内容与范围，重新确认',
         }
       : null;
 
@@ -897,7 +991,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     saveRecord: t.saveRecord
       ? {
           checked: t.saveRecord.checked === true,
-          checksText: t.saveRecord.checked === true ? '检查通过' : '未检查',
+          checksText: saveChecksTextFor(t),
           ...(t.saveRecord.checked !== true && t.saveRecord.uncheckedKind ? { uncheckedKind: t.saveRecord.uncheckedKind } : {}),
           ...(t.saveRecord.checked !== true && t.saveRecord.uncheckedConfirmedAt ? { uncheckedConfirmedAt: t.saveRecord.uncheckedConfirmedAt } : {}),
           passedCount: t.saveRecord.checksSummary?.passed ?? 0,
@@ -907,6 +1001,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
         }
       : null,
     uncheckedConfirm,
+    scopeChange,
     proof,
     trialProof,
     saveOutcome,
@@ -1080,7 +1175,7 @@ export function buildSaveOutcomeView(
           ? `${mapped.message}（没有改动任何文件）`
           : mapped.message;
       const buttons: SaveOutcomeButton[] =
-        fail.reason === 'acceptance_invalid'
+        fail.reason === 'acceptance_invalid' || fail.reason === 'evidence_invalid'
           ? [{ action: 'recheck', label: '重新检查', primary: true }]
           : fail.reason === 'failed'
             ? [{ action: 'retry_save', label: '重试', primary: true }]

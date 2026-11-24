@@ -1,0 +1,4 @@
+=== R1 全量单元+集成（最终，本机） ===
+command: npx vitest run (--reporter=json)
+timestamp: 2026-11-24T08:16Z
+{"numTotalTests":772,"numPassedTests":734,"numFailedTests":0,"numPendingTests":38,"numPassedTestSuites":249,"numFailedTestSuites":0}

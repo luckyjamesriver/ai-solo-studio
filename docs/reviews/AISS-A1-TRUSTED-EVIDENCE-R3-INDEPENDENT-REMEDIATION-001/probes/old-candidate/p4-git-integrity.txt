@@ -1,0 +1,85 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3-old
+
+ ❯ tests/r3-probes/p4-git-integrity.probe.ts (6 tests | 3 failed) 6969ms
+   ❯ R3-04 探针 A：特殊文件名必须按字面路径比较 (4)
+     × `star*.txt` 不得把 `starX.txt` 也算成它（通配假阳性） 264ms
+     × `q?.txt` 不得把 `qX.txt` 也算成它（单字符通配假阳性） 248ms
+     × 仓库根目录以冒号开头的文件名不得被当作 pathspec magic 而静默漏检 242ms
+     ✓ 空格、引号、前导连字符、非 ASCII 文件名都按字面路径处理 257ms
+   ✓ R3-04 探针 B：超过 500 个路径的真实仓库 (1)
+     ✓ 全量分批比较必须发现第 600 个路径之后的漂移，不能只比对前 500 个 950ms
+   ✓ R3-04 探针 C：特殊文件名走真实保存链路（不得误判漂移） (1)
+     ✓ 任务改动包含 `[abc].txt` 时，保存成功且内容完整 5007ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r3-probes/p4-git-integrity.probe.ts > R3-04 探针 A：特殊文件名必须按字面路径比较 > `star*.txt` 不得把 `starX.txt` 也算成它（通配假阳性）
+AssertionError: expected [ 'star*.txt', 'starX.txt' ] to deeply equal [ 'star*.txt' ]
+
+- Expected
++ Received
+
+  [
+    "star*.txt",
++   "starX.txt",
+  ]
+
+ ❯ tests/r3-probes/p4-git-integrity.probe.ts:52:21
+     50|     const c2 = await commitAll(repo, 'change both');
+     51|     const changed = await diffTreePaths(repo, c1, c2, ['star*.txt']);
+     52|     expect(changed).toEqual(['star*.txt']);
+       |                     ^
+     53|   });
+     54|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/r3-probes/p4-git-integrity.probe.ts > R3-04 探针 A：特殊文件名必须按字面路径比较 > `q?.txt` 不得把 `qX.txt` 也算成它（单字符通配假阳性）
+AssertionError: expected [ 'q?.txt', 'qX.txt' ] to deeply equal [ 'q?.txt' ]
+
+- Expected
++ Received
+
+  [
+    "q?.txt",
++   "qX.txt",
+  ]
+
+ ❯ tests/r3-probes/p4-git-integrity.probe.ts:62:21
+     60|     const c2 = await commitAll(repo, 'change both');
+     61|     const changed = await diffTreePaths(repo, c1, c2, ['q?.txt']);
+     62|     expect(changed).toEqual(['q?.txt']);
+       |                     ^
+     63|   });
+     64|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/r3-probes/p4-git-integrity.probe.ts > R3-04 探针 A：特殊文件名必须按字面路径比较 > 仓库根目录以冒号开头的文件名不得被当作 pathspec magic 而静默漏检
+AssertionError: expected [] to deeply equal [ ':magic.txt' ]
+
+- Expected
++ Received
+
+- [
+-   ":magic.txt",
+- ]
++ []
+
+ ❯ tests/r3-probes/p4-git-integrity.probe.ts:71:21
+     69|     const c2 = await commitAll(repo, 'v2');
+     70|     const changed = await diffTreePaths(repo, c1, c2, [':magic.txt']);
+     71|     expect(changed).toEqual([':magic.txt']);
+       |                     ^
+     72|   });
+     73|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 3 passed (6)
+   Start at  20:24:26
+   Duration  7.27s (tests 98%, import 1%, transform 1%)
+

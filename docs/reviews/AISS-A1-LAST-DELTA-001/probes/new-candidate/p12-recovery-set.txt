@@ -1,0 +1,14 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r4-probes/p12-recovery-set.probe.ts (3 tests) 50325ms
+   ✓ LAST-DELTA 探针 P12：SIGKILL 恢复的证据集合完整性 (3)
+     ✓ 部分证据丢失 → 不得 checked=true 18248ms
+     ✓ evidenceIds 与证据实际 ID 错配 → 不得 checked=true 16120ms
+     ✓ 副本身份错配 → 不得 checked=true 15956ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  00:17:56
+   Duration  50.64s (tests 100%)
+

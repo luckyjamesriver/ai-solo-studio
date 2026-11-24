@@ -14,7 +14,7 @@ import { ExternalWaitingPage } from '../src/renderer/ExternalWaitingPage.js';
 import { Acceptance } from '../src/renderer/Acceptance.js';
 import { ReworkPage } from '../src/renderer/ReworkPage.js';
 import { makeProject, scripted } from './flow-helpers.js';
-import { git, makeRepo, testSandboxRunner, tmpDir } from './helpers.js';
+import { git, makeRepo, realVitestScript, testSandboxRunner, tmpDir } from './helpers.js';
 
 const cleanDirs: string[] = [];
 
@@ -195,8 +195,16 @@ describe('阶段 7 提交①：外部执行交接导出与等待页', () => {
     const repo = await makeRepo({
       'package.json': JSON.stringify({
         name: 'ext-check-demo',
-        scripts: { test: 'node -e "process.exit(0)"' },
+        // AISS-A1：验收卡上的「自动测试通过」必须来自真实结构化报告，因此用真实 Vitest 夹具
+        scripts: { test: realVitestScript() },
       }),
+      'tests/fixture.test.ts': [
+        "import { describe, it, expect } from 'vitest';",
+        "describe('fixture', () => {",
+        "  it('第一条真实用例', () => { expect(1 + 1).toBe(2); });",
+        "  it('第二条真实用例', () => { expect('ok').toBe('ok'); });",
+        "});",
+      ].join('\n'),
       'app.js': 'module.exports = () => "v0";\n',
     });
     const data = await makeTempDir('studio-s7-imp-data-');
@@ -349,7 +357,7 @@ describe('阶段 7 提交①：外部执行交接导出与等待页', () => {
     expect(saved.ok).toBe(true);
     expect(saved.view.state).toBe('saved');
     expect(await fs.readFile(path.join(repo, 'app.js'), 'utf8')).toBe('module.exports = () => "v2";\n');
-  });
+  }, 30_000); // 验收与试检查各跑一次真实 Vitest，并做多次真实 Git 操作
 
   it('外部执行任务在验收页退回修改时提供「再次交给外部工具」与「改由 Codex 继续」（均记第 N+1 轮）', async () => {
     const repo = await makeRepo({ 'note.txt': 'v0\n' });

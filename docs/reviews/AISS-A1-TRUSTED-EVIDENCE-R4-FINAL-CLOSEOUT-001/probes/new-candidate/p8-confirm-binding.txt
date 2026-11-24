@@ -1,0 +1,12 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r4-probes/p8-confirm-binding.probe.ts (1 test) 4245ms
+   ✓ R4-03 探针：用户确认后重新执行时执行清单发生变化，不得自动登记为已授权 (1)
+     ✓ 确认前查看的是 2 条用例，重新执行只剩 1 条 → 必须重新待确认 4244ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  23:12:21
+   Duration  4.54s (tests 97%, import 2%, transform 1%)
+

@@ -1,0 +1,29 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3-old
+
+ ❯ tests/r3-probes/p5-persistence-recovery.probe.ts (2 tests | 1 failed) 54293ms
+   ✓ R3-05 探针 A：正常中断后的真实恢复（试检查证据必须来自真实链路） (1)
+     ✓ 重启恢复后 SaveRecord.trialChecks 携带真实试检查身份/被测 tree/执行结果/保存提交 26173ms
+   ❯ R3-05 探针 B：恢复分支的内容完整性（第二个父提交正确但 tree 被改过） (1)
+     × 恢复不得把内容漂移的合并提交当成保存结果 28119ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r3-probes/p5-persistence-recovery.probe.ts > R3-05 探针 B：恢复分支的内容完整性（第二个父提交正确但 tree 被改过） > 恢复不得把内容漂移的合并提交当成保存结果
+AssertionError: expected 'saved' not to be 'saved' // Object.is equality
+ ❯ tests/r3-probes/p5-persistence-recovery.probe.ts:181:25
+    179|
+    180|     // 旧候选：state === 'saved'，saveRecord.mergeCommit === evil —— 把内容漂移的…
+    181|     expect(t.state).not.toBe('saved');
+       |                         ^
+    182|     expect(t.saveRecord?.mergeCommit).not.toBe(evil);
+    183|     expect(t.manualReview ?? t.state === 'save_failed_unmerged').toBeT…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  20:24:34
+   Duration  54.58s (tests 100%)
+

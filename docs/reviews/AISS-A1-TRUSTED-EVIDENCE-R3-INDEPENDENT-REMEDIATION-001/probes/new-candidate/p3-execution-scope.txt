@@ -1,0 +1,14 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r3-probes/p3-execution-scope.probe.ts (2 tests) 7099ms
+   ✓ R3-03 探针 A：同一测试文件内用例被动态跳过（文件与配置不变） (1)
+     ✓ 完整运行 vs 动态少执行一条：可信结论与范围指纹都必须不同 2143ms
+   ✓ R3-03 探针 B：验收完整运行 → 保存试检查时部分用例动态跳过 → 必须阻断可信保存 (1)
+     ✓ 保存不得在“试检查覆盖率下降”的情况下记录为检查通过 4955ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  20:25:37
+   Duration  7.41s (tests 98%, import 1%, transform 1%)
+

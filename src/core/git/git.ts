@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { run, isSuccess } from '../proc/run.js';
 import { hostEnv } from '../env/host-env.js';
 import { ensureLine, makeDir, removeFile } from '../persistence/files.js';
@@ -43,6 +44,40 @@ function decorate(args: string[]): string[] {
   return args;
 }
 
+/**
+ * 内部目录：应用元数据（.studio）与依赖/工具缓存（node_modules）。
+ * R1 数据完整性规则：
+ *  - **已跟踪文件绝不因目录名称被剔除**：HEAD 里已存在的路径永远保留其修改/删除；
+ *  - 只有「未被 HEAD 跟踪」的内部目录内容才从内容 tree / 改动清单中剔除（例如 Vitest 写的 node_modules/.vite）；
+ *  - 全程只用临时索引，不触碰工作树自己的索引，因此不会污染用户 Git 索引。
+ */
+const INTERNAL_DIRS = ['.studio', 'node_modules'] as const;
+
+async function headTrackedPaths(dir: string, env: Record<string, string>): Promise<Set<string>> {
+  const out = await git(dir, ['ls-tree', '-r', '-z', '--name-only', 'HEAD'], { env });
+  return new Set(out.split('\0').filter(Boolean));
+}
+
+async function stagedPathsUnderInternalDirs(dir: string, env: Record<string, string>): Promise<string[]> {
+  const out = await git(dir, ['ls-files', '-z', '--cached', '--', ...INTERNAL_DIRS], { env });
+  return out.split('\0').filter(Boolean);
+}
+
+/** 从（临时）索引里只剔除「内部目录下、且未被 HEAD 跟踪」的条目；已跟踪文件一律保留。 */
+async function stripUntrackedInternal(dir: string, env: Record<string, string>): Promise<void> {
+  const staged = await stagedPathsUnderInternalDirs(dir, env);
+  if (staged.length === 0) return;
+  const tracked = await headTrackedPaths(dir, env);
+  const toRemove = staged.filter((p) => !tracked.has(p));
+  if (toRemove.length === 0) return;
+  // -z + --stdin：文件名里的空格/引号不会被误解析
+  await git(dir, ['update-index', '--force-remove', '-z', '--stdin'], { env, stdin: toRemove.join('\0') + '\0' });
+}
+
+function tempIndexPath(): string {
+  return path.join(os.tmpdir(), `studio-tree-index-${crypto.randomBytes(8).toString('hex')}`);
+}
+
 export interface GitOptions {
   /** 追加的环境变量（例如 GIT_INDEX_FILE 指向临时索引） */
   env?: Record<string, string>;
@@ -50,7 +85,9 @@ export interface GitOptions {
 }
 
 export async function git(cwd: string, args: string[], opts: GitOptions = {}): Promise<string> {
-  const r = await run('git', [...SAFE_GIT_CONFIG, ...decorate(args)], {
+  // R3-04：宿主传入的路径一律按**字面路径**解释。默认 pathspec 会把 `*`/`?` 当通配、
+  // 把根目录下以 `:` 开头的文件名当 magic —— 前者会把别的文件算进来（假阳性），后者会静默漏检（假阴性）。
+  const r = await run('git', ['--literal-pathspecs', ...SAFE_GIT_CONFIG, ...decorate(args)], {
     cwd,
     env: hostGitEnv(opts.env),
     timeoutMs: 60_000,
@@ -259,13 +296,15 @@ export async function commitWorktree(wt: Worktree, message: string): Promise<str
  * 临时索引从副本 HEAD 读起再 add -A：这样“已跟踪但被忽略”的文件也不会被丢掉。不触碰副本自己的索引与任何用户文件。
  */
 export async function computeTree(repo: string, worktreePath: string): Promise<string> {
-  const dir = path.join(repo, '.studio');
-  await makeDir(dir);
-  const idx = path.join(dir, `tree-index-${crypto.randomBytes(6).toString('hex')}`);
+  await makeDir(path.join(repo, '.studio'));
+  // 临时索引放在 <主仓库>/.studio/ 内，用后删除；不触碰副本自己的索引与任何用户文件。
+  // 已跟踪文件（即使位于 node_modules/.studio 下）的修改与删除都会保留，只剔除未跟踪的内部缓存。
+  const idx = path.join(repo, '.studio', `tree-index-${crypto.randomBytes(6).toString('hex')}`);
   const env = { GIT_INDEX_FILE: idx };
   try {
     await git(worktreePath, ['read-tree', 'HEAD'], { env });
     await git(worktreePath, ['add', '-A'], { env });
+    await stripUntrackedInternal(worktreePath, env);
     return (await git(worktreePath, ['write-tree'], { env })).trim();
   } finally {
     await removeFile(idx);
@@ -369,9 +408,22 @@ export function parseNumstatZ(out: string): Map<string, [number | null, number |
 
 /** 相对基线的改动清单（包含未提交与未跟踪文件）。文件名一律按 -z（NUL 分隔）解析。 */
 export async function diffSummary(wt: Worktree): Promise<FileChange[]> {
-  await git(wt.path, ['add', '-A', '--intent-to-add']).catch(() => undefined);
-  const nameStatus = await git(wt.path, ['diff', '--name-status', '-z', '-M', wt.baseSha]);
-  const numstat = await git(wt.path, ['diff', '--numstat', '-z', '-M', wt.baseSha]);
+  // 用「任务内容 tree」与基线提交做 diff：与 computeTree 完全同一套内容定义。
+  // 已跟踪文件的修改/删除不会被目录名过滤掉；未跟踪的内部缓存不进入清单；不写工作树索引。
+  const idx = tempIndexPath();
+  const env = { GIT_INDEX_FILE: idx };
+  let tree: string;
+  try {
+    await git(wt.path, ['read-tree', 'HEAD'], { env });
+    await git(wt.path, ['add', '-A'], { env });
+    await stripUntrackedInternal(wt.path, env);
+    tree = (await git(wt.path, ['write-tree'], { env })).trim();
+  } finally {
+    await removeFile(idx);
+    await removeFile(`${idx}.lock`);
+  }
+  const nameStatus = await git(wt.path, ['diff-tree', '-r', '--no-commit-id', '--name-status', '-z', '-M', wt.baseSha, tree]);
+  const numstat = await git(wt.path, ['diff-tree', '-r', '--no-commit-id', '--numstat', '-z', '-M', wt.baseSha, tree]);
   const counts = parseNumstatZ(numstat);
   const map: Record<string, FileChange['status']> = { A: 'added', M: 'modified', D: 'deleted', R: 'renamed' };
   return parseNameStatusZ(nameStatus).map((e) => {
@@ -380,6 +432,14 @@ export async function diffSummary(wt: Worktree): Promise<FileChange[]> {
     if (e.code === 'R' && e.oldPath) change.oldPath = e.oldPath;
     return change;
   });
+}
+
+/** 两个 tree / 提交之间的路径差异（保存后核对任务内容是否被完整应用）。 */
+export async function diffTreePaths(dir: string, fromRev: string, toRev: string, paths: string[] = []): Promise<string[]> {
+  const args = ['diff-tree', '-r', '--no-commit-id', '--name-only', '-z', '--no-renames', fromRev, toRev];
+  if (paths.length) args.push('--', ...paths);
+  const out = await git(dir, args);
+  return out.split('\0').filter(Boolean);
 }
 
 export async function diffText(wt: Worktree, maxBytes = 200_000): Promise<string> {

@@ -1,0 +1,167 @@
+=== R1 修复前探针（旧候选 6918ea5） 2026-11-24T07:42:43Z ===
+command: npx vitest run tests/probes/r1-probe.test.ts
+
+ RUN  v5.0.5 ~/ai-solo-r1-old
+
+ ❯ tests/probes/r1-probe.test.ts (9 tests | 8 failed) 2362ms
+   ❯ R1 探针 A：数据完整性（已跟踪 node_modules 文件的删除不得被隐藏） (1)
+     × 已跟踪 node_modules/fixture.js 的删除必须进入内容 tree 与改动清单 334ms
+   ❯ R1 探针 B：失败优先（真实失败 + 报告缺失不得降级为 unverified） (1)
+     × 真实测试失败且报告被删除 → failed 869ms
+   ❯ R1 探针 C：保守范围复核（逐文件下降不可被抵消、内容变化必须待确认） (2)
+     × 单文件断言减少 + 其他文件新增（总数不降）→ weakened 466ms
+     × 同名同数量但断言内容被改写 → needs_review（不得 assessed_unchanged） 491ms
+   ❯ R1 探针 D：证据身份（跨项目拒绝） (1)
+     × 相同任务 ID / 相同内容 tree，但项目根不同 → 拒绝 128ms
+   ❯ R1 探针 E：报告完整性（交叉核对未发生必须如实标为未通过；build 不因运行器误判） (2)
+     × 没有 stdout 摘要时交叉核对 performed=false 且 integrity.ok=false 1ms
+     × build 证据不因“测试运行器身份”被误判失效 1ms
+   ❯ R1 探针 F：旧记录不得变成可信 PASS (1)
+     × 保存记录没有结构化证据 id 时，不得显示“检查通过” 50ms
+   ✓ R1 探针 G：准备阶段（报告路径受控） (1)
+     ✓ 报告目录必须位于 .studio/evidence/<nonce> 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/probes/r1-probe.test.ts > R1 探针 A：数据完整性（已跟踪 node_modules 文件的删除不得被隐藏） > 已跟踪 node_modules/fixture.js 的删除必须进入内容 tree 与改动清单
+AssertionError: expected [ 'index.html', 'package.json', '' ] to include 'node_modules/fixture.js'
+ ❯ tests/probes/r1-probe.test.ts:43:85
+     41|     dirs.push(repo);
+     42|     const before = await computeTree(repo, wt.path);
+     43|     expect((await git(repo, ['ls-tree', '-r', '--name-only', before]))…
+       |                                                                                     ^
+     44|     await fs.rm(path.join(wt.path, 'node_modules/fixture.js'));
+     45|     const after = await computeTree(repo, wt.path);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  tests/probes/r1-probe.test.ts > R1 探针 B：失败优先（真实失败 + 报告缺失不得降级为 unverified） > 真实测试失败且报告被删除 → failed
+AssertionError: expected 'unverified' to be 'failed' // Object.is equality
+
+Expected: "failed"
+Received: "unverified"
+
+ ❯ tests/probes/r1-probe.test.ts:72:22
+     70|     };
+     71|     const r = await runCheck(dir, 'test', deleting as never, { authori…
+     72|     expect(r.status).toBe('failed');
+       |                      ^
+     73|   });
+     74| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  tests/probes/r1-probe.test.ts > R1 探针 C：保守范围复核（逐文件下降不可被抵消、内容变化必须待确认） > 单文件断言减少 + 其他文件新增（总数不降）→ weakened
+AssertionError: expected 'assessed_stronger' to be 'assessed_weakened' // Object.is equality
+
+Expected: "assessed_weakened"
+Received: "assessed_stronger"
+
+ ❯ tests/probes/r1-probe.test.ts:98:29
+     96|       currentScriptsDigest: (await scriptsDigest(dir))!,
+     97|     });
+     98|     expect(assessment.kind).toBe('assessed_weakened');
+       |                             ^
+     99|   });
+    100|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  tests/probes/r1-probe.test.ts > R1 探针 C：保守范围复核（逐文件下降不可被抵消、内容变化必须待确认） > 同名同数量但断言内容被改写 → needs_review（不得 assessed_unchanged）
+AssertionError: expected 'assessed_unchanged' to be 'assessed_needs_review' // Object.is equality
+
+Expected: "assessed_needs_review"
+Received: "assessed_unchanged"
+
+ ❯ tests/probes/r1-probe.test.ts:120:29
+    118|       currentScriptsDigest: (await scriptsDigest(dir))!,
+    119|     });
+    120|     expect(assessment.kind).toBe('assessed_needs_review');
+       |                             ^
+    121|   });
+    122| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+ FAIL  tests/probes/r1-probe.test.ts > R1 探针 D：证据身份（跨项目拒绝） > 相同任务 ID / 相同内容 tree，但项目根不同 → 拒绝
+AssertionError: expected undefined to be truthy
+
+- Expected:
+true
+
++ Received:
+undefined
+
+ ❯ tests/probes/r1-probe.test.ts:139:21
+    137|     };
+    138|     const problem = evidenceIdentityProblem(fake as never, { taskId: '…
+    139|     expect(problem).toBeTruthy();
+       |                     ^
+    140|   });
+    141| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯
+
+ FAIL  tests/probes/r1-probe.test.ts > R1 探针 E：报告完整性（交叉核对未发生必须如实标为未通过；build 不因运行器误判） > 没有 stdout 摘要时交叉核对 performed=false 且 integrity.ok=false
+AssertionError: expected undefined to be false // Object.is equality
+
+- Expected:
+false
+
++ Received:
+undefined
+
+ ❯ tests/probes/r1-probe.test.ts:158:66
+    156|     const plan = { reportPath: '/tmp/x', reportDir: '/tmp/d', argv: []…
+    157|     const ev = buildReportEvidence({ plan: plan as never, parse: parse…
+    158|     expect((ev.crossCheck as { performed?: boolean }).performed).toBe(…
+       |                                                                  ^
+    159|     expect(ev.integrity.ok).toBe(false);
+    160|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯
+
+ FAIL  tests/probes/r1-probe.test.ts > R1 探针 E：报告完整性（交叉核对未发生必须如实标为未通过；build 不因运行器误判） > build 证据不因“测试运行器身份”被误判失效
+AssertionError: expected [ '测试运行器身份变化' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "测试运行器身份变化",
++ ]
+
+ ❯ tests/probes/r1-probe.test.ts:175:22
+    173|     };
+    174|     const problems = configFingerprintProblems(ev as never, { configFi…
+    175|     expect(problems).toEqual([]);
+       |                      ^
+    176|   });
+    177| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯
+
+ FAIL  tests/probes/r1-probe.test.ts > R1 探针 F：旧记录不得变成可信 PASS > 保存记录没有结构化证据 id 时，不得显示“检查通过”
+AssertionError: expected '检查通过' to be '检查通过（历史记录未核实）' // Object.is equality
+
+Expected: "检查通过（历史记录未核实）"
+Received: "检查通过"
+
+ ❯ tests/probes/r1-probe.test.ts:196:30
+    194|     } as never;
+    195|     const tv = buildTaskView(t, { scripts: [], running: false } as nev…
+    196|     expect(tv.saveCheckText).toBe('检查通过（历史记录未核实）');
+       |                              ^
+    197|   });
+    198| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/8]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 1 passed (9)
+   Start at  15:42:44
+   Duration  2.65s (tests 94%, transform 5%, import 1%)
+
+PROBE_EXIT=1

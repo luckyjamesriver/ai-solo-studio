@@ -5,7 +5,8 @@ import type { AcceptanceCard, CriterionState, GitBinding } from '../acceptance/c
 
 import type { Capabilities } from '../capabilities/model.js';
 import type { EffectivePermissions } from '../executor/modes.js';
-import type { UnavailableReason, UncheckedKind } from '../checks/scripts.js';
+import type { ApprovedScopeBaseline, UnavailableReason, UncheckedKind } from '../checks/scripts.js';
+import type { HostCheckEvidence } from '../evidence/model.js';
 
 export interface Plan {
   goal: string;
@@ -56,6 +57,12 @@ export interface OpLog {
   trialWorktreePath?: string;
   /** 试合并产生的提交 */
   trialCommit?: string;
+  /** 试检查凭证与完整性数据（用于恢复时重构 SaveRecord） */
+  trialChecks?: StoredCheckProof[];
+  /** R4-LAST-DELTA：试检查时项目声明的应执行检查项集合 */
+  expectedChecks?: ('build' | 'test')[];
+  /** 试检查产生的结构化证据 id */
+  trialEvidenceIds?: { build?: string; test?: string };
   /** 试检查是否运行并全部通过 */
   checked?: boolean;
   /** 未检查保存时的分类：none（无检查脚本）/ unavailable（有脚本但未能运行） */
@@ -153,6 +160,27 @@ export interface SaveRecord {
   executorText?: string;
   /** 试合并产生的提交（写入主项目 --ff-only 的源提交） */
   trialCommit?: string;
+  /** 试合并提交的内容 tree（R4-04：试检查证据必须绑定它） */
+  trialCommitTree?: string;
+  /** 保存时的验收版本序号（R4-04：历史证据按保存时的版本核对，而不是 current） */
+  acceptanceRev?: number;
+  /** 保存时项目根的真实路径哈希（R4-04：历史证据必须属于同一个项目） */
+  projectRootHash?: string;
+  /** 保存时试合并工作区路径哈希（R4-04：历史证据必须来自那次试检查） */
+  trialWorktreePathHash?: string;
+  /** R4-LAST-DELTA：保存时项目声明的应执行检查项集合（build/test），用于证据集合完整性校验 */
+  expectedChecks?: ('build' | 'test')[];
+  /** 保存时真实试检查产生的结构化证据 id（用于区分“当时有证据”与“历史记录未核实”） */
+  evidenceIds?: { build?: string; test?: string };
+  /** 保存时真实试检查凭证与完整性数据完整持久化（R2-04 证据持久化闭环） */
+  trialChecks?: StoredCheckProof[];
+}
+
+/** 保存记录的检查结论文案：没有结构化证据的历史记录不得显示成可信「检查通过」。 */
+export function saveChecksText(rec?: Pick<SaveRecord, 'checked' | 'evidenceIds'> | null): '检查通过' | '未检查' | '检查通过（历史记录未核实）' {
+  if (rec?.checked !== true) return '未检查';
+  const hasEvidence = !!rec.evidenceIds?.test || !!rec.evidenceIds?.build;
+  return hasEvidence ? '检查通过' : '检查通过（历史记录未核实）';
 }
 
 export interface AcceptedRiskRecord {
@@ -163,7 +191,11 @@ export interface AcceptedRiskRecord {
 
 export interface StoredCheckProof {
   name: 'build' | 'test';
-  status: 'passed' | 'failed' | 'not_available';
+  /**
+   * passed 只能来自可信宿主证据；unverified 表示「执行了但缺乏可信证据 / 证据失效」，
+   * 绝不等于通过，也不得显示为 PASS。
+   */
+  status: 'passed' | 'failed' | 'not_available' | 'unverified';
   ranAt?: string;
   durationMs?: number;
   env: 'sandbox' | 'local';
@@ -172,6 +204,10 @@ export interface StoredCheckProof {
   exitKind?: ExitOutcome['kind'];
   exitCode?: number | null;
   unavailableReason?: string;
+  /** 统一宿主证据（AISS-A1）：身份、被测内容、运行身份、配置指纹、结构化报告、有效性与失效原因 */
+  evidence?: HostCheckEvidence;
+  /** 没有新证据的历史任务记录：标记为历史未核实（不补造证据、不修改历史记录） */
+  legacyUnverified?: boolean;
 }
 
 export interface RoundCriterionSnapshot {
@@ -292,7 +328,29 @@ export interface Task {
   previewSkipped?: boolean;
   card?: AcceptanceCard;
   /** 批准时授权的检查脚本内容摘要（package.json 的 build/test 及 pre/post 脚本）；摘要变化则授权失效 */
-  checkAuth?: { digest: string; at: string };
+  checkAuth?: { digest: string; at: string; scope?: ApprovedScopeBaseline };
+  /**
+   * 测试范围复核（R1-04）：证据发现测试范围被削弱/内容变化但静态分析无法证明安全时记录；
+   * 自动通过被阻断。用户确认必须绑定「其实际查看的内容指纹 + 范围指纹 + 验收版本」，
+   * 确认前内容或范围发生变化则旧确认作废；保存/试合并会消费该确认。
+   */
+  scopeReview?: {
+    kind: 'weakened' | 'changed';
+    reasons: string[];
+    /** **静态**测试范围指纹（测试清单 + 配置 + 脚本/锁/运行器入口与依赖） */
+    scopeFingerprint: string;
+    /** R3-03：用户确认时绑定的**实际执行清单**指纹（文件 + 用例身份 + 执行状态） */
+    executionFingerprint?: string;
+    /** 检测时冻结的内容指纹（acceptedTree） */
+    contentFingerprint: string;
+    /** 检测时的验收版本 */
+    acceptanceVersion: string;
+    detectedAt: string;
+    /** 用户明确确认时间；仅当上述三项仍然一致时才会被保存链路接受 */
+    confirmedAt?: string;
+  };
+  /** 重启后深度复核发现保存的证据已与当前检查配置不一致（记录事实，不改写历史轮次） */
+  evidenceInvalid?: { reason: string; at: string };
   /** 方案批准后修改验收标准导致退回 planned 时的提示 */
   reapproveNotice?: string;
   /** 本任务的完全信任确认标记（门禁 requireFullTrustConfirmed 读取；每个任务单独确认） */
