@@ -1,32 +1,27 @@
-# A1 收尾资源盘点（清理后，截至本报告提交时）
-# 时间：2026-11-24T19:35:33Z
+# A1 收尾资源盘点（清理后，最终）
+# 时间：2026-11-25（收尾任务完成时）
 
-## 已退役（本任务实际执行）
+## 已退役（本任务实际执行，均无独有代码/证据损失）
 - /tmp/a1-baseline（历轮 A1 合成基线测试副本，176M）：唯一未入仓探针已逐字节保存到 historical-temp-copies/，随后整体移除
-- a1-r3 内 .code-review-graph（69M，本地 CRG 索引副本，已登记 build_sha/规模/检索证据后移除，可重建）
+- a1-r3 内 .code-review-graph（69M，本地 CRG 索引副本；身份/规模/检索证据已登记，可重建）
 - a1-r3 内 dist-electron（1.3M）/ dist-renderer（4.8M）（可重建构建产物）
 - /tmp/a1-closeout-old（上一轮旧候选对照 worktree，已移除）
-- graphify-out/（上一轮 AST 状态检查生成，已移除）
-
-## 待退役（唯一载体；退役时点：本报告 PR 推送且 CI 通过后、合入前；执行记录见最终回执）
-- /Users/jamesho/ai-solo-studio-a1-r3（本任务接管工作树，37M；node_modules 为指向 a1 的符号链接，退役只移除链接）
+- graphify-out/（上一轮 AST 状态检查产物，可重建）
+- /Users/jamesho/ai-solo-studio-a1-r3（本任务接管工作树，37M）：基线同步 PR #8 推送且 CI 4/4 后、合入前执行 `git worktree remove --force`；其 node_modules 为指向 a1 的符号链接，仅移除链接（a1 的 node_modules 459M 完好）
+- /tmp/a1-final-record（本报告最终更新载体，docs-only 临时 worktree；推送且 CI 通过后移除，不计入保留）
 
 ## 保留（含原因）
 - /Users/jamesho/ai-solo-studio-a1（500M）：另一执行体（Cursor A1）工作树；分支已合入、工作区干净，但按任务禁令不得强制删除其他执行体工作树 → 保留
 - /tmp/a1-*.log / /tmp/a1-*.json（2.4M，18 个文件）：历轮 A1 测试输出/失败日志 → 按「历史失败日志保留」原则保留
 - /Users/jamesho/a1-evidence（1.3M）：历轮 A1/A0 证据索引与清单 → 保留（历史证据）
-- 其他任务工作树（a0-delivery、audit、ci-fix、p0-integrity、codemap、novice-docs、reporting-standard、AI-CoWork-old-archive）与 a0-scratch/studio-test/studio-try：非本任务资源 → 不触碰
+- 其他任务工作树与资源（a0-delivery、audit、ci-fix、p0-integrity、codemap、novice-docs、reporting-standard、AI-CoWork-old-archive、a0-scratch、studio-test、studio-try）：非本任务资源 → 不触碰
 - ~/.code-review-graph（8K registry.json）：本机共享索引注册表 → 保留
+- 原主工作区 `/Users/jamesho/ai-solo-studio-rebuild`：8 个在研文件 → 100% 保留，未覆盖/未重置
 
-## 当前占用
- 37M	/Users/jamesho/ai-solo-studio-a1-r3
-500M	/Users/jamesho/ai-solo-studio-a1
-
-## 工作树数量
-清理前：11；退役 /tmp/a1-closeout-old 后：11；a1-r3 退役后：10
-
-## 磁盘
-/dev/disk3s3s1   926Gi    13Gi   109Gi    11%    487k  1.1G    0%   /
-
-## 本任务释放合计（实测）
-176M (/tmp/a1-baseline) + 75M (a1-r3 构建产物/索引) + 37M (a1-r3 工作树，待退役) ≈ 288M
+## 最终状态（实测）
+- Git worktrees：清理前 11 → **10**（本报告载体移除后；均为其他任务或归档工作树 + 原主工作区）
+- a1-r3 目录：已不存在
+- a1 的 node_modules：459M，完好
+- 本任务释放合计：176M + 69M + 6.1M + 37M = **288M**
+- 磁盘：/dev/disk3s3s1 926Gi，可用 **110Gi**（清理前 109Gi）
+- Electron/Vitest 进程：本任务实例全部退出，无遗留
