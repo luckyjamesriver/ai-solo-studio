@@ -294,11 +294,16 @@ A0 审计材料已整理为**只含文档/证据**的独立审计交付分支并
 
 | 证据 | 文件 |
 | :-- | :-- |
-| 基线 typecheck / 全量测试（修复前基线绿，证明缺陷由测试缺口而非构建失败掩盖） | `/Users/jamesho/a1-evidence/logs/baseline-typecheck.log`、`baseline-test.log` |
-| 修复前缺陷复现（同一组断言在基线 5/5 失败） | `/Users/jamesho/a1-evidence/logs/pre-fix-baseline-probe.log` |
-| 修复后同一组断言通过 | `/Users/jamesho/a1-evidence/logs/post-fix-a1-probe.log` |
-| 探针源码（同一文件） | `/Users/jamesho/a1-evidence/fix-proof/a1-fix-proof.test.ts` |
-| 原工作区保护快照 | `/Users/jamesho/a1-evidence/BASELINE-ORIGINAL-WORKSPACE.txt` |
+| 基线 typecheck / 全量测试（修复前基线绿，证明缺陷由测试缺口而非构建失败掩盖） | 本机 `a1-evidence/logs/baseline-typecheck.log`、`baseline-test.log` |
+| 修复前缺陷复现（同一组断言在基线 5/5 失败，exit 1） | [`probes/pre-fix-baseline-probe.log`](AISS-A1-TRUSTED-EVIDENCE-001/probes/pre-fix-baseline-probe.log) |
+| 修复后同一组断言通过（exit 0） | [`probes/post-fix-a1-probe.log`](AISS-A1-TRUSTED-EVIDENCE-001/probes/post-fix-a1-probe.log) |
+| 探针源码（同一文件） | [`probes/a1-fix-proof.test.ts`](AISS-A1-TRUSTED-EVIDENCE-001/probes/a1-fix-proof.test.ts) |
+| 本机全量 / 专项 / E2E 汇总 | [`full-suite-excerpt.txt`](AISS-A1-TRUSTED-EVIDENCE-001/full-suite-excerpt.txt)、[`a1-special-tests-excerpt.txt`](AISS-A1-TRUSTED-EVIDENCE-001/a1-special-tests-excerpt.txt)、[`e2e-excerpt.txt`](AISS-A1-TRUSTED-EVIDENCE-001/e2e-excerpt.txt) |
+| 真实项目工作树验证原始输出 | [`real-project-verify.log`](AISS-A1-TRUSTED-EVIDENCE-001/real-project-verify.log) |
+| 原工作区保护快照 | [`workspace-protection-before.txt`](AISS-A1-TRUSTED-EVIDENCE-001/workspace-protection-before.txt) / [`after`](AISS-A1-TRUSTED-EVIDENCE-001/workspace-protection-after.txt) |
+| 门禁与复核指引（仓库内） | [`gates.md`](AISS-A1-TRUSTED-EVIDENCE-001/gates.md) |
+
+仓库内证据包索引：[`AISS-A1-TRUSTED-EVIDENCE-001/README.md`](AISS-A1-TRUSTED-EVIDENCE-001/README.md)。
 
 ---
 

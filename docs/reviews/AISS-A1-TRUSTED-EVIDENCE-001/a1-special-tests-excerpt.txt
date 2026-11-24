@@ -1,0 +1,6 @@
+=== A1 专项反向矩阵（从同一次全量运行中提取）===
+a1-evidence-chain.test.ts => 14 tests, 14 passed, 0 failed
+  durationMs: 90406
+a1-trusted-evidence.test.ts => 20 tests, 20 passed, 0 failed
+  durationMs: 37319
+total: 34 tests

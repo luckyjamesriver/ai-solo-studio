@@ -1,0 +1,8 @@
+=== Electron E2E（本机，HEAD 503179f，真实显示环境）===
+command: npx vitest run -c vitest.e2e.config.ts
+
+ Test Files  1 passed (1)
+      Tests  56 passed (56)
+   Start at  11:58:57
+   Duration  518.58s (tests 100%)
+
