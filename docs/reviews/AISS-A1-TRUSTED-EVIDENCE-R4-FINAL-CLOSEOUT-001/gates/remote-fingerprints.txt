@@ -1,0 +1,45 @@
+# 远程证据逐文件读取与指纹核验
+repo: luckyjamesriver/ai-solo-studio
+ref: 7f0d44aafa56b720f68831eed6e31b82e354b8df
+at: 2026-11-24T15:34:31Z
+
+OK 35903a82cf66323bef9f8c9fd04f6bfd2df21f1b5e6c5d0eafd382220da211cc .github/workflows/ci.yml
+OK e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/gates/build-core.txt
+OK 8ef1e49a78ba70813ef3e04a16f3dc795a0497e880a0e752726de1e6c2eb04a5 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/gates/build-renderer.txt
+OK 49aa8f1c5a242cf900df8eadf0015a3273bd285c74265d612c88aaa7c5d75b90 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/gates/code-review-graph-status.txt
+OK f266fc18611f9b51d966ac93b92626591968d49e5db9048dca5616247ea6e0e1 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/gates/graphify-status.txt
+OK 9fb301f56989dbec6a46d3bec8fcb1a87e47a34adaf7c556e1e8b08aeb35ebff docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/gates/seatbelt-25-sample.txt
+OK e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/gates/typecheck.txt
+OK 5ea55ebdcc87daf27fb7a8d6dbcedcd773c9ff231c9f5d8629c381f17a90d761 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/new-candidate/all-r3-r4-probes.txt
+OK dc54a75ebb0e3048bbd672e4a06a4c7d6d04b92e6c672eb49011abc460a8a6bc docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/new-candidate/p10-recovery-evidence.txt
+OK 4510d96817a9815575a4bf8e4da1b1c10aedd51372748848c2e1dacc1d313b29 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/new-candidate/p6-host-exclusive.txt
+OK 8f3a4a3b58e82d3a9440690f3d31cf70f9a95d1ee930d1d3262761c3de5bca51 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/new-candidate/p7-execution-binding.txt
+OK 300558b0b628a18e85848088bd3794b80bcfe8e73f834f09ac431fb82d1c3aac docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/new-candidate/p8-confirm-binding.txt
+OK 10a4bf6bed220ec8123e776a584a37a88d86f6fe8d10270ea6a3aa127d63351f docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/new-candidate/p9-evidence-binding.txt
+OK d60e488942a8a75860940085e7daab1a9bc2e795d0584f05c7781d4e41f219fc docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/old-candidate/all-r3-r4-probes.txt
+OK f71ebab859083630fdfdfc63d8496c128ee853c88eda1f34f45ec736f780b544 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/old-candidate/p10-recovery-evidence.txt
+OK acea9e2d072161e0723ef88f9ad1c1dc8253ec36a4fef40c7b012fe350f1c11a docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/old-candidate/p6-host-exclusive.txt
+OK 93964c52754bbd8f7f119216ca03cf8cb1fb798f7a670c76371efe7039576aaa docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/old-candidate/p7-execution-binding.txt
+OK b9cf2fa7fbc87fbff406bf924fe4151dd962e0797671bd78f95dcc932985ff5a docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/old-candidate/p8-confirm-binding.txt
+OK 13ab75ab03e07e35baa57ea475bb4876eba0ff63301beccd74eefb89ff6f305d docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/probes/old-candidate/p9-evidence-binding.txt
+OK fc7cb470c2779c0db57e7608cf256e096e02bc00211b98ff6bc1f5811ca8ca1c docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R4-FINAL-CLOSEOUT-001/workspace-protection-baseline.txt
+OK 412ba53aecd14090ac4080038cdd9296a81c07cf50e4a1179464cb3afb1bec38 src/core/acceptance/view.ts
+OK 33ff5b1927fd2f9b12638a0bb30d9add86678e18ee7eafb2f162fa95bf3c47c5 src/core/app/task-view.ts
+OK 642fc4d31a1bb642811843712235ac1d51d01b2cc6ceeeecc0eeee39f4719b95 src/core/checks/scripts.ts
+OK ba6c524c650e7695d12dcde5133f5eb9b3127c5927be34cd5dd4c79d4f1b90e3 src/core/evidence/adjudicate.ts
+OK 55db5c478b591500a4a7830e7ad200add6ae337a43f3d3ab3347a2d71541e560 src/core/evidence/model.ts
+OK 125ebec46a3c8bb816ccfd23745ba91f63485932af1c3e5a23ee1a682b64a908 src/core/evidence/vitest.ts
+OK 0ca9106b747d1870bb82568187cb70ab0b358dec7d2bf509498af3466a9dc134 src/core/persistence/owned-dir.ts
+OK 37602fd7403006db33b2c8252b6903ac3433ef734b2399811f49ebeab5fd3771 src/core/task/model.ts
+OK d318b76975d39d55cec694e256f5938502b18cf0e20e5af77ff6c768e97ba89d src/core/task/runner.ts
+OK a8e73aa4d69c6f6c4c4192d421171d11e1699b7dfa950837c805f7e94c02602f tests/r3-probes/p1-host-dir-safety.probe.ts
+OK 6d62c6b0358b5ebe49402dc0a4e7a34537f3aae54b35bdfbeb205427cc2b18ba tests/r3-trusted-evidence.test.ts
+OK 9ef08d1130aab80e5c6a1a639357bd1d459140cc68d019d55ba5bc263090d36d tests/r4-probes/p10-recovery-evidence.probe.ts
+OK 75901c073b7a91b882f020bf22f3ea558b0d8b2a504aa853a770e7d39fcc39ba tests/r4-probes/p6-host-exclusive.probe.ts
+OK 56e5c8f49fb42ea698bff182b24a090f31c7979e6298de95a6a84b05836f23e0 tests/r4-probes/p7-execution-binding.probe.ts
+OK 782e46aea81fc79c3c5725f852e05d2a975e02430156bcb1c9d191d1d07191da tests/r4-probes/p8-confirm-binding.probe.ts
+OK d2c58170bd93d19806196d3c41d5503db2e274377d8fffb6173f9f78bde06ee0 tests/r4-probes/p9-evidence-binding.probe.ts
+OK 4aa7bc9a53a76a611f27f99ddfb2304a7a578871db3e2df316c4cf65a886689b tests/r4-trusted-evidence.test.ts
+OK 3d407d589f7f633f37048eacd1b06e3982e98b2923d06ec5ed58d40f4d5208ba tests/save-safety.test.ts
+OK 68a3d6ae7c88f33f42616c0f8b88f524bac3db0e02be60971785bd20c4dd9e17 vitest.probes.config.ts
+checked=39 mismatch=0
