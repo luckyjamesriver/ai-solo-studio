@@ -222,12 +222,12 @@ R1-03 组 + 探针 D：
 | A1 + R1 专项反向矩阵 | `npx vitest run tests/a1-trusted-evidence.test.ts tests/a1-evidence-chain.test.ts tests/r1-trusted-evidence.test.ts tests/r1-git-integrity.test.ts` | **57 passed / 0 failed（20+16+4+17）** |
 | 修复前后对照探针（同一文件） | 旧候选 `6918ea5` / 新候选 | **旧候选：8 failed / 1 passed，exit 1；新候选：9 passed，exit 0**（同一探针 SHA-256 `bdcb7275…`） |
 | 构建 | `npm run build` | **通过（core tsc + renderer vite build，exit 0）** |
-| Electron E2E | `npx vitest run -c vitest.e2e.config.ts` | __E2E__ |
+| Electron E2E | `npx vitest run -c vitest.e2e.config.ts` | **56 passed / 0 failed（exit 0）**（真实 Electron 窗口；含真实标准沙箱 + 真实 Vitest 场景；日志 `probes/e2e-excerpt.txt`） |
 | 真实 Git 保存与撤销 | R1 git 完整性测试 + 标准沙箱验证脚本 | **通过**：已跟踪 `node_modules/fixture.js` 删除在验收/保存/撤销全链路正确；撤销后文件树与保存前严格一致 |
 | 标准模式沙箱完整项目 | `repro/real-project-sandbox-verify.mjs` | **通过**：产品自带独立 Seatbelt 沙箱运行真实项目 `tsc build` + Vitest 25 项，`runEnv=sandbox`/`sandboxKind=seatbelt`、报告完整性/交叉核对全 true、范围 `assessed_unchanged`、保存 `checked=true`、任务内容完整应用、撤销后 `HEAD^{tree}` 与保存前严格相等 |
-| 远程证据完整性 | 推送后 `gh api …/contents/...` 逐文件读回 + SHA-256 比对 | __REMOTE__ |
-| 原工作区 8 文件 / A0 工作树保护 | SHA-256 / HEAD / status / diff 哈希 | __PROTECT__ |
-| 新 PR exact-HEAD 双平台 CI | GitHub Actions | __CI__ |
+| 远程证据完整性 | 推送后从 `raw.githubusercontent.com` 逐文件读回并与本地 SHA-256 比对 | **全部 OK**：R1 证据包 27 个文件逐字节一致 + A1 证据包此前缺失的 3 个文件（`pre-fix-baseline-probe.txt`、`post-fix-a1-probe.txt`、`real-project-verify.txt`）均 OK（详见 `probes/` 与 `gates.md`） |
+| 原工作区 8 文件 / A0 工作树保护 | SHA-256 / HEAD / status / diff 哈希 | **8/8 SHA-256 与开工前完全一致**；原主工作区 HEAD `8dfcfc1…`、`git diff` 哈希 `8b80fb4c…`、暂存区空；A0 审计工作树 HEAD `a8561a9…` 未变；A0 远程交付分支 `a54fefb…` 未变（`workspace-protection-after.txt`） |
+| 新 PR exact-HEAD 双平台 CI | GitHub Actions | **全绿**：代码提交 `6349f38a469ad88fac52c6742a3140a1153811f0` 的 run [45355056920](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/45355056920) —— Ubuntu job：typecheck + `npm test` **772 项 / 732 passed / 40 skipped / 0 failed**（Linux 按设计跳过 2 个 macOS 专属用例）+ `npm run build`；macOS job：**772 项 / 734 passed / 38 skipped / 0 failed** + Electron E2E **56 passed**。本报告的最终更新提交为 docs-only，其 exact-HEAD CI 结果见 [PR checks](https://github.com/luckyjamesriver/ai-solo-studio/pull/7/checks) |
 
 ---
 

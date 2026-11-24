@@ -1,0 +1,50 @@
+=== R1 收工工作区指纹 2026-11-24T08:19:35Z ===
+
+## A1 工作树（产品分支）
+PATH: ~/ai-solo-studio-a1
+HEAD: 6349f38a469ad88fac52c6742a3140a1153811f0
+BRANCH: feat/aiss-a1-trusted-evidence-001
+STATUS_PORCELAIN_COUNT: 1
+STATUS:
+?? docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R1-001/workspace-protection-after.txt
+
+## 原主工作区（受保护，8 个在研文件）
+HEAD: 8dfcfc19daf9ba890142be0075f9e869b6353731
+BRANCH: rebuild
+STATUS:
+ M e2e/shell.e2e.ts
+ M src/core/app/task-controller.ts
+ M src/core/thinking/index.ts
+ M src/renderer/App.tsx
+ M src/renderer/SettingsPage.tsx
+?? src/core/app/autonomous-feedback-loop.ts
+?? src/core/thinking/chatgpt-devkit.ts
+?? tests/autonomous-feedback-loop.test.ts
+DIFF_SHA256: 8b80fb4c57c32e21f463a6e6b7c012862f97300e1312d00a6ba73c6d1f145672
+CACHED_DIFF_SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+SHA256_8_FILES:
+1059d524c53412f1b3ad5f7bde13c4b70e31ee7b026d684bb10426d3ad5aa93a  e2e/shell.e2e.ts
+40873cc12089ef94db563824b60135a56425c91ea6a4b42bc7e43ff990118881  src/core/app/task-controller.ts
+cd4b5dd264b069bf558571916367e068f036496dc86da3c35466be5e43e9ecb5  src/core/thinking/index.ts
+0127d93ce23138b099b3d66771d85666c257548e9186155799649385f33b9c30  src/renderer/App.tsx
+c0ee540629549ef39fc87f6b07778aa4350955746f86e13b13d5e55821a70765  src/renderer/SettingsPage.tsx
+d5067b3fe176984f0115751f9fa5690d02b4dc121119bfb82981b83439424428  src/core/app/autonomous-feedback-loop.ts
+49f3cfce392320c4b399e05bddec19695f7d4bc78fa17acdc6f2471efdf49f35  src/core/thinking/chatgpt-devkit.ts
+caad1b563d77eac30fa4af96165bfc767c837fc2954d622b0cef0f75dc94eae3  tests/autonomous-feedback-loop.test.ts
+
+## A0 审计工作树（只读）
+HEAD: a8561a9ba47b898bd41c670593ff46bda0995e16
+BRANCH: audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001
+STATUS:
+ M src/core/app/task-controller.ts
+ M src/core/thinking/index.ts
+?? node_modules
+?? src/core/app/autonomous-feedback-loop.ts
+?? src/core/thinking/chatgpt-devkit.ts
+?? tests/autonomous-feedback-loop.test.ts
+
+## A0 远程审计交付分支
+audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery = a54fefbd152464a93ca3782faa130dd2582cdcf9
+
+## 与 R1 开工快照对比
+R1 开工快照 = 上一阶段收工快照（workspace-protection-before.txt），8 文件 SHA-256 与上述完全一致。

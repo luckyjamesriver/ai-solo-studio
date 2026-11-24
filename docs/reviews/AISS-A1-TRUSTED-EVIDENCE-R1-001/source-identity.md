@@ -2,7 +2,7 @@
 
 - 旧候选（复核未通过）：`6918ea590f14935c4f164185a5702c51ee9bf8c0`
 - 主干基线：`e69ca8511a17acfc4427954af13ef6d364ffb553`
-- 新候选：见 PR #7 exact HEAD（报告 §8）
+- 新候选（代码提交）：`6349f38a469ad88fac52c6742a3140a1153811f0`（最终 HEAD 见 PR #7 checks）
 - 探针源码 SHA-256：`bdcb727570a30a140a091ffe38f6c5069622334504fc50c3897106cb8e7218aa`（`repro/r1-probe.probe.ts.txt`；旧候选运行时为同一文件）
 - 沙箱验证脚本 SHA-256：`69a4e2f4d588493b7b26723e697ed2626b4e549ad75b0ac5384e7dab51ae396b`
 - Node：`v22.23.5`（engines: >=22.22.2 <23；npm 10.9.9）
