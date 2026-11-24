@@ -1,0 +1,13 @@
+# source: protected rebuild worktree (/Users/jamesho/ai-solo-studio-rebuild) HEAD=8dfcfc1, path e2e/shell.e2e.ts
+diff --git a/e2e/shell.e2e.ts b/e2e/shell.e2e.ts
+index 6b31d04..d129783 100644
+--- a/e2e/shell.e2e.ts
++++ b/e2e/shell.e2e.ts
+@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
+ import { execFileSync } from 'node:child_process';
+ import fs from 'node:fs';
+ import http from 'node:http';
++import net from 'node:net';
+ import os from 'node:os';
+ import path from 'node:path';
+ import { fileURLToPath, pathToFileURL } from 'node:url';

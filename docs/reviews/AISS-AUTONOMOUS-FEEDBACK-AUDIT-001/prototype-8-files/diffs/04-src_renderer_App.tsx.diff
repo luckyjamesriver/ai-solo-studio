@@ -1,0 +1,58 @@
+# source: protected rebuild worktree HEAD=8dfcfc1, path src/renderer/App.tsx
+diff --git a/src/renderer/App.tsx b/src/renderer/App.tsx
+index df63264..b3c1ba7 100644
+--- a/src/renderer/App.tsx
++++ b/src/renderer/App.tsx
+@@ -44,6 +44,23 @@ export function App() {
+   const [collapsed, setCollapsed] = useState(false);
+   const [env, setEnv] = useState<HealthReport | null>(null);
+   const [workbench, setWorkbench] = useState<WorkbenchView>(EMPTY_WORKBENCH);
++  const [showChatGptWeb, setShowChatGptWeb] = useState<boolean>(() => {
++    try {
++      return localStorage.getItem('ai_solo_show_chatgpt_web') !== 'false';
++    } catch {
++      return true;
++    }
++  });
++
++  const handleToggleChatGptWeb = (show: boolean) => {
++    setShowChatGptWeb(show);
++    try {
++      localStorage.setItem('ai_solo_show_chatgpt_web', show ? 'true' : 'false');
++    } catch {}
++    if (!show && screen.kind === 'chatgpt_web') {
++      navigate({ kind: 'workbench' });
++    }
++  };
+   const [filterProjectId, setFilterProjectId] = useState<string>('all');
+   const [projectsById, setProjectsById] = useState<Record<string, ProjectStatus>>({});
+   const [tasksByProject, setTasksByProject] = useState<Record<string, { tasks: TaskView[]; preferredMode: 'standard' | 'full_trust' }>>({});
+@@ -458,10 +475,15 @@ export function App() {
+           refreshEnv();
+           refreshClaudeKey();
+         }}
+-        onSelectChatGPTWeb={() => {
+-          const currentPid = screen.kind === 'project' ? screen.projectId : (workbench.projects[0]?.id ?? undefined);
+-          navigate({ kind: 'chatgpt_web', projectId: currentPid });
+-        }}
++        onSelectChatGPTWeb={
++          showChatGptWeb
++            ? () => {
++                const currentPid =
++                  screen.kind === 'project' ? screen.projectId : (workbench.projects[0]?.id ?? undefined);
++                navigate({ kind: 'chatgpt_web', projectId: currentPid });
++              }
++            : undefined
++        }
+       />
+ 
+       <div className="main-scroll">
+@@ -581,6 +603,8 @@ export function App() {
+             onFetchProviderModels={handleFetchProviderModels}
+             onEnableSubscriptionCli={handleEnableSubscriptionCli}
+             onDisableSubscriptionCli={handleDisableSubscriptionCli}
++            showChatGptWeb={showChatGptWeb}
++            onToggleChatGptWeb={handleToggleChatGptWeb}
+           />
+         )}
+ 

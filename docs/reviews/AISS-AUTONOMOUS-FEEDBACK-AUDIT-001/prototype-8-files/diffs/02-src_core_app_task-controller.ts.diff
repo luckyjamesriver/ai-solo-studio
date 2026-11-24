@@ -1,0 +1,82 @@
+# source: protected audit worktree (/Users/jamesho/ai-solo-studio-audit) HEAD=a8561a9 (tree identical to e69ca85 for src/); verified byte-identical to git diff in rebuild worktree
+diff --git a/src/core/app/task-controller.ts b/src/core/app/task-controller.ts
+index 0ca1e17..57798e6 100644
+--- a/src/core/app/task-controller.ts
++++ b/src/core/app/task-controller.ts
+@@ -28,6 +28,8 @@ import { validateExtraDir } from '../executor/extra-dirs.js';
+ import type { Executor } from '../executor/types.js';
+ import type { SaveProgressEvent, Task } from '../task/model.js';
+ import type { Thinker } from '../thinking/types.js';
++import { CodexThinker } from '../thinking/codex.js';
++import { AutonomousFeedbackLoop, type FeedbackDiagnosis, type FeedbackLoopMode } from './autonomous-feedback-loop.js';
+ import {
+   buildSameAiNotice,
+   type AiProviderId,
+@@ -114,6 +116,14 @@ export interface ControllerOptions {
+   getVerifiedExecutors?: () => Promise<VerifiedExecutorOption[]>;
+   /** 保存前检查进度推送事件回调（主进程向渲染层推送实时步骤状态） */
+   onSaveProgress?: (ev: SaveProgressEvent) => void;
++  /** 自动化评估与纠错反馈闭环配置（无人值守/自愈模式） */
++  feedbackLoop?: {
++    enabled?: boolean;
++    mode?: FeedbackLoopMode;
++    thinker?: Thinker;
++    maxRetries?: number;
++    onDiagnosis?: (diagnosis: FeedbackDiagnosis) => void;
++  };
+ }
+ 
+ const EDITABLE = ['draft', 'clarifying', 'planned', 'approved'];
+@@ -147,6 +157,16 @@ export class TaskController {
+       this.runner.on('save_progress', (ev: SaveProgressEvent) => {
+         this.o.onSaveProgress?.(ev);
+       });
++      if (this.o.feedbackLoop?.enabled) {
++        this.runner.on('update', (updated: Task) => {
++          if (updated.state === 'reviewing' && !this.active.has(updated.id)) {
++            // 异步触发自动化评估与反馈闭环（无人值守自愈模式）
++            void this.runFeedbackLoop(updated.id).then((diag) => {
++              this.o.feedbackLoop?.onDiagnosis?.(diag);
++            }).catch(() => undefined);
++          }
++        });
++      }
+     }
+     return this.runner;
+   }
+@@ -573,6 +593,35 @@ export class TaskController {
+     return this.view(planned);
+   }
+ 
++  /**
++   * 构造或获取自动化反馈闭环引擎实例
++   */
++  getFeedbackLoop(customMode?: FeedbackLoopMode): AutonomousFeedbackLoop {
++    const thinker =
++      this.o.feedbackLoop?.thinker ??
++      (this.o.makeThinkerByProvider ? this.o.makeThinkerByProvider('codex') : new CodexThinker());
++    return new AutonomousFeedbackLoop({
++      thinker,
++      taskController: {
++        load: (id: string) => this.load(id),
++        reworkTask: (id: unknown, feedback: unknown) => this.reworkTask(id, feedback),
++      },
++      mode: customMode ?? this.o.feedbackLoop?.mode ?? 'autonomous',
++      ...(this.o.feedbackLoop?.maxRetries ? { maxRetries: this.o.feedbackLoop.maxRetries } : {}),
++    });
++  }
++
++  /**
++   * 执行自动评估与反馈纠错闭环：
++   * 分析当前任务产物 -> 失败自动喂给 Thinker 诊断 -> LoopGuard 熔断审查 -> 触发退回修改
++   */
++  async runFeedbackLoop(id: unknown, opts?: { mode?: FeedbackLoopMode }): Promise<FeedbackDiagnosis> {
++    const tid = this.checkArg(TASK_ID, id);
++    await this.ready();
++    const loop = this.getFeedbackLoop(opts?.mode);
++    return loop.processTaskReview(tid);
++  }
++
+   // ───────────────────────── 验收、保存、放弃、撤销（B4-2） ─────────────────────────
+   // 渲染进程只传：任务编号、条目编号（c0 / d0）、验收版本、（无参数的操作）。返回给它的只有 UserAcceptanceView 与固定文案。
+ 

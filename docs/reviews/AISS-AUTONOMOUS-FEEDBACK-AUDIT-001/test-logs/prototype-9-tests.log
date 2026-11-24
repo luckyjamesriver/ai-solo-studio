@@ -1,0 +1,42 @@
+# A0 evidence log — 9 prototype tests (scratch dir reproduction)
+
+| field | value |
+| :--- | :--- |
+| utc_timestamp | `2026-11-24T02:59:16Z` |
+| pwd | `/Users/jamesho/a0-scratch/proto` |
+| scratch_dir_kind | scratch copy: `git archive e69ca85` + fresh `npm ci` node_modules copy + 5 prototype source files (3 untracked + 2 modified), NO .git, NOT a worktree of the protected repos |
+| node | `v22.23.5` |
+| npm | `10.9.9` |
+| uname | `Darwin JamesMacStudio.local 27.2.0 Darwin Kernel Version 27.2.0: Thu Oct 15 00:02:46 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T6000 arm64` |
+| git_head_note | baseline `e69ca8511a17acfc4427954af13ef6d364ffb553` (scratch has no .git) |
+| command | `npx vitest run tests/autonomous-feedback-loop.test.ts` |
+
+## Source file SHA-256 used in this run
+```text
+caad1b563d77eac30fa4af96165bfc767c837fc2954d622b0cef0f75dc94eae3  tests/autonomous-feedback-loop.test.ts
+d5067b3fe176984f0115751f9fa5690d02b4dc121119bfb82981b83439424428  src/core/app/autonomous-feedback-loop.ts
+49f3cfce392320c4b399e05bddec19695f7d4bc78fa17acdc6f2471efdf49f35  src/core/thinking/chatgpt-devkit.ts
+40873cc12089ef94db563824b60135a56425c91ea6a4b42bc7e43ff990118881  src/core/app/task-controller.ts
+cd4b5dd264b069bf558571916367e068f036496dc86da3c35466be5e43e9ecb5  src/core/thinking/index.ts
+54f750b0876b16bd71d13006f163b3636789965aa2d82e2f7469351f5e9c5c8a  vitest.config.ts
+28004785802a471c244f10a3a086e96188a0c487fe51cf6d88b69ebd2ad56a49  package.json
+cc3d0612c2b30c1ca6d8381215bbd763f8e3a7d6598402caeda7be7656b81438  package-lock.json
+```
+
+## Output
+```text
+
+ RUN  v5.0.5 /Users/jamesho/a0-scratch/proto
+
+ ✓ tests/autonomous-feedback-loop.test.ts (9 tests) 644ms
+   ✓ AutonomousFeedbackLoop (执行结果喂回与自动纠错闭环) (5)
+     ✓ 场景 5：TaskController 实例集成调用 runFeedbackLoop 成功触发闭环 635ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  10:59:17
+   Duration  845ms (tests 90%, transform 8%, import 2%)
+
+```
+
+**EXIT_CODE: 0**

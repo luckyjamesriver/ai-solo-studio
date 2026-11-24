@@ -1,0 +1,10 @@
+# source: protected audit worktree HEAD=a8561a9 (tree identical to e69ca85 for src/); verified byte-identical to git diff in rebuild worktree
+diff --git a/src/core/thinking/index.ts b/src/core/thinking/index.ts
+index 42773dd..45d1b58 100644
+--- a/src/core/thinking/index.ts
++++ b/src/core/thinking/index.ts
+@@ -5,3 +5,4 @@ export { FakeThinker, type FakeThinkStep } from './fake.js';
+ export { CodexThinker } from './codex.js';
+ export { ClaudeCliThinker, claudeCliArgs, DEV_PERSONAL_ENV } from './claude-cli.js';
+ export { ClaudeApiThinker, DEFAULT_CLAUDE_API_MODEL, ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL } from './claude-api.js';
++export { ChatGptDevKitThinker, CHATGPT_DEVKIT_DEFAULT_MODEL, CHATGPT_DEVKIT_SERVICE_NAME, type ChatGptDevKitOptions } from './chatgpt-devkit.js';

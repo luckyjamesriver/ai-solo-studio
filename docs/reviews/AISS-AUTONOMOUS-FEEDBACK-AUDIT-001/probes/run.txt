@@ -1,0 +1,28 @@
+# A0 negative-probe evidence log
+
+| field | value |
+| :--- | :--- |
+| utc_timestamp | `2026-11-24T02:59:08Z` |
+| pwd | `/Users/jamesho/a0-scratch/proto` |
+| scratch_source | `git archive e69ca85` + prototype files (see source-identity.md) |
+| node | `v22.23.5` |
+| npm | `10.9.9` |
+| uname | `Darwin JamesMacStudio.local 27.2.0 Darwin Kernel Version 27.2.0: Thu Oct 15 00:02:46 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T6000 arm64` |
+| probe_file_sha256 | `93be939f661d752e03b91e26777f96e75994e38133543a2cd96cb8603205c018` |
+| command | `npx vitest run tests/probes/audit-negative-probes.test.ts` |
+
+## Output
+```text
+
+ RUN  v5.0.5 /Users/jamesho/a0-scratch/proto
+
+ ✓ tests/probes/audit-negative-probes.test.ts (4 tests) 7ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  10:59:12
+   Duration  316ms (transform 73%, import 12%, worker 8%, tests 7%)
+
+```
+
+**EXIT_CODE: 0**

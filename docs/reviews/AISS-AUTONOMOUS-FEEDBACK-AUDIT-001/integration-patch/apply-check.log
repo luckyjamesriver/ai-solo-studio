@@ -1,0 +1,17 @@
+# Integration patch apply-check evidence
+
+| field | value |
+| :--- | :--- |
+| utc_timestamp | `2026-11-24T02:58:23Z` |
+| scratch_dir | `/Users/jamesho/a0-scratch/applytest` |
+| scratch_source | `git archive e69ca8511a17acfc4427954af13ef6d364ffb553` from delivery worktree (no node_modules, no .git) |
+| patch | `docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/integration-patch/integration.patch` |
+| patch_sha256 | `69a41ccce7bc8a2cb9724af9acacb58c23c35be10a0f5c1b2bb94eece8dedadf` |
+| command | `cd /Users/jamesho/a0-scratch/applytest && git apply --check -v <patch>` |
+
+```text
+Checking patch src/core/app/task-controller.ts...
+Checking patch src/core/thinking/index.ts...
+```
+
+**APPLY_CHECK_EXIT_CODE: 0**
