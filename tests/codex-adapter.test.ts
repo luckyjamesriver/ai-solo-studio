@@ -594,7 +594,9 @@ describe('B3-1：项目脚本检查进沙箱', () => {
     expect(req.argv).toEqual(['npm', 'run', 'test', '--silent']);
     expect(req.cwd).toBe(dir);
     // 环境变量只有白名单 + 副本内临时目录 + CI（+ DEVELOPER_DIR）
-    expect(Object.keys(req.env).filter((k) => !['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'CI', 'DEVELOPER_DIR'].includes(k))).toEqual([]);
+    // R1：额外只允许 GIT_CEILING_DIRECTORIES（不扩大沙箱权限的前提下，避免测试进程把副本内临时目录误认为项目仓库）
+    expect(Object.keys(req.env).filter((k) => !['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'CI', 'DEVELOPER_DIR', 'GIT_CEILING_DIRECTORIES'].includes(k))).toEqual([]);
+    expect(req.env.GIT_CEILING_DIRECTORIES).toBe(path.join(dir, '.studio'));
     expect(req.env.TMPDIR).toBe(path.join(dir, '.studio', 'tmp'));
     expect(fs.existsSync(path.join(dir, '.studio', 'tmp'))).toBe(true);
     const failed = await runCheck(dir, 'build', exec({ exit: 2 }).runner, { authorizedDigest: digest });
@@ -633,7 +635,7 @@ describe('B3-1：项目脚本检查进沙箱', () => {
     expect(await detectScripts(dir)).toEqual({});
     expect(await runCheck(dir, 'test', exec({}).runner, { authorizedDigest: 'x' })).toMatchObject({ status: 'not_available', reason: expect.stringMatching(/没有 test 脚本/) });
     const env = minimalCheckEnv({ PATH: '/bin', HOME: '/h', SECRET_TOKEN: 's', OPENAI_API_KEY: 'k', LANG: 'C' }, '/w', false);
-    expect(env).toEqual({ PATH: '/bin', HOME: '/h', LANG: 'C', TMPDIR: '/w/.studio/tmp', CI: '1' });
+    expect(env).toEqual({ PATH: '/bin', HOME: '/h', LANG: 'C', TMPDIR: '/w/.studio/tmp', GIT_CEILING_DIRECTORIES: '/w/.studio', CI: '1' });
   });
 
   it('Codex 沙箱运行器：核验生效权限后经 command/exec 运行；权限不一致或命令不可用 → unavailable', async () => {

@@ -1,6 +1,7 @@
 import type { ExitOutcome, DeniedOperation } from '../executor/types.js';
 import type { CheckResult } from '../checks/scripts.js';
 import type { FileChange } from '../git/git.js';
+import { adjudicateCheckResult, type CheckAdjudication, type EvidenceIdentityContextForAdjudication } from '../evidence/adjudicate.js';
 
 /**
  * 验收卡（AISS-A1 语义修正）：
@@ -86,61 +87,33 @@ function exitItem(o: ExitOutcome): AcceptanceItem {
 
 /**
  * 把一次真实检查结果映射成验收卡条目。
- * 关键规则：`status === 'passed'` 仍需**可信证据**才能显示为 verified；
- * 尤其是自动测试 —— 没有结构化测试证据时，即使退出码 0 也只能是 unverified（≠ 通过）。
+ * R1-03：验收卡不再自行解释 `passed` —— 结论一律来自 `src/core/evidence/adjudicate.ts` 的统一裁决入口。
  */
-function checkItem(c: CheckResult): AcceptanceItem {
+function checkItem(c: CheckResult, ctx?: EvidenceIdentityContextForAdjudication): AcceptanceItem {
   const label = c.name === 'build' ? '项目能成功构建' : '自动测试通过';
-  const counts = c.evidence?.report?.counts ?? null;
-  const testCounts = c.name === 'test' ? (counts ? { passed: counts.passed, failed: counts.failed, skipped: counts.skipped, total: counts.total } : null) : undefined;
-
-  if (c.status === 'not_available') {
-    return { key: c.name, label, status: 'not_checked', evidence: c.reason, source: 'none', ...(c.name === 'test' ? { testCounts: null } : {}), unknownReason: c.unknownReason };
-  }
-  if (c.status === 'unverified') {
-    return {
-      key: c.name,
-      label,
-      status: 'unverified',
-      evidence: c.reason,
-      source: c.name === 'test' ? 'structured_test' : 'process',
-      ...(c.name === 'test' ? { testCounts } : {}),
-      unknownReason: c.unknownReason,
-    };
-  }
-  if (c.status === 'failed') {
-    return {
-      key: c.name,
-      label,
-      status: 'failed',
-      evidence: c.name === 'build' ? '构建没有通过' : '自动测试没有通过',
-      source: c.name === 'test' ? 'structured_test' : 'process',
-      ...(c.name === 'test' ? { testCounts } : {}),
-    };
-  }
-  // passed：构建以真实进程退出码为证据；自动测试必须有结构化测试证据才可信
-  if (c.name === 'test' && !c.evidence?.report) {
-    return {
-      key: c.name,
-      label,
-      status: 'unverified',
-      evidence: '测试命令结束了，但没有取得可核验的结构化测试证据，不能据此判定测试通过。',
-      source: 'none',
-      testCounts: null,
-      unknownReason: 'no_structured_evidence',
-    };
-  }
-  if (c.name === 'build') {
-    return { key: c.name, label, status: 'verified', evidence: `npm run build 成功（${Math.round(c.durationMs / 1000)} 秒）`, source: 'process' };
-  }
-  const sec = Math.round(c.durationMs / 1000);
+  // 未提供身份上下文（纯单元/历史路径）时按“历史证据”裁决：仍要求有结构化证据，但不做跨版本身份绑定
+  const adjudicated = adjudicateCheckResult(
+    c,
+    ctx ?? { taskId: c.evidence?.identity.taskId ?? '', round: c.evidence?.identity.round ?? 1, historical: true },
+  );
+  const status: ItemStatus = adjudicated.status === 'verified'
+    ? 'verified'
+    : adjudicated.status === 'failed'
+      ? 'failed'
+      : adjudicated.status === 'not_checked'
+        ? 'not_checked'
+        : adjudicated.status === 'invalidated'
+          ? 'invalidated'
+          : 'unverified';
+  const source: EvidenceSource = adjudicated.status === 'not_checked' ? 'none' : c.name === 'test' ? 'structured_test' : 'process';
   return {
     key: c.name,
     label,
-    status: 'verified',
-    evidence: `npm run test 结构化报告：${counts ? `${counts.passed} 项通过 · ${counts.failed} 项失败 · ${counts.skipped} 项跳过` : '报告有效'}（${sec} 秒）`,
-    source: 'structured_test',
-    testCounts,
+    status,
+    evidence: adjudicated.detail,
+    source,
+    ...(c.name === 'test' ? { testCounts: adjudicated.counts ?? null } : {}),
+    ...(adjudicated.reason ? { unknownReason: adjudicated.reason } : {}),
   };
 }
 
@@ -162,6 +135,8 @@ export function buildCard(input: {
   /** 验收标准为空时，用户的整体确认 */
   overallConfirmed?: boolean;
   notes?: string[];
+  /** 证据身份上下文（任务/轮次/验收版本/内容/项目/工作树），用于统一裁决 */
+  evidenceContext?: EvidenceIdentityContextForAdjudication;
 }): AcceptanceCard {
   const items: AcceptanceItem[] = [exitItem(input.exit)];
   items.push(
@@ -169,7 +144,7 @@ export function buildCard(input: {
       ? { key: 'changes', label: '有实际文件改动', status: 'verified', evidence: `${input.changes.length} 个文件发生变化`, source: 'process' }
       : { key: 'changes', label: '有实际文件改动', status: 'failed', evidence: '没有任何文件被修改', source: 'process' },
   );
-  for (const c of input.checks) items.push(checkItem(c));
+  for (const c of input.checks) items.push(checkItem(c, input.evidenceContext));
   if (input.checksVoid) {
     items.push({ key: 'checks_modified', label: '检查是否改动了文件', status: 'invalidated', evidence: input.checksVoid, source: 'none', unknownReason: 'source_changed_during_check' });
   }

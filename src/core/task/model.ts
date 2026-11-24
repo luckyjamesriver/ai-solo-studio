@@ -154,6 +154,15 @@ export interface SaveRecord {
   executorText?: string;
   /** 试合并产生的提交（写入主项目 --ff-only 的源提交） */
   trialCommit?: string;
+  /** 保存时真实试检查产生的结构化证据 id（用于区分“当时有证据”与“历史记录未核实”） */
+  evidenceIds?: { build?: string; test?: string };
+}
+
+/** 保存记录的检查结论文案：没有结构化证据的历史记录不得显示成可信「检查通过」。 */
+export function saveChecksText(rec?: Pick<SaveRecord, 'checked' | 'evidenceIds'> | null): '检查通过' | '未检查' | '检查通过（历史记录未核实）' {
+  if (rec?.checked !== true) return '未检查';
+  const hasEvidence = !!rec.evidenceIds?.test || !!rec.evidenceIds?.build;
+  return hasEvidence ? '检查通过' : '检查通过（历史记录未核实）';
 }
 
 export interface AcceptedRiskRecord {
@@ -303,12 +312,23 @@ export interface Task {
   /** 批准时授权的检查脚本内容摘要（package.json 的 build/test 及 pre/post 脚本）；摘要变化则授权失效 */
   checkAuth?: { digest: string; at: string; scope?: ApprovedScopeBaseline };
   /**
-   * 最新一次证据生成时发现的「测试范围被削弱 / 验证基础设施被修改」。
-   * 自动通过被阻断，必须由用户明确重新确认当前范围后才能继续（记录在 scopeReconfirmed）。
+   * 测试范围复核（R1-04）：证据发现测试范围被削弱/内容变化但静态分析无法证明安全时记录；
+   * 自动通过被阻断。用户确认必须绑定「其实际查看的内容指纹 + 范围指纹 + 验收版本」，
+   * 确认前内容或范围发生变化则旧确认作废；保存/试合并会消费该确认。
    */
-  scopeChange?: { kind: 'weakened'; reasons: string[]; fingerprint: string; acceptanceVersion: string; at: string };
-  /** 用户明确确认「已知晓测试范围与验证基础设施变化，仍按当前范围验收」；验收版本或范围变化即失效 */
-  scopeReconfirmed?: { acceptanceVersion: string; fingerprint: string; at: string };
+  scopeReview?: {
+    kind: 'weakened' | 'changed';
+    reasons: string[];
+    /** 测试范围指纹（测试清单 + 配置 + 运行器） */
+    scopeFingerprint: string;
+    /** 检测时冻结的内容指纹（acceptedTree） */
+    contentFingerprint: string;
+    /** 检测时的验收版本 */
+    acceptanceVersion: string;
+    detectedAt: string;
+    /** 用户明确确认时间；仅当上述三项仍然一致时才会被保存链路接受 */
+    confirmedAt?: string;
+  };
   /** 重启后深度复核发现保存的证据已与当前检查配置不一致（记录事实，不改写历史轮次） */
   evidenceInvalid?: { reason: string; at: string };
   /** 方案批准后修改验收标准导致退回 planned 时的提示 */

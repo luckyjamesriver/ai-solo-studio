@@ -1,6 +1,6 @@
 # AI Solo Studio — 核心代码地图 (CODE_MAP)
 
-**版本：** v1.7 (AISS-A1-TRUSTED-EVIDENCE-001 统一宿主证据模型，2026-11-24)  
+**版本：** v1.8 (AISS-A1-TRUSTED-EVIDENCE-R1-001 独立复核修订，2026-11-24)  
 **基线分支：** `origin/rebuild` (`e69ca8511a17acfc4427954af13ef6d364ffb553` = 本阶段基线)  
 **真实性原则：** 100% 经由真实源码导出与调用实现核对；Preload API 明确展示完整入参（包括 `projectId`）；严格区分 `runCheck()` 与 `runProjectChecks()`；未合入主线的在研原型不画入当前主线架构。
 
@@ -73,7 +73,8 @@
 | **受控持久化存储** | `src/core/persistence/store.ts` | `RecordStore` (`load`, `commit`, `list`) | 依据 ADR 0005，全系统唯一文件写入者。CAS 乐观锁校验、`.studio/events.jsonl` 事件日志追加、启动对账重建。 |
 | **卷兼容性探针** | `src/core/persistence/volume.ts` | `localApfsProbe`, `requireLocalVolume` | 依据 ADR 0005 第 12 条校验数据目录是否为本地 APFS 磁盘，防止网络卷导致锁失效。 |
 | **自动化检查（可信证据采集）** | `src/core/checks/scripts.ts` | `detectScripts`, `runCheck`, `runProjectChecks`, `collectApprovedScopeBaseline`, `currentScopeFingerprint` | 静态解析并沙箱执行目标项目中的检查脚本。`build` 以真实进程退出码为证据；`test` 只有取得结构化测试证据才算 `passed`，否则 `failed` / `unverified` / `not_available`。`buildEvidence` 逐项调用 `runCheck`，试合并阶段调用聚合的 `runProjectChecks`。 |
-| **统一宿主证据模型** | `src/core/evidence/model.ts`<br>`src/core/evidence/inventory.ts`<br>`src/core/evidence/vitest.ts`<br>`src/core/evidence/validate.ts` | `HostCheckEvidence`, `assessScopeChange`, `readVitestReport`, `evidenceIdentityProblem`, `hasTrustedTestPass` | 证据身份（项目/任务/轮次/验收版本/被测 tree）、运行身份、脚本/配置/运行器/测试清单指纹、Vitest JSON 报告完整性校验、相对任务基线的测试范围削弱评估、证据有效性与失效原因。 |
+| **统一宿主证据模型** | `src/core/evidence/model.ts`<br>`src/core/evidence/inventory.ts`<br>`src/core/evidence/vitest.ts`<br>`src/core/evidence/validate.ts` | `HostCheckEvidence`, `assessScopeChange`, `readVitestReport`, `evidenceIdentityProblem` | 证据身份（项目/任务/轮次/验收版本/被测 tree/项目根/任务副本）、运行身份、脚本/配置/运行器入口与依赖/测试清单指纹、Vitest JSON 报告完整性（逐项记录是否实际校验）、保守测试范围评估（逐文件下降、内容/辅助文件变化、实际执行范围）. |
+| **统一证据裁决** | `src/core/evidence/adjudicate.ts` | `adjudicateEvidence`, `adjudicateStoredProof`, `adjudicateCheckResult`, `adjudicateTaskEvidence`, `adjudicateRoundChecks` | 唯一可信裁决入口：类型/任务/轮次/验收版本/内容/项目/副本身份 → 深度失效 → 范围确认 → 失败/未执行/结构性证据 → 通过。验收卡、证据页、保存门禁、历史轮次、ChatGPT 反馈包事实全部消费此入口，禁止各自解释 `passed`。 |
 | **双轨验收卡与证据** | `src/core/acceptance/card.ts`<br>`src/core/acceptance/view.ts`<br>`src/core/acceptance/proof.ts`<br>`src/core/acceptance/proof-status.ts` | `buildCard`, `toUserView`, `buildTaskProof`, `checkInvalidations` | 聚合真实进程事实、Git 真实修改、宿主证据与人工确认项，判定 `readyToSave` 门禁。条目状态区分 `verified` / `failed` / `not_checked` / `unverified`（缺乏有效证据）/ `invalidated`（证据失效）/ `user_confirmed`；证据不足或失效时绝不显示为通过，旧记录不补造测试数量。 |
 | **环境体检** | `src/core/env/health.ts`<br>`src/core/env/host-env.ts` | `runHealthCheck` | 检测系统运行环境、磁盘空间、Node/Git 依赖与安全隔离状态。 |
 
@@ -85,7 +86,8 @@
 
 ```
 TaskRunner.buildEvidence(task)
-  ├─ 计算被测内容 tree（.studio/ 与 node_modules/ 永不进入 tree）
+  ├─ 计算被测内容 tree（仅剔除「未跟踪」的 .studio/ node_modules 缓存；已跟踪文件的修改/删除完整保留）
+  │   └─ 改动清单使用同一内容 tree 与基线做 git diff-tree（不写工作树索引）
   ├─ 构造 EvidenceIdentityContext { projectRoot, taskId, round, acceptanceRev, testedTree, baselineRev=worktree.baseSha, approvedScope=checkAuth.scope }
   ├─ runCheck(worktree, 'build'|'test', sandboxRunner, { authorizedDigest, identity })
   │    ├─ build：真实进程退出码 → passed / failed
@@ -104,7 +106,9 @@ save(task) 试合并         → runProjectChecks(同一证据语义) + 检查�
                            （只记录事实，不改写历史轮次）
 ```
 
-用户显式动作：`TaskController.confirmScopeChange(id, version)`（preload `confirmScopeChange` → IPC `acceptance:confirm-scope-change`）→ 绑定 `acceptanceVersion` 与范围指纹，重新生成证据；自动反馈闭环不得调用。
+用户显式动作：`TaskController.confirmScopeChange(id, version)`（preload `confirmScopeChange` → IPC `acceptance:confirm-scope-change`）→ 校验内容指纹+范围指纹+验收版本 → 清空旧验收决定 → 按当前范围重新生成证据并绑定确认；保存/试合并消费该确认（未确认或已失效 → 硬阻断），保存成功后清理。自动反馈闭环不得调用。
+
+检查运行环境：标准模式 Seatbelt 配置档额外允许「向自己的子进程发信号」（Vitest 结束 worker 需要），仍禁止向外进程发信号；检查进程 `TMPDIR` 位于副本 `.studio/tmp`，并设置 `GIT_CEILING_DIRECTORIES=<副本>/.studio`（不扩大沙箱写权限的前提下避免测试进程把临时目录误认为项目仓库）；运行前在副本内创建空的 `node_modules/`，让 Vite/Vitest 的配置临时文件写入副本而不是主项目依赖目录。
 
 ## 三、 跨层调用与关键业务真实时序流（严格对齐源码与完整参数）
 

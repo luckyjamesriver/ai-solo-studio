@@ -1,0 +1,212 @@
+/**
+ * AISS-A1-TRUSTED-EVIDENCE-R1-001 修复前后对照探针。
+ *
+ * 同一组断言：
+ *  - 在旧候选 6918ea5 上应当【失败】（证明 ChatGPT 复核提出的缺陷真实存在）；
+ *  - 在 R1 新候选上应当【通过】（证明缺陷已修复）。
+ *
+ * 只使用旧候选也存在的公开接口，确保“同一探针”可在两棵树上运行。
+ */
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { describe, it, expect } from 'vitest';
+import { runCheck, scriptsDigest } from '../../src/core/checks/scripts.js';
+import { computeTree, diffSummary, git } from '../../src/core/git/git.js';
+import {
+  assessScopeChange,
+  readConfigFingerprintsFromTree,
+  readPackageLockDigestFromTree,
+  scanTestInventory,
+  scanTestInventoryFromTree,
+} from '../../src/core/evidence/inventory.js';
+import { configFingerprintProblems, evidenceIdentityProblem } from '../../src/core/evidence/validate.js';
+import { buildReportEvidence, readVitestReport, prepareVitestRun } from '../../src/core/evidence/vitest.js';
+import { realVitestScript, makeRepo, testSandboxRunner, tmpDir, useRealVitest } from '../helpers.js';
+
+const dirs: string[] = [];
+async function fixture(files: Record<string, string>): Promise<string> {
+  const d = await makeRepo(files);
+  dirs.push(d);
+  return d;
+}
+
+describe('R1 探针 A：数据完整性（已跟踪 node_modules 文件的删除不得被隐藏）', () => {
+  it('已跟踪 node_modules/fixture.js 的删除必须进入内容 tree 与改动清单', async () => {
+    const repo = await fixture({
+      'node_modules/fixture.js': 'v1\n',
+      'index.html': 'x\n',
+      'package.json': JSON.stringify({ name: 'probe', scripts: { build: 'node -e "process.exit(0)"' } }),
+    });
+    const wt = await (await import('../../src/core/git/git.js')).createWorktree(repo, 'r1probe');
+    dirs.push(repo);
+    const before = await computeTree(repo, wt.path);
+    expect((await git(repo, ['ls-tree', '-r', '--name-only', before])).split('\n')).toContain('node_modules/fixture.js');
+    await fs.rm(path.join(wt.path, 'node_modules/fixture.js'));
+    const after = await computeTree(repo, wt.path);
+    expect((await git(repo, ['ls-tree', '-r', '--name-only', after])).split('\n')).not.toContain('node_modules/fixture.js');
+    const changes = await diffSummary(wt);
+    const del = changes.find((c) => c.path === 'node_modules/fixture.js');
+    expect(del?.status).toBe('deleted');
+  });
+});
+
+describe('R1 探针 B：失败优先（真实失败 + 报告缺失不得降级为 unverified）', () => {
+  it('真实测试失败且报告被删除 → failed', async () => {
+    const dir = await fixture({ 'package.json': JSON.stringify({ name: 'p2', scripts: { test: realVitestScript() } }) });
+    await useRealVitest(dir, { failWhen: 'trigger.txt' });
+    await fs.writeFile(path.join(dir, 'trigger.txt'), 'x');
+    await git(dir, ['add', '-A']);
+    await git(dir, ['commit', '-m', 'trigger']);
+    const digest = (await scriptsDigest(dir))!;
+    const base = testSandboxRunner();
+    const deleting = {
+      kind: 'delete-report',
+      async runCommand(req: { cwd: string; argv: string[]; env: Record<string, string> }) {
+        const r = await base.runCommand(req as never);
+        const i = req.argv.findIndex((a) => a.startsWith('--outputFile.json='));
+        if (i >= 0) await fs.rm(path.dirname(req.argv[i]!.slice('--outputFile.json='.length)), { recursive: true, force: true }).catch(() => undefined);
+        return r;
+      },
+    };
+    const r = await runCheck(dir, 'test', deleting as never, { authorizedDigest: digest });
+    expect(r.status).toBe('failed');
+  });
+});
+
+describe('R1 探针 C：保守范围复核（逐文件下降不可被抵消、内容变化必须待确认）', () => {
+  it('单文件断言减少 + 其他文件新增（总数不降）→ weakened', async () => {
+    const dir = await fixture({ 'package.json': JSON.stringify({ name: 'p3', scripts: { test: realVitestScript() } }) });
+    await fs.mkdir(path.join(dir, 'tests'), { recursive: true });
+    await fs.writeFile(path.join(dir, 'tests/a.test.ts'), "import { describe, it, expect } from 'vitest';\ndescribe('a', () => { it('a1', () => { expect(1).toBe(1); expect(2).toBe(2); }); it('a2', () => { expect(3).toBe(3); }); });\n");
+    await fs.writeFile(path.join(dir, 'tests/b.test.ts'), "import { describe, it, expect } from 'vitest';\ndescribe('b', () => { it('b1', () => { expect(1).toBe(1); }); });\n");
+    await git(dir, ['add', '-A']);
+    await git(dir, ['commit', '-m', 'base']);
+    const baseRev = (await git(dir, ['rev-parse', 'HEAD'])).trim();
+    const baseline = await scanTestInventoryFromTree(dir, baseRev);
+    await fs.writeFile(path.join(dir, 'tests/a.test.ts'), "import { describe, it, expect } from 'vitest';\ndescribe('a', () => { it('a1', () => { expect(1).toBe(1); }); it('a2', () => { expect(3).toBe(3); }); });\n");
+    await fs.writeFile(path.join(dir, 'tests/b.test.ts'), "import { describe, it, expect } from 'vitest';\ndescribe('b', () => { it('b1', () => { expect(1).toBe(1); expect(2).toBe(2); expect(3).toBe(3); expect(4).toBe(4); expect(5).toBe(5); }); });\n");
+    const assessment = assessScopeChange({
+      baseline,
+      current: await scanTestInventory(dir),
+      baselineConfigs: await readConfigFingerprintsFromTree(dir, baseRev),
+      currentConfigs: [],
+      baselineLock: await readPackageLockDigestFromTree(dir, baseRev),
+      currentLock: undefined,
+      baselineScriptsDigest: (await scriptsDigest(dir))!,
+      currentScriptsDigest: (await scriptsDigest(dir))!,
+    });
+    expect(assessment.kind).toBe('assessed_weakened');
+  });
+
+  it('同名同数量但断言内容被改写 → needs_review（不得 assessed_unchanged）', async () => {
+    const dir = await fixture({ 'package.json': JSON.stringify({ name: 'p4', scripts: { test: realVitestScript() } }) });
+    await fs.mkdir(path.join(dir, 'tests'), { recursive: true });
+    await fs.writeFile(path.join(dir, 'tests/x.test.ts'), "import { describe, it, expect } from 'vitest';\ndescribe('x', () => { it('same', () => { expect(1 + 1).toBe(2); }); });\n");
+    await git(dir, ['add', '-A']);
+    await git(dir, ['commit', '-m', 'base']);
+    const baseRev = (await git(dir, ['rev-parse', 'HEAD'])).trim();
+    const baseline = await scanTestInventoryFromTree(dir, baseRev);
+    await fs.writeFile(path.join(dir, 'tests/x.test.ts'), "import { describe, it, expect } from 'vitest';\ndescribe('x', () => { it('same', () => { expect(true).toBe(true); }); });\n");
+    const assessment = assessScopeChange({
+      baseline,
+      current: await scanTestInventory(dir),
+      baselineConfigs: await readConfigFingerprintsFromTree(dir, baseRev),
+      currentConfigs: [],
+      baselineLock: await readPackageLockDigestFromTree(dir, baseRev),
+      currentLock: undefined,
+      baselineScriptsDigest: (await scriptsDigest(dir))!,
+      currentScriptsDigest: (await scriptsDigest(dir))!,
+    });
+    expect(assessment.kind).toBe('assessed_needs_review');
+  });
+});
+
+describe('R1 探针 D：证据身份（跨项目拒绝）', () => {
+  it('相同任务 ID / 相同内容 tree，但项目根不同 → 拒绝', async () => {
+    const repoA = await fixture({ 'a.txt': 'a\n' });
+    const fake = {
+      schemaVersion: 1,
+      kind: 'build',
+      verdict: 'passed',
+      trust: 'trusted',
+      identity: { schemaVersion: 1, evidenceId: 'e', projectRootHash: 'hashA', taskId: 'same-task', round: 1, acceptanceRev: 1, testedTree: 'f'.repeat(40), worktreePathHash: 'w' },
+      run: { runId: 'r', startedAt: 'x', finishedAt: 'x', env: 'sandbox', sandboxKind: 'seatbelt', argv: [], timedOut: false, exitKind: 'exited', exitCode: 0, durationMs: 1, stdoutSha256: 's', stdoutBytes: 1, stderrSha256: 't' },
+      config: { testConfigFiles: [], reporterMode: 'none', collectorVersion: 'a1-evidence-1' },
+      scope: { kind: 'not_assessed', baselineAvailable: false, reasons: [] },
+      valid: true,
+    };
+    const problem = evidenceIdentityProblem(fake as never, { taskId: 'same-task', round: 1, acceptanceRev: 1, acceptedTree: 'f'.repeat(40), projectRoot: repoA } as never);
+    expect(problem).toBeTruthy();
+  });
+});
+
+describe('R1 探针 E：报告完整性（交叉核对未发生必须如实标为未通过；build 不因运行器误判）', () => {
+  it('没有 stdout 摘要时交叉核对 performed=false 且 integrity.ok=false', () => {
+    const parse = {
+      status: 'ok',
+      sha256: 's',
+      bytes: 1,
+      counts: { total: 1, passed: 1, failed: 0, skipped: 0, todo: 0 },
+      failedNames: [],
+      executedFiles: ['tests/a.test.ts'],
+      startTime: Date.now(),
+      problems: [],
+      checks: { regularFile: true, notSymlink: true, noHardlink: true, sizeOk: true, mtimeInWindow: true, startTimeInWindow: true, countsConsistent: true, successConsistent: true, testResultsArray: true },
+    };
+    const plan = { reportPath: '/tmp/x', reportDir: '/tmp/d', argv: [], nonce: 'n' };
+    const ev = buildReportEvidence({ plan: plan as never, parse: parse as never, stdoutSummary: undefined });
+    expect((ev.crossCheck as { performed?: boolean }).performed).toBe(false);
+    expect(ev.integrity.ok).toBe(false);
+  });
+
+  it('build 证据不因“测试运行器身份”被误判失效', () => {
+    const ev = {
+      schemaVersion: 1,
+      kind: 'build',
+      verdict: 'passed',
+      trust: 'trusted',
+      identity: { schemaVersion: 1, evidenceId: 'e', projectRootHash: 'p', taskId: 't', round: 1, acceptanceRev: 1, testedTree: 'a'.repeat(40), worktreePathHash: 'w' },
+      run: { runId: 'r', startedAt: 'x', finishedAt: 'x', env: 'sandbox', sandboxKind: 'seatbelt', argv: [], timedOut: false, exitKind: 'exited', exitCode: 0, durationMs: 1, stdoutSha256: 's', stdoutBytes: 1, stderrSha256: 't' },
+      config: { testConfigFiles: [], reporterMode: 'none', collectorVersion: 'a1-evidence-1' },
+      scope: { kind: 'not_assessed', baselineAvailable: false, reasons: [] },
+      valid: true,
+    };
+    const problems = configFingerprintProblems(ev as never, { configFiles: [], runnerPackage: { name: 'vitest', version: '5.0.5', packageJsonSha256: 'x' } });
+    expect(problems).toEqual([]);
+  });
+});
+
+describe('R1 探针 F：旧记录不得变成可信 PASS', () => {
+  it('保存记录没有结构化证据 id 时，不得显示“检查通过”', async () => {
+    const { buildTaskView } = await import('../../src/core/app/task-view.js');
+    const t = {
+      id: 'legacy-probe',
+      request: 'r',
+      state: 'saved',
+      denied: [],
+      deniedAcks: [],
+      criteria: [],
+      previewed: true,
+      timeline: [],
+      createdAt: 'x',
+      updatedAt: 'x',
+      saveRecord: { preMergeHead: 'a', taskCommit: 'b', mergeCommit: 'c', branch: 'main', savedAt: 'x', checked: true },
+    } as never;
+    const tv = buildTaskView(t, { scripts: [], running: false } as never);
+    expect(tv.saveCheckText).toBe('检查通过（历史记录未核实）');
+  });
+});
+
+describe('R1 探针 G：准备阶段（报告路径受控）', () => {
+  it('报告目录必须位于 .studio/evidence/<nonce>', async () => {
+    const dir = await tmpDir('r1-probe-');
+    dirs.push(dir);
+    const plan = await prepareVitestRun(dir, 'vitest run');
+    expect(path.basename(plan.reportDir)).toBe(plan.nonce);
+  });
+});
+
+import { afterAll } from 'vitest';
+afterAll(async () => {
+  for (const d of dirs) await fs.rm(d, { recursive: true, force: true }).catch(() => undefined);
+});

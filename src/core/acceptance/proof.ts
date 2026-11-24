@@ -4,7 +4,7 @@ import type { DeniedOperation } from '../executor/types.js';
 import type { FileChange } from '../git/git.js';
 import type { ChangePreview } from './snippets.js';
 import { deniedImpactText, deniedText, notCheckedText, safeRelPath, scrubAiText } from './texts.js';
-import { evidenceIdentityProblem, type EvidenceIdentityInput } from '../evidence/validate.js';
+import { adjudicateEvidence, adjudicateStoredProof, type CheckAdjudication, type EvidenceIdentityContextForAdjudication } from '../evidence/adjudicate.js';
 
 export type ProofTab = 'test' | 'build' | 'denied' | 'changes';
 
@@ -273,155 +273,112 @@ function formatCountsSummary(counts: { passed: number; failed: number; skipped: 
   return parts.join(' · ');
 }
 
-function proofFactsOf(stored: StoredCheckProof): string[] {
-  const ev = stored.evidence;
-  if (!ev) return [];
+function proofFactsOf(stored: StoredCheckProof | undefined): string[] {
+  const ev = stored?.evidence;
+  if (!ev) return ['历史任务记录：没有新证据模型的宿主证据，标记为历史未核实（未补造证据）'];
   const facts: string[] = [];
   facts.push(`运行环境：${ev.run.env === 'local' ? '本机' : '沙箱'}（${ev.run.sandboxKind}）`);
   facts.push(`被测内容：${ev.identity.testedTree.slice(0, 12)} · 第 ${ev.identity.round} 轮 · 验收版本 ${ev.identity.acceptanceRev}`);
   if (ev.report) {
     facts.push(`测试报告：${ev.report.format} · sha256 ${ev.report.sha256.slice(0, 12)} · ${ev.report.counts.total} 项（通过 ${ev.report.counts.passed} / 失败 ${ev.report.counts.failed} / 跳过 ${ev.report.counts.skipped}）`);
-    facts.push(ev.report.integrity.ok ? '报告完整性校验：通过' : `报告完整性校验：未通过（${ev.report.integrity.problems.join('；')}）`);
-    facts.push(ev.report.crossCheck.agrees ? '报告与进程输出摘要：一致' : '报告与进程输出摘要：不一致');
+    facts.push(ev.report.integrity?.ok ? '报告完整性校验：通过' : `报告完整性校验：未通过（${(ev.report.integrity?.problems ?? []).join('；')}）`);
+    facts.push(ev.report.crossCheck?.performed ? (ev.report.crossCheck.agrees ? '报告与进程输出摘要：一致' : '报告与进程输出摘要：不一致') : '报告与进程输出摘要：未核对（不能当作已核对）');
+    facts.push(`实际执行测试文件：${ev.report.executedFiles?.length ?? 0} 个`);
   }
   facts.push(
     ev.scope.kind === 'not_assessed'
       ? '测试范围核对：缺少任务基线，无法核对'
-      : `测试范围核对：${ev.scope.kind === 'assessed_weakened' ? '削弱或基础设施变化' : ev.scope.kind === 'assessed_stronger' ? '增强或新增' : '与基线一致'}${ev.scope.reasons.length ? `（${ev.scope.reasons.join('；')}）` : ''}`,
+      : `测试范围核对：${ev.scope.kind === 'assessed_weakened' ? '削弱' : ev.scope.kind === 'assessed_needs_review' ? '变化（需人工复核）' : ev.scope.kind === 'assessed_stronger' ? '增强或新增' : '与基线一致'}${ev.scope.reasons.length ? `（${ev.scope.reasons.join('；')}）` : ''}（保守静态核对，不声称证明语义未削弱）`,
   );
   if (ev.config.testInventoryDigest) facts.push(`测试清单指纹：${ev.config.testInventoryDigest.slice(0, 12)} · ${ev.config.testFileCount ?? 0} 文件 / ${ev.config.testBlockCount ?? 0} 测试块 / ${ev.config.assertionCount ?? 0} 断言`);
   if (ev.config.runnerPackage) facts.push(`测试运行器：${ev.config.runnerPackage.name}@${ev.config.runnerPackage.version}`);
   return facts;
 }
 
+function proofStatusOf(adj: CheckAdjudication): ProofStatus {
+  switch (adj.status) {
+    case 'verified':
+      return 'passed';
+    case 'failed':
+      return 'failed';
+    case 'not_checked':
+      return 'not_checked';
+    case 'invalidated':
+      return 'invalidated';
+    default:
+      return 'unverified';
+  }
+}
+
 function buildSingleCheckProof(
   key: 'build' | 'test',
   round: number,
   stored: StoredCheckProof | undefined,
-  cardItemStatus: string | undefined,
-  cardItemEvidence: string | undefined,
+  ctx: EvidenceIdentityContextForAdjudication | undefined,
   envDefault: 'sandbox' | 'local',
   fallbackTime: string | undefined,
   filterOpts: FilterProofOptions,
-  identity?: EvidenceIdentityInput | undefined,
+  cardItemStatus?: string,
+  cardItemEvidence?: string,
 ): SingleCheckProof {
   const title = key === 'build' ? '构建检查' : '自动测试';
   const env = stored?.env ?? envDefault;
   const envLabel: '沙箱环境' | '本机环境' = env === 'local' ? '本机环境' : '沙箱环境';
   const missingMsg = key === 'build' ? '未检查：这个项目没有构建检查' : '未检查：这个项目没有自动测试';
-  const empty = (status: ProofStatus, summaryText: string, extra: Partial<SingleCheckProof> = {}): SingleCheckProof => ({
+  // 统一裁决入口：证据详情页不自行解释 passed / 不自行决定有效性与范围
+  const adj: CheckAdjudication = stored
+    ? adjudicateStoredProof(stored, ctx ?? { taskId: stored.evidence?.identity.taskId ?? '', round, historical: true })
+    : cardItemStatus === 'not_checked' || !cardItemStatus
+      ? { name: key, status: 'not_checked', detail: missingMsg }
+      : adjudicateEvidence(undefined, key, ctx ?? { taskId: '', round, historical: true });
+  const status = proofStatusOf(adj);
+  const filteredDetails = filterProofOutput(stored?.rawOutput ?? '', filterOpts);
+  const ranAtText = formatProofTime(stored?.ranAt ?? fallbackTime);
+  const reportCounts = stored?.evidence?.report?.counts ?? null;
+  const parsed = key === 'test' ? parseTestCases(filteredDetails) : { cases: [], parsedNames: false, counts: null };
+  // R1：数量只来自结构化报告。stdout 里的数字（即使显式）在“没有可信报告”时不能当作测试数量，
+  // 否则伪造摘要又能影响展示；这种情形统一显示「测试数量未知」。
+  const counts = key === 'test' && reportCounts ? { passed: reportCounts.passed, failed: reportCounts.failed, skipped: reportCounts.skipped, total: reportCounts.total } : null;
+  const countsSource: ProofCountsSource = reportCounts ? 'structured_report' : 'unknown';
+  let summaryText: string;
+  if (status === 'not_checked') {
+    const isNone = (cardItemEvidence ?? '').startsWith('项目没有') || (stored?.unavailableReason ?? '').includes('项目没有');
+    summaryText = isNone ? missingMsg : adj.detail || notCheckedText(key, cardItemEvidence ?? stored?.unavailableReason ?? '');
+  } else if (status === 'unverified') {
+    summaryText = `未取得可信证据：${adj.detail}`;
+  } else if (status === 'invalidated') {
+    summaryText = `证据失效：${adj.detail}`;
+  } else if (key === 'test') {
+    summaryText = formatCountsSummary(counts);
+  } else {
+    const sec = stored?.durationMs !== undefined ? Math.round(stored.durationMs / 1000) : null;
+    summaryText = status === 'passed' ? `通过${sec !== null ? `（${sec} 秒）` : ''}` : '构建未通过';
+  }
+  return {
     key,
     title,
     round,
-    ranAtText: null,
+    ranAtText: status === 'not_checked' ? null : ranAtText,
     envLabel,
     originNote: ORIGIN_NOTE,
     status,
     summaryText,
-    cases: [],
-    parsedNames: false,
-    counts: null,
-    countsSource: 'unknown',
-    filteredDetails: '',
-    ...extra,
-  });
-
-  if (stored) {
-    const proofFacts = proofFactsOf(stored);
-    // 当前轮次：证据身份必须与任务记录一致（任务/轮次/验收版本/被测内容）；历史轮次按「当时有效」展示
-    const identityProblem = identity && stored.evidence ? evidenceIdentityProblem(stored.evidence, identity) : undefined;
-    if (identityProblem) {
-      return {
-        ...empty('invalidated', `证据失效：${identityProblem}`, { proofFacts }),
-        ranAtText: formatProofTime(stored.ranAt ?? fallbackTime),
-        filteredDetails: filterProofOutput(stored.rawOutput ?? '', filterOpts),
-        unknownReason: 'evidence_invalidated',
-      };
-    }
-    if (stored.status === 'not_available') {
-      const reason = stored.unavailableReason ?? '';
-      const isNone = reason.includes('项目没有');
-      return empty('not_checked', isNone ? missingMsg : notCheckedText(key, reason), { proofFacts });
-    }
-    const filteredDetails = filterProofOutput(stored.rawOutput ?? '', filterOpts);
-    const ranAtText = formatProofTime(stored.ranAt ?? fallbackTime);
-    if (stored.status === 'unverified') {
-      const reason = stored.unavailableReason ?? '';
-      return {
-        ...empty('unverified', `未取得可信证据：${reason || '命令结束了，但没有可核验的自动测试证据。'}`, { proofFacts }),
-        ranAtText,
-        cases: [],
-        parsedNames: false,
-        filteredDetails,
-        ...(stored.evidence?.reason ? { unknownReason: stored.evidence.reason } : {}),
-      };
-    }
-    if (key === 'test') {
-      // 结构化报告是唯一可信的数量来源；没有就如实显示「测试数量未知」
-      const reportCounts = stored.evidence?.report?.counts;
-      const parsed = parseTestCases(filteredDetails, stored.status);
-      const counts = reportCounts
-        ? { passed: reportCounts.passed, failed: reportCounts.failed, skipped: reportCounts.skipped, total: reportCounts.total }
-        : parsed.counts;
-      const countsSource: ProofCountsSource = reportCounts ? 'structured_report' : parsed.counts ? 'stdout_summary' : 'unknown';
-      const trustedPass = stored.status === 'passed' && !!stored.evidence?.report && stored.evidence.report.integrity.ok;
-      const status: ProofStatus = stored.status === 'failed' ? 'failed' : trustedPass ? 'passed' : 'unverified';
-      return {
-        key,
-        title,
-        round,
-        ranAtText,
-        envLabel,
-        originNote: ORIGIN_NOTE,
-        status,
-        summaryText: status === 'unverified' && !stored.evidence?.report ? '未取得可信证据：没有结构化测试报告' : formatCountsSummary(counts),
-        cases: parsed.cases.slice(0, 80),
-        parsedNames: parsed.parsedNames,
-        counts,
-        countsSource,
-        filteredDetails,
-        ...(status === 'unverified' && stored.evidence?.reason ? { unknownReason: stored.evidence.reason } : {}),
-        proofFacts,
-      };
-    }
-    const sec = stored.durationMs !== undefined ? Math.round(stored.durationMs / 1000) : null;
-    return {
-      key,
-      title,
-      round,
-      ranAtText,
-      envLabel,
-      originNote: ORIGIN_NOTE,
-      status: stored.status === 'passed' ? 'passed' : 'failed',
-      summaryText: stored.status === 'passed' ? `通过${sec !== null ? `（${sec} 秒）` : ''}` : '构建未通过',
-      cases: [],
-      parsedNames: false,
-      counts: null,
-      countsSource: 'unknown',
-      filteredDetails,
-      proofFacts,
-    };
-  }
-
-  // 兼容只有旧验收卡条目而尚未存储 StoredCheckProof 的任务（如纯单元测试样本）。
-  // P0-2 修正：绝不根据卡片状态「补造」通过数量 —— 没有证据就是历史未核实。
-  if (cardItemStatus === 'verified' || cardItemStatus === 'failed') {
-    const passed = cardItemStatus === 'verified';
-    return empty('unverified', key === 'test' ? '测试数量未知（历史记录未核实：只有旧验收卡条目，没有结构化测试证据）' : (passed ? '历史记录未核实（只有旧验收卡条目，没有本次运行的检查证据）' : '未通过（历史记录）'), {
-      ranAtText: formatProofTime(fallbackTime),
-      unknownReason: 'legacy_unverified',
-      proofFacts: ['历史任务记录：没有新证据模型的宿主证据，标记为历史未核实（未补造证据）'],
-    });
-  }
-
-  const isNone = !cardItemEvidence || cardItemEvidence.startsWith('项目没有');
-  return empty('not_checked', isNone ? missingMsg : notCheckedText(key, cardItemEvidence));
+    cases: key === 'test' ? parsed.cases.slice(0, 80) : [],
+    parsedNames: key === 'test' ? parsed.parsedNames : false,
+    counts,
+    countsSource,
+    filteredDetails,
+    ...(adj.reason ? { unknownReason: adj.reason } : {}),
+    proofFacts: proofFactsOf(stored),
+  };
 }
 
 export function buildTaskProofFromParts(opts: {
   round: number;
   checks?: StoredCheckProof[] | undefined;
   cardItems?: { key: string; status: string; evidence: string }[] | undefined;
+  /** 统一裁决上下文（当前轮次做身份校验；历史轮次 historical=true） */
+  evidenceContext?: EvidenceIdentityContextForAdjudication | undefined;
   denied: DeniedOperation[];
   deniedAcks: boolean[];
   changes: FileChange[];
@@ -429,8 +386,6 @@ export function buildTaskProofFromParts(opts: {
   constructionMode?: 'standard' | 'full_trust' | undefined;
   fallbackTime?: string | undefined;
   filterOpts: FilterProofOptions;
-  /** 当前轮次传入证据身份，用于复核证据是否仍与记录一致；历史轮次不传 */
-  identity?: EvidenceIdentityInput | undefined;
 }): TaskProofView {
   const envDefault: 'sandbox' | 'local' = opts.constructionMode === 'full_trust' ? 'local' : 'sandbox';
   const buildStored = opts.checks?.find((c) => c.name === 'build');
@@ -440,8 +395,8 @@ export function buildTaskProofFromParts(opts: {
 
   return {
     round: opts.round,
-    build: buildSingleCheckProof('build', opts.round, buildStored, buildItem?.status, buildItem?.evidence, envDefault, opts.fallbackTime, opts.filterOpts, opts.identity),
-    test: buildSingleCheckProof('test', opts.round, testStored, testItem?.status, testItem?.evidence, envDefault, opts.fallbackTime, opts.filterOpts, opts.identity),
+    build: buildSingleCheckProof('build', opts.round, buildStored, opts.evidenceContext, envDefault, opts.fallbackTime, opts.filterOpts, buildItem?.status, buildItem?.evidence),
+    test: buildSingleCheckProof('test', opts.round, testStored, opts.evidenceContext, envDefault, opts.fallbackTime, opts.filterOpts, testItem?.status, testItem?.evidence),
     denied: opts.denied.map((d, i) => ({
       id: `d${i}`,
       text: deniedText(d),
@@ -480,23 +435,29 @@ export function buildTaskProof(
       ...(opts.repoPath ? { repoPath: opts.repoPath } : {}),
       ...(t.worktree?.path ? { worktreePath: t.worktree.path } : {}),
     },
-    identity: {
+    evidenceContext: {
       taskId: t.id,
       round,
       ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
+      ...(t.acceptanceRev !== undefined && t.acceptedTree ? { acceptanceVersion: `${t.acceptedTree.slice(0, 12)}-${t.acceptanceRev}` } : {}),
       ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}),
+      ...(t.binding?.repoPath ? { projectRoot: t.binding.repoPath } : {}),
+      ...(t.worktree?.path ? { worktreePath: t.worktree.path } : {}),
+      ...(t.evidenceInvalid?.reason ? { deepInvalidReason: t.evidenceInvalid.reason } : {}),
+      ...(t.scopeReview ? { scopeReview: t.scopeReview } : {}),
     },
   });
 }
 
 export function buildRoundProof(
-  t: Pick<Task, 'worktree' | 'plan'>,
+  t: Pick<Task, 'id' | 'worktree' | 'plan'>,
   r: TaskRound,
   opts: { previews?: Map<string, ChangePreview>; repoPath?: string } = {},
 ): TaskProofView {
   return buildTaskProofFromParts({
     round: r.round,
     checks: r.checks,
+    evidenceContext: { taskId: t.id ?? '', round: r.round, historical: true },
     cardItems: r.card?.items,
     denied: r.denied ?? [],
     deniedAcks: r.deniedAcks ?? [],

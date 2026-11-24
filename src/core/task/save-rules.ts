@@ -1,5 +1,6 @@
 import type { Task } from './model.js';
 import { MESSAGES } from './messages.js';
+import { adjudicateTaskEvidence } from '../evidence/adjudicate.js';
 
 /** 保存前提不满足的原因（代码形式；界面按代码生成固定文案，不使用核心层拼接的文字） */
 export type BlockerCode =
@@ -14,6 +15,7 @@ export type BlockerCode =
   | 'criteria_unconfirmed'
   | 'no_changes'
   | 'evidence_invalid'
+  | 'evidence_scope_unconfirmed'
   | 'not_frozen';
 
 /**
@@ -28,10 +30,13 @@ export function saveBlockerCodes(t: Task): BlockerCode[] {
   const out: BlockerCode[] = [];
   if (card.items.some((i) => i.key === 'drivers')) out.push('external_driver');
   if (!(t.exit?.kind === 'exited' && t.exit.code === 0)) out.push('exec_not_ok');
-  if (card.items.find((i) => i.key === 'build')?.status === 'failed') out.push('build_failed');
-  if (card.items.find((i) => i.key === 'test')?.status === 'failed') out.push('test_failed');
-  // 证据失效（身份/版本/配置变化）必须阻断保存，必须重新检查
-  if (card.items.some((i) => i.key === 'checks_evidence' || i.status === 'invalidated') || t.evidenceInvalid) out.push('evidence_invalid');
+  // R1-03：保存门禁主动调用统一证据裁决，不依赖 UI 状态、不依赖可能过期的验收卡结论。
+  const adjudication = adjudicateTaskEvidence(t);
+  if (adjudication.build?.status === 'failed') out.push('build_failed');
+  if (adjudication.test?.status === 'failed') out.push('test_failed');
+  if (adjudication.hasInvalidated || t.evidenceInvalid) out.push('evidence_invalid');
+  // R1-04：范围复核未确认（或确认已失效）时阻断保存，必须先明确重新确认
+  if (adjudication.needsScopeConfirm) out.push('evidence_scope_unconfirmed');
   if (t.isolationWarnings?.length) out.push('isolation');
   if (!t.denied.every((_, i) => t.deniedAcks[i] === true)) out.push('denied_unacked');
   if (t.criteria.length === 0) {
@@ -57,7 +62,8 @@ export function saveBlockers(t: Task): string[] {
       case 'overall_unconfirmed': return '请先确认“我已看过改动，结果符合我的要求”。';
       case 'criteria_unconfirmed': return '验收标准还没有逐条确认。';
       case 'no_changes': return '没有任何文件被修改。';
-      case 'evidence_invalid': return '检查证据已失效（内容、验收版本或检查配置发生了变化），请重新检查。';
+      case 'evidence_invalid': return '检查证据已失效（内容、验收版本、项目/副本身份或检查配置发生了变化），请重新检查。';
+      case 'evidence_scope_unconfirmed': return '测试范围发生了无法静态证明安全的变化，请先核对并明确重新确认后再保存。';
       case 'not_frozen': return '验收内容还没有冻结。';
     }
   });

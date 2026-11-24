@@ -1,0 +1,20 @@
+=== R1 修复后探针（新候选 6918ea590f14935c4f164185a5702c51ee9bf8c0，含未提交 R1 变更） 2026-11-24T07:43:03Z ===
+command: npx vitest run tests/probes/r1-probe.test.ts
+
+ RUN  v5.0.5 ~/ai-solo-studio-a1
+
+ ✓ tests/probes/r1-probe.test.ts (9 tests) 2389ms
+   ✓ R1 探针 A：数据完整性（已跟踪 node_modules 文件的删除不得被隐藏） (1)
+     ✓ 已跟踪 node_modules/fixture.js 的删除必须进入内容 tree 与改动清单 482ms
+   ✓ R1 探针 B：失败优先（真实失败 + 报告缺失不得降级为 unverified） (1)
+     ✓ 真实测试失败且报告被删除 → failed 848ms
+   ✓ R1 探针 C：保守范围复核（逐文件下降不可被抵消、内容变化必须待确认） (2)
+     ✓ 单文件断言减少 + 其他文件新增（总数不降）→ weakened 466ms
+     ✓ 同名同数量但断言内容被改写 → needs_review（不得 assessed_unchanged） 450ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  15:43:03
+   Duration  2.57s (tests 98%, transform 1%, import 1%)
+
+PROBE_EXIT=0

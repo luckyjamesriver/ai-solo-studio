@@ -619,8 +619,9 @@ describe('安全基线（防回归）', () => {
 
     it('B4-2-fix：解析 Git 文件名输出一律用 -z（diffSummary、import 的 status）；不再按行拆分带引号的文件名', () => {
       const g = read('src/core/git/git.ts');
-      expect(g).toContain("['diff', '--name-status', '-z', '-M'");
-      expect(g).toContain("['diff', '--numstat', '-z', '-M'");
+      // R1：改动清单改为对「同一任务内容 tree」做 diff-tree（不写工作树索引），但 -z 解析要求不变
+      expect(g).toContain("['diff-tree', '-r', '--no-commit-id', '--name-status', '-z', '-M'");
+      expect(g).toContain("['diff-tree', '-r', '--no-commit-id', '--numstat', '-z', '-M'");
       expect(read('src/core/thinking/handoff/import.ts')).toContain("'status', '--porcelain=v1', '-z'");
       for (const [f, s] of sources) expect(s, f).not.toMatch(/'--name-status'(?!,\s*'-z')|'--numstat'(?!,\s*'-z')|'status',\s*'--porcelain'\]/);
     });

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 /**
  * 统一宿主证据模型（AISS-A1-TRUSTED-EVIDENCE-001）。
  *
@@ -32,6 +34,7 @@ export type CheckUnknownReason =
   | 'tests_not_executed'
   | 'all_tests_skipped'
   | 'test_scope_weakened'
+  | 'test_scope_changed'
   | 'check_config_changed'
   | 'source_changed_during_check'
   | 'sandbox_unavailable'
@@ -92,6 +95,10 @@ export interface ConfigFingerprint {
   packageLockDigest?: string;
   /** 解析到的测试运行器包身份（例如 vitest 的版本与 package.json 摘要） */
   runnerPackage?: { name: string; version: string; packageJsonSha256: string };
+  /** 实际运行器入口文件（bin）的路径哈希与内容 sha256 */
+  runnerEntry?: { pathHash: string; sha256: string };
+  /** 运行器直接依赖（vite / @vitest/runner 等）的身份与内容摘要 */
+  deps?: { name: string; version: string; packageJsonSha256: string }[];
   /** 测试配置文件（vitest.config.* / vite.config.* / jest.config.* 等） */
   testConfigFiles: ConfigFileFingerprint[];
   /** 测试文件清单摘要（路径 + 内容） */
@@ -116,6 +123,8 @@ export interface TestCounts {
 
 export interface TestReportEvidence {
   format: 'vitest-json';
+  /** 报告里实际执行到的测试文件（相对被测工作树根） */
+  executedFiles: string[];
   /** 报告路径哈希（不保存绝对路径） */
   pathHash: string;
   sha256: string;
@@ -126,32 +135,45 @@ export interface TestReportEvidence {
   startTimeWithinRun: boolean;
   counts: TestCounts;
   failedNames: string[];
-  integrity: { ok: boolean; problems: string[] };
-  /** 与进程 stdout 摘要的交叉核对 */
-  crossCheck: { stdoutSummary?: { passed: number; failed: number }; agrees: boolean };
+  /** 完整性：ok 仅当所有必需校验**实际执行且通过**；checks 逐项记录是否真的发生 */
+  integrity: { ok: boolean; problems: string[]; checks: Record<string, boolean> };
+  /** 与进程 stdout 摘要的交叉核对（performed=false 表示无法核对，不得当作成功） */
+  crossCheck: { performed: boolean; stdoutSummary?: { passed: number; failed: number }; agrees: boolean; detail?: string };
 }
 
 export interface ScopeDelta {
   filesRemoved: string[];
+  filesAdded: string[];
   testsRemoved: string[];
+  /** 逐文件断言减少的明细（防止被其它文件的新增断言抵消） */
+  perFileAssertionDrops: { path: string; from: number; to: number }[];
   assertionsDelta: number;
   testBlocksDelta: number;
   skipMarkerDelta: number;
   onlyMarkerDelta: number;
   configChanged: string[];
+  /** 已存在的测试/辅助文件内容发生变化（静态分析无法证明语义未削弱 → 保守进入待确认） */
+  testFilesModified: string[];
+  supportFilesChanged: string[];
   runnerChanged: boolean;
   lockfileChanged: boolean;
   scriptsChanged: boolean;
+  /** 实际执行的文件范围 vs 预期范围（防止只跑部分测试仍取得可信 PASS） */
+  executedScope?: { expectedFiles: number; executedFiles: number; missing: string[] };
 }
 
 /** 相对「任务基线的测试范围」的评估。 */
 export interface ScopeAssessment {
-  kind: 'assessed_unchanged' | 'assessed_stronger' | 'assessed_weakened' | 'not_assessed';
+  kind: 'assessed_unchanged' | 'assessed_stronger' | 'assessed_weakened' | 'assessed_needs_review' | 'not_assessed';
   /** 基线来源（任务副本基线提交）是否可用 */
   baselineAvailable: boolean;
   baselineSource?: string;
   reasons: string[];
   delta?: ScopeDelta;
+  /** 评估方法说明：保守静态核对 + 显式人工复核；不声称能证明测试语义绝对未被削弱。 */
+  method?: 'conservative-static' | 'none';
+  /** 本次评估时的测试范围指纹（测试清单 + 配置 + 运行器），用于绑定用户确认与保存前试合并校验 */
+  fingerprint?: string;
 }
 
 export interface HostCheckEvidence {
@@ -187,6 +209,8 @@ export interface TestInventoryFile {
 
 export interface TestInventory {
   files: TestInventoryFile[];
+  /** 测试辅助文件（helpers/fixtures/setup 等，非测试用例文件）的指纹；其变化同样需要保守复核 */
+  supportFiles: { path: string; sha256: string }[];
   testFileCount: number;
   testBlockCount: number;
   assertionCount: number;
@@ -194,6 +218,7 @@ export interface TestInventory {
   onlyMarkerCount: number;
   todoMarkerCount: number;
   digest: string;
+  supportDigest: string;
 }
 
 /** 发现并解析出来的测试运行器身份。 */
@@ -201,6 +226,10 @@ export interface DetectedTestRunner {
   name: 'vitest';
   version: string;
   packageJsonSha256: string;
+  /** 实际入口文件（bin/vitest.mjs）的路径哈希与内容 sha256 */
+  entry?: { pathHash: string; sha256: string };
+  /** 运行器直接依赖（vite / @vitest/runner）的身份与内容摘要 */
+  deps?: { name: string; version: string; packageJsonSha256: string }[];
   /** 声明该运行器的 package.json 脚本原文（已批准摘要对应的同一份内容） */
   script: string;
   /** 脚本是否可安全追加宿主报告器参数（无 shell 组合、无过滤范围） */
@@ -225,4 +254,15 @@ export function configFingerprintKey(cfg: ConfigFingerprint): string {
     String(cfg.onlyMarkerCount ?? 0),
     files,
   ].join('|');
+}
+
+/** 路径身份哈希：统一用真实路径（realpath）的 sha256 前 32 位，采集与复核必须用同一算法。 */
+export function pathIdentityHash(p: string): string {
+  let real = p;
+  try {
+    real = fs.realpathSync(p);
+  } catch {
+    real = p;
+  }
+  return createHash('sha256').update(real).digest('hex').slice(0, 32);
 }

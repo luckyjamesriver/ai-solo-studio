@@ -154,7 +154,8 @@ describe('B4-1 保存', () => {
 
   it('检查改动了文件：检查结果作废并如实提示，改动清单列出新增文件', async () => {
     // 真实 Vitest 用例在运行期间写入 process.cwd()（任务副本根目录）：
-    // 检查证据虽然来自可信结构化报告，但被测内容在检查期间被改动 → 结果必须作废（unverified + 失效原因），绝不显示为通过。
+    // 检查证据虽然来自可信结构化报告，但被测内容在检查期间被改动 → 结果必须作废，绝不显示为通过。
+    // R1：存储凭证仍是 unverified；统一裁决把「自标失效（valid=false）」升级为更准确的 invalidated。
     const files = {
       'package.json': JSON.stringify({ scripts: { test: realVitestScript() } }),
       'tests/writes.test.ts': [
@@ -167,9 +168,10 @@ describe('B4-1 保存', () => {
     const { runner, id, task } = await confirmed({ files, runChecks: true });
     expect(task.checksVoid).toBe(MESSAGES.checksModified);
     const test = task.card!.items.find((i) => i.key === 'test')!;
-    expect(test.status).toBe('unverified');
+    expect(test.status).toBe('invalidated');
     expect(test.status).not.toBe('verified');
-    expect(test.evidence).toContain(MESSAGES.checksModified);
+    // 失效原因可能来自「运行期间内容变化」或「被测内容与冻结内容不一致」，两者都如实说明证据已作废
+    expect(test.evidence).toMatch(/检查改动了文件，检查结果已作废|证据已失效/);
     // 存储的证据必须标记为失效（检查期间源码被改动）
     const storedTest = task.currentChecks?.find((c) => c.name === 'test');
     expect(storedTest).toMatchObject({ status: 'unverified', unavailableReason: MESSAGES.checksModified });
@@ -181,7 +183,7 @@ describe('B4-1 保存', () => {
     // 确认操作（重建验收卡）不会把“作废”标记弄丢
     const again = await runner.confirm(id, { previewed: true });
     expect(again.card!.items.find((i) => i.key === 'checks_modified')).toBeDefined();
-    expect(again.card!.items.find((i) => i.key === 'test')?.status).toBe('unverified');
+    expect(again.card!.items.find((i) => i.key === 'test')?.status).toBe('invalidated');
   });
 
   it('主项目不干净：拒绝保存，列出文件，副本保留，没有提交或暂存任何用户文件', async () => {

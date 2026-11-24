@@ -80,7 +80,7 @@ A0 审计材料已整理为**只含文档/证据**的独立审计交付分支并
 
 基线 `src/core/checks/scripts.ts` 的 `runCheck()` 用 `outcome.kind === 'exited' && outcome.code === 0` 判定 `passed`。修复前用**同一组断言**在基线 `e69ca85` 上运行对照探针，5/5 失败：
 
-- 证据：`/Users/jamesho/a1-evidence/logs/pre-fix-baseline-probe.log`（`PROBE_EXIT=1`，`Test Files 1 failed`，`Tests 5 failed (5)`）
+- 证据：`/Users/jamesho/a1-evidence/logs/pre-fix-baseline-probe.txt`（`PROBE_EXIT=1`，`Test Files 1 failed`，`Tests 5 failed (5)`）
 
 覆盖的失败场景：`test` 脚本只 `echo "Tests 5 passed"`、只打印伪造成功摘要、退出 0 但没有真实测试、零测试、全部跳过。
 
@@ -98,7 +98,7 @@ A0 审计材料已整理为**只含文档/证据**的独立审计交付分支并
 
 ### 2.3 验证
 
-- 修复后同一对照探针在 A1 上 **5/5 通过**：`/Users/jamesho/a1-evidence/logs/post-fix-a1-probe.log`（`PROBE_EXIT=0`）
+- 修复后同一对照探针在 A1 上 **5/5 通过**：`/Users/jamesho/a1-evidence/logs/post-fix-a1-probe.txt`（`PROBE_EXIT=0`）
 - 专项测试（真实进程 + 真实 Vitest）：`tests/a1-trusted-evidence.test.ts`
   - 真实全部通过 → 可信 PASS，数量来自结构化报告；
   - 真实断言失败 → FAIL；
@@ -283,7 +283,7 @@ A0 审计材料已整理为**只含文档/证据**的独立审计交付分支并
 | 可信证据专项反向测试 | `npx vitest run tests/a1-trusted-evidence.test.ts tests/a1-evidence-chain.test.ts` | **34 passed / 0 failed（exit 0）** |
 | 构建 | `npm run build` | **通过**（core tsc + renderer vite build） |
 | Electron 原生 E2E | `npx vitest run -c vitest.e2e.config.ts` | **56 passed / 0 failed（exit 0）**，含真实独立 Seatbelt 沙箱 + 真实 Vitest 场景；日志 `/Users/jamesho/a1-evidence/logs/e2e-run2.log` |
-| 真实项目工作树执行 | `/Users/jamesho/a1-evidence/real-project-verify.mjs` | **通过**：临时 clone 本仓库提交 `503179f` → 验收真实运行 `npm run build`（passed）+ `npm test`（结构化报告 749 项 / 711 通过 / 0 失败 / 38 跳过，integrity ok，range `assessed_unchanged`）→ 卡片 `build/test = verified` → 真实保存 `checked=true`，`mergeCommit=1b0c93c…`；日志 `logs/real-project-verify.log` |
+| 真实项目工作树执行 | `/Users/jamesho/a1-evidence/real-project-verify.mjs` | **通过**：临时 clone 本仓库提交 `503179f` → 验收真实运行 `npm run build`（passed）+ `npm test`（结构化报告 749 项 / 711 通过 / 0 失败 / 38 跳过，integrity ok，range `assessed_unchanged`）→ 卡片 `build/test = verified` → 真实保存 `checked=true`，`mergeCommit=1b0c93c…`；日志 `logs/real-project-verify.txt` |
 | 旧任务记录兼容 | `tests/a1-evidence-chain.test.ts`「历史任务与历史轮次」+ 既有 persistence/legacy 测试 | **通过** |
 | 保存前试检查 | `tests/a1-evidence-chain.test.ts` 保存三条 + `tests/save-safety.test.ts` | **通过** |
 | 原工作区 8 文件保护 | SHA-256 / HEAD / status / diff 哈希 | **8/8 一致，未修改** |
@@ -295,11 +295,11 @@ A0 审计材料已整理为**只含文档/证据**的独立审计交付分支并
 | 证据 | 文件 |
 | :-- | :-- |
 | 基线 typecheck / 全量测试（修复前基线绿，证明缺陷由测试缺口而非构建失败掩盖） | 本机 `a1-evidence/logs/baseline-typecheck.log`、`baseline-test.log` |
-| 修复前缺陷复现（同一组断言在基线 5/5 失败，exit 1） | [`probes/pre-fix-baseline-probe.log`](AISS-A1-TRUSTED-EVIDENCE-001/probes/pre-fix-baseline-probe.log) |
-| 修复后同一组断言通过（exit 0） | [`probes/post-fix-a1-probe.log`](AISS-A1-TRUSTED-EVIDENCE-001/probes/post-fix-a1-probe.log) |
+| 修复前缺陷复现（同一组断言在基线 5/5 失败，exit 1） | [`probes/pre-fix-baseline-probe.txt`](AISS-A1-TRUSTED-EVIDENCE-001/probes/pre-fix-baseline-probe.txt) |
+| 修复后同一组断言通过（exit 0） | [`probes/post-fix-a1-probe.txt`](AISS-A1-TRUSTED-EVIDENCE-001/probes/post-fix-a1-probe.txt) |
 | 探针源码（同一文件） | [`probes/a1-fix-proof.test.ts`](AISS-A1-TRUSTED-EVIDENCE-001/probes/a1-fix-proof.test.ts) |
 | 本机全量 / 专项 / E2E 汇总 | [`full-suite-excerpt.txt`](AISS-A1-TRUSTED-EVIDENCE-001/full-suite-excerpt.txt)、[`a1-special-tests-excerpt.txt`](AISS-A1-TRUSTED-EVIDENCE-001/a1-special-tests-excerpt.txt)、[`e2e-excerpt.txt`](AISS-A1-TRUSTED-EVIDENCE-001/e2e-excerpt.txt) |
-| 真实项目工作树验证原始输出 | [`real-project-verify.log`](AISS-A1-TRUSTED-EVIDENCE-001/real-project-verify.log) |
+| 真实项目工作树验证原始输出 | [`real-project-verify.txt`](AISS-A1-TRUSTED-EVIDENCE-001/real-project-verify.txt) |
 | 原工作区保护快照 | [`workspace-protection-before.txt`](AISS-A1-TRUSTED-EVIDENCE-001/workspace-protection-before.txt) / [`after`](AISS-A1-TRUSTED-EVIDENCE-001/workspace-protection-after.txt) |
 | 门禁与复核指引（仓库内） | [`gates.md`](AISS-A1-TRUSTED-EVIDENCE-001/gates.md) |
 

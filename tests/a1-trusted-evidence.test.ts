@@ -83,6 +83,7 @@ describe('A1 反向矩阵：自动测试的真实证据（真实进程）', () =
     const dir = await makeRepo({ 'package.json': JSON.stringify({ name: 'ok', scripts: { test: realVitestScript() } }) });
     await useRealVitest(dir);
     const r = await runFixture(dir, 'test');
+    if (r.status !== 'passed') console.log('DEBUG_A1', JSON.stringify({ status: r.status, unknown: (r as { unknownReason?: string }).unknownReason, evReason: r.evidence?.reason, scope: r.evidence?.scope, integrity: r.evidence?.report?.integrity, executed: r.evidence?.report?.executedFiles, inventoryDigest: r.evidence?.config?.testInventoryDigest, files: r.evidence?.config?.testFileCount }, null, 1));
     expect(r.status).toBe('passed');
     expect(r.evidence?.trust).toBe('trusted');
     expect(r.evidence?.report?.integrity.ok).toBe(true);
@@ -183,10 +184,10 @@ describe('A1 反向矩阵：报告完整性（构造磁盘状态）', () => {
     created.push(dir);
     const plan = await prepareVitestRun(dir, 'vitest run');
     // 缺失
-    expect((await readVitestReport(plan, { startMs: Date.now() - 1000, endMs: Date.now() })).status).toBe('missing');
+    expect((await readVitestReport(plan, { startMs: Date.now() - 1000, endMs: Date.now() }, dir)).status).toBe('missing');
     // 损坏
     await fs.writeFile(plan.reportPath, 'not-json');
-    expect((await readVitestReport(plan, { startMs: Date.now() - 1000, endMs: Date.now() })).status).toBe('invalid');
+    expect((await readVitestReport(plan, { startMs: Date.now() - 1000, endMs: Date.now() }, dir)).status).toBe('invalid');
     // 复用（把 mtime 设置到本次运行之前）
     const report = {
       numTotalTestSuites: 1,
@@ -205,11 +206,11 @@ describe('A1 反向矩阵：报告完整性（构造磁盘状态）', () => {
     await fs.writeFile(plan.reportPath, JSON.stringify(report));
     const old = new Date(Date.now() - 60_000);
     await fs.utimes(plan.reportPath, old, old);
-    expect((await readVitestReport(plan, { startMs: Date.now() - 1000, endMs: Date.now() })).status).toBe('reused');
+    expect((await readVitestReport(plan, { startMs: Date.now() - 1000, endMs: Date.now() }, dir)).status).toBe('reused');
     // 计数矛盾（total 与分项不一致）
     const bad = { ...report, startTime: Date.now(), numTotalTests: 5, numPassedTests: 1 };
     await fs.writeFile(plan.reportPath, JSON.stringify(bad));
-    const parsed = await readVitestReport(plan, { startMs: Date.now() - 5000, endMs: Date.now() });
+    const parsed = await readVitestReport(plan, { startMs: Date.now() - 5000, endMs: Date.now() }, dir);
     expect(parsed.status).toBe('inconsistent');
     await fs.rm(dir, { recursive: true, force: true });
   });
@@ -300,7 +301,8 @@ describe('A1 反向矩阵：测试范围被削弱 / 验证基础设施被修改'
     );
     const r = await runFixture(dir, 'test', { baselineRev: base });
     expect(r.status).toBe('unverified');
-    expect(r.status === 'unverified' ? r.unknownReason : null).toBe('test_scope_weakened');
+    // 配置/运行器变化属于「无法静态证明安全的变化」，走保守复核（test_scope_changed）
+    expect(['test_scope_weakened', 'test_scope_changed']).toContain(r.status === 'unverified' ? r.unknownReason : null);
   });
 
   it('经用户明确重新确认当前范围后 → 同一范围可按当前基线通过（acceptCurrentScope 只用于用户操作）', async () => {

@@ -220,8 +220,8 @@ describe('A1 全链路：未检查风险的人工确认（仅记录人工确认�
   });
 });
 
-describe('A1 全链路：测试范围削弱与明确的重新确认流程', () => {
-  it('执行体删除已有测试 → 自动通过被阻断；用户明确确认当前范围后才能继续', async () => {
+describe('A1 全链路：测试范围削弱与明确的重新确认流程（R1-04 闭环）', () => {
+  it('执行体删除已有测试 → 自动通过被阻断；用户确认内容+范围+版本 → 重新检查 → 重新验收 → 试合并 → 正式保存', async () => {
     const { id, ctl } = await setup({
       vitest: {},
       script: [
@@ -234,19 +234,95 @@ describe('A1 全链路：测试范围削弱与明确的重新确认流程', () =
         { do: 'exit', code: 0 },
       ],
     });
-    const testItem = await ctl.getAcceptanceView(id);
-    expect(testItem.items.find((i) => i.key === 'test')?.status).toBe('unverified');
-    expect(testItem.scopeChange?.needed).toBe(true);
-    expect(testItem.scopeChange?.reasons.join('；')).toMatch(/测试用例被删除|测试块减少|断言减少/);
+    const first = await ctl.getAcceptanceView(id);
+    expect(first.items.find((i) => i.key === 'test')?.status).toBe('unverified');
+    expect(first.scopeChange?.needed).toBe(true);
+    expect(first.scopeChange?.reasons.join('；')).toMatch(/测试用例被删除|测试块减少|断言减少|内容发生变化/);
+    // 范围未确认前：保存核心门禁必须主动阻断（不依赖 UI）
+    const blocked = await ctl.saveTask(id, first.version);
+    expect(blocked.ok).toBe(false);
+    expect(blocked.message).toMatch(/重新确认|失效/);
 
-    const r = await ctl.confirmScopeChange(id, testItem.version);
+    // 用户明确确认：绑定内容指纹 + 范围指纹 + 验收版本
+    const r = await ctl.confirmScopeChange(id, first.version);
     expect(r.ok).toBe(true);
     const after = await ctl.getAcceptanceView(id);
     expect(after.scopeChange).toBeNull();
     expect(after.items.find((i) => i.key === 'test')?.status).toBe('verified');
     const raw = (await ctl.listTasksRaw()).find((t) => t.id === id)!;
-    expect(raw.scopeReconfirmed).toBeTruthy();
-    expect(raw.scopeReconfirmed?.acceptanceVersion).toBe(after.version);
+    expect(raw.scopeReview?.confirmedAt).toBeTruthy();
+    expect(raw.scopeReview?.contentFingerprint).toBe(raw.acceptedTree);
+    expect(raw.scopeReview?.acceptanceVersion).toBe(after.version);
+    // 重新确认后旧的验收决定必须被清空
+    expect(raw.criteria.every((c) => !c.decision)).toBe(true);
+    expect(raw.previewed).toBe(false);
+
+    // 重新完成用户验收，然后保存（试合并在已确认范围上运行并通过）
+    const version = await confirmAll(ctl, id);
+    const saved = await ctl.saveTask(id, version);
+    expect(saved.ok).toBe(true);
+    const done = (await ctl.listTasksRaw()).find((t) => t.id === id)!;
+    expect(done.state).toBe('saved');
+    expect(done.saveRecord?.checked).toBe(true);
+    expect(done.scopeReview).toBeUndefined();
+  });
+
+  it('确认前内容发生变化 → 拒绝旧确认，必须重新检查', async () => {
+    const { id, ctl } = await setup({
+      vitest: {},
+      script: [
+        {
+          do: 'write',
+          path: 'tests/fixture.test.ts',
+          content: "import { describe, it, expect } from 'vitest';\ndescribe('fixture', () => { it('只剩一条', () => { expect(1).toBe(1); }); });\n",
+        },
+        { do: 'write', path: 'index.html', content: '<h1>new</h1>\n' },
+        { do: 'exit', code: 0 },
+      ],
+    });
+    const view = await ctl.getAcceptanceView(id);
+    expect(view.scopeChange?.needed).toBe(true);
+    const raw = (await ctl.listTasksRaw()).find((t) => t.id === id)!;
+    // 模拟用户查看之后、点确认之前内容又变了
+    await fs.writeFile(`${raw.worktree!.path}/index.html`, '<h1>changed-after-view</h1>\n');
+    const r = await ctl.confirmScopeChange(id, view.version);
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/内容又发生了变化|已失效/);
+  });
+});
+
+describe('R1-04 保存前试合并：已确认范围仍然有效才允许保存', () => {
+  it('确认范围后主项目的测试内容变化 → 试合并范围指纹不一致 → 硬阻断保存（不能人工确认绕过）', async () => {
+    const { id, ctl, repo } = await setup({
+      vitest: {},
+      script: [
+        {
+          do: 'write',
+          path: 'tests/fixture.test.ts',
+          content: "import { describe, it, expect } from 'vitest';\ndescribe('fixture', () => { it('只剩一条', () => { expect(1).toBe(1); }); });\n",
+        },
+        { do: 'write', path: 'index.html', content: '<h1>new</h1>\n' },
+        { do: 'exit', code: 0 },
+      ],
+    });
+    const detected = await ctl.getAcceptanceView(id);
+    expect(detected.scopeChange?.needed).toBe(true);
+    expect((await ctl.confirmScopeChange(id, detected.version)).ok).toBe(true);
+    const version = await confirmAll(ctl, id);
+    // 在保存前，主项目新增了一个测试文件（不与该任务改动冲突）：合并后的测试范围将不再等于用户确认时的范围指纹
+    const { git } = await import('../src/core/git/git.js');
+    await fs.mkdir(`${repo}/tests`, { recursive: true });
+    await fs.writeFile(`${repo}/tests/extra.test.ts`, "import { it, expect } from 'vitest';\nit('主项目新增用例', () => { expect(2).toBe(2); });\n");
+    await git(repo, ['add', '-A']);
+    await git(repo, ['commit', '-m', 'main added test file after confirmation']);
+    const r = await ctl.saveTask(id, version);
+    expect(r.ok).toBe(false);
+    expect(['blocked', 'checks_failed']).toContain(r.view.saveOutcome?.kind);
+    const after = (await ctl.listTasksRaw()).find((t) => t.id === id)!;
+    expect(after.saveRecord).toBeUndefined();
+    // “仍然保存”也不能绕过范围不一致
+    const again = await ctl.saveUncheckedTask(id, (await ctl.getAcceptanceView(id)).version);
+    expect(again.ok).toBe(false);
   });
 });
 

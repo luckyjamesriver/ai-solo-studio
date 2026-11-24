@@ -10,6 +10,8 @@ import { extractIncomplete } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
 import { evidenceStatusText } from '../acceptance/card.js';
+import { saveChecksText } from '../task/model.js';
+import { adjudicateTaskEvidence } from '../evidence/adjudicate.js';
 import { MESSAGES } from '../task/messages.js';
 import {
   classifyTaskState,
@@ -156,7 +158,7 @@ export interface TaskView {
   /** 外部执行交接信息（导出给外部工具后存在） */
   handoff: HandoffView | null;
   /** 保存记录的检查结论（已保存或曾保存任务显示“检查通过”或“未检查”，不含命令） */
-  saveCheckText: '检查通过' | '未检查' | null;
+  saveCheckText: '检查通过' | '未检查' | '检查通过（历史记录未核实）' | null;
   /** 由单思考者讨论生成、未经过独立评审的计划 */
   planUnreviewed: boolean;
   /** UI v2.1 第 3 节三层状态与看板归类 */
@@ -427,21 +429,21 @@ export function buildTaskView(
       status: task.card.changes.length ? 'ok' : 'bad',
       detail: task.card.changes.length ? `${task.card.changes.length} 个文件发生变化` : '没有任何文件被修改',
     });
+    // R1-03：反馈包里的宿主事实与验收卡/证据页/保存门禁使用同一裁决入口，禁止各自解释 passed。
+    const adjudication = adjudicateTaskEvidence(task);
     for (const key of ['build', 'test'] as const) {
-      const item = task.card.items.find((i) => i.key === key);
-      if (!item) continue;
+      let adj = key === 'build' ? adjudication.build : adjudication.test;
+      if (!adj) {
+        // 旧任务记录可能只有验收卡条目、没有能力被裁决的当前证据：按“历史未核实”给事实，不冒充通过。
+        const item = task.card.items.find((i) => i.key === key);
+        if (!item) continue;
+        adj = { name: key, status: item.status === 'failed' ? 'failed' : item.status === 'not_checked' ? 'not_checked' : 'unverified', reason: 'legacy_unverified', detail: '历史记录未核实：没有可核验的宿主证据，不能算通过。' };
+      }
       facts.push({
         label: `检查「${CHECK_LABEL[key]}」`,
-        status: item.status === 'verified' ? 'ok' : item.status === 'failed' ? 'bad' : 'unchecked',
-        // 通过/失败只给结论，不给命令原文；未检查 / 缺乏证据 / 证据失效的原因本身是大白话
-        detail:
-          item.status === 'verified'
-            ? '通过'
-            : item.status === 'failed'
-              ? '未通过'
-              : item.status === 'unverified' || item.status === 'invalidated'
-                ? evidenceStatusText(item.status, item.unknownReason)
-                : notCheckedText(key, item.evidence),
+        status: adj.status === 'verified' ? 'ok' : adj.status === 'failed' ? 'bad' : 'unchecked',
+        // 只给结论与固定说明，不给命令或原始输出
+        detail: adj.status === 'verified' ? '通过' : adj.status === 'failed' ? '未通过' : adj.detail,
       });
     }
     const incompleteSignals = (task.exit.kind !== 'exited' || task.exit.code !== 0) || denied.length > 0 || !!startFailure;
@@ -532,7 +534,7 @@ export function buildTaskView(
     ...(executorNotice ? { executorNotice } : {}),
     round: task.currentRound ?? (task.rounds?.length ? Math.max(...task.rounds.map((r) => r.round)) : 1),
     handoff,
-    saveCheckText: task.saveRecord ? (task.saveRecord.checked === true ? '检查通过' : '未检查') : null,
+    saveCheckText: task.saveRecord ? saveChecksText(task.saveRecord) : null,
     planUnreviewed: !!task.planUnreviewed,
     layer: classifyTaskState(task, { isLiveRunning: opts.running, ...(opts.discussion ? { discussion: opts.discussion } : {}) }),
     createdAt: task.createdAt,

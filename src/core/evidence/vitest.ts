@@ -53,8 +53,12 @@ export function sha256Text(text: string): string {
 }
 
 /** 从 stdout 里提取 Vitest 的人类可读摘要（只作交叉核对，绝不用来判定通过）。 */
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+
 export function parseStdoutSummary(stdout: string): { passed: number; failed: number; skipped: number } | undefined {
-  const line = stdout.split('\n').find((l) => /^\s*Tests\s+/.test(l) && /\d/.test(l));
+  // CI/终端可能给输出加上 ANSI 颜色；先去掉再解析（否则交叉核对会“看起来没发生”）
+  const plain = stdout.replace(ANSI_RE, '');
+  const line = plain.split('\n').find((l) => /^\s*Tests\s+/.test(l) && /\d/.test(l));
   if (!line) return undefined;
   const num = (label: string) => {
     const m = line.match(new RegExp(`(\\d+)\\s+${label}`));
@@ -95,7 +99,17 @@ interface RawVitestReport {
 const isNonNegInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 
 export type ReportParseResult =
-  | { status: 'ok'; sha256: string; bytes: number; counts: TestCounts; failedNames: string[]; startTime: number; problems: string[] }
+  | {
+      status: 'ok';
+      sha256: string;
+      bytes: number;
+      counts: TestCounts;
+      failedNames: string[];
+      executedFiles: string[];
+      startTime: number;
+      problems: string[];
+      checks: Record<string, boolean>;
+    }
   | { status: 'missing' }
   | { status: 'reused'; detail: string }
   | { status: 'invalid'; detail: string; sha256?: string; bytes?: number }
@@ -105,10 +119,39 @@ export type ReportParseResult =
  * 读取并严格校验本次运行产生的 Vitest JSON 报告。
  * `window` 是本次真实进程运行的时间窗（毫秒），用于拒绝复用旧报告。
  */
+/** 报告路径必须位于受控目录（工作树 .studio/evidence/<nonce>/），且沿途不得是符号链接。 */
+async function reportPathProblem(plan: VitestRunPlan, rootDir: string): Promise<string | undefined> {
+  let realRoot: string;
+  try {
+    realRoot = await fs.realpath(rootDir);
+  } catch {
+    return '被测工作树不可解析';
+  }
+  try {
+    const evidenceRoot = path.join(realRoot, '.studio', 'evidence');
+    const realDir = await fs.realpath(plan.reportDir);
+    if (realDir !== path.join(evidenceRoot, plan.nonce)) return '报告目录不在受控位置（可能经过符号链接或路径逃逸）';
+    const lstat = await fs.lstat(plan.reportDir);
+    if (!lstat.isDirectory() || lstat.isSymbolicLink()) return '报告目录是符号链接';
+    try {
+      const realFile = await fs.realpath(plan.reportPath);
+      if (realFile !== path.join(realDir, 'vitest-report.json')) return '报告文件路径逃逸';
+    } catch {
+      // 文件不存在是合法状态（缺失报告），由 readVitestReport 返回 missing；这里只校验父目录受控
+    }
+  } catch (e) {
+    return `报告路径不可核实：${(e as Error).message}`;
+  }
+  return undefined;
+}
+
 export async function readVitestReport(
   plan: VitestRunPlan,
   window: { startMs: number; endMs: number },
+  rootDir: string,
 ): Promise<ReportParseResult> {
+  const pathProblem = await reportPathProblem(plan, rootDir);
+  if (pathProblem) return { status: 'invalid', detail: pathProblem };
   let stat: import('node:fs').Stats;
   try {
     stat = await fs.lstat(plan.reportPath);
@@ -193,7 +236,37 @@ export async function readVitestReport(
   if (countsInconsistent) {
     return { status: 'inconsistent', detail: problems.join('；'), sha256: sha, bytes };
   }
-  return { status: 'ok', sha256: sha, bytes, counts, failedNames: failedNames.slice(0, 50), startTime, problems };
+  const executedFiles: string[] = [];
+  // 报告里的文件名是真实路径（vitest 会把工作树 realpath 化），根目录也必须取 realpath 才能算相对路径。
+  let realRoot = rootDir;
+  try {
+    realRoot = await fs.realpath(rootDir);
+  } catch {
+    realRoot = rootDir;
+  }
+  for (const tr of raw.testResults as RawTestResult[]) {
+    const name = typeof tr.name === 'string' ? tr.name : '';
+    if (!name) continue;
+    let rel: string;
+    try {
+      rel = path.relative(realRoot, name).split(path.sep).join('/');
+    } catch {
+      rel = name;
+    }
+    executedFiles.push(rel.startsWith('..') ? name : rel);
+  }
+  const checks: Record<string, boolean> = {
+    regularFile: stat.isFile(),
+    notSymlink: !stat.isSymbolicLink(),
+    noHardlink: stat.nlink <= 1,
+    sizeOk: stat.size > 0 && stat.size <= MAX_REPORT_BYTES,
+    mtimeInWindow: stat.mtimeMs >= window.startMs - 2000,
+    startTimeInWindow: startTime >= window.startMs - 5000 && startTime <= window.endMs + 5000,
+    countsConsistent: !countsInconsistent,
+    successConsistent: raw.success === (counts.failed === 0),
+    testResultsArray: Array.isArray(raw.testResults),
+  };
+  return { status: 'ok', sha256: sha, bytes, counts, failedNames: failedNames.slice(0, 50), executedFiles, startTime, problems, checks };
 }
 
 /** 生成报告证据对象（写入任务记录）。 */
@@ -203,21 +276,30 @@ export function buildReportEvidence(opts: {
   stdoutSummary: { passed: number; failed: number } | undefined;
 }): TestReportEvidence {
   const { parse, stdoutSummary } = opts;
-  const agrees = !stdoutSummary || (stdoutSummary.passed === parse.counts.passed && stdoutSummary.failed === parse.counts.failed);
+  // R1-05：如实记录「交叉核对是否真的发生」。拿不到 stdout 摘要时 performed=false，
+  // 不得把缺失的核验标记为成功。
+  const performed = !!stdoutSummary;
+  const agrees = performed && stdoutSummary!.passed === parse.counts.passed && stdoutSummary!.failed === parse.counts.failed;
   const problems = [...parse.problems];
-  if (!agrees && stdoutSummary) {
-    problems.push(`stdout 摘要与报告不一致：stdout=${stdoutSummary.passed} passed/${stdoutSummary.failed} failed，报告=${parse.counts.passed}/${parse.counts.failed}`);
-  }
+  if (!performed) problems.push('无法从进程 stdout 取得测试摘要，报告交叉核对未发生（不能当作已核对）');
+  else if (!agrees) problems.push(`stdout 摘要与报告不一致：stdout=${stdoutSummary!.passed} passed/${stdoutSummary!.failed} failed，报告=${parse.counts.passed}/${parse.counts.failed}`);
+  const checks = { ...parse.checks, crossCheckPerformed: performed, crossCheckAgrees: agrees };
   return {
     format: 'vitest-json',
+    executedFiles: parse.executedFiles,
     pathHash: sha256Text(path.basename(opts.plan.reportDir)).slice(0, 16),
     sha256: parse.sha256,
     bytes: parse.bytes,
-    producedDuringRun: true,
-    startTimeWithinRun: true,
+    producedDuringRun: !!parse.checks.mtimeInWindow,
+    startTimeWithinRun: !!parse.checks.startTimeInWindow,
     counts: parse.counts,
     failedNames: parse.failedNames,
-    integrity: { ok: problems.length === 0, problems },
-    crossCheck: { ...(stdoutSummary ? { stdoutSummary: { passed: stdoutSummary.passed, failed: stdoutSummary.failed } } : {}), agrees },
+    integrity: { ok: problems.length === 0 && Object.values(checks).every(Boolean), problems, checks },
+    crossCheck: {
+      performed,
+      ...(stdoutSummary ? { stdoutSummary: { passed: stdoutSummary.passed, failed: stdoutSummary.failed } } : {}),
+      agrees,
+      ...(performed ? {} : { detail: 'stdout 摘要不可解析' }),
+    },
   };
 }

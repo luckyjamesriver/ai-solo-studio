@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git } from '../git/git.js';
+import { pathIdentityHash } from './model.js';
 import type { ConfigFileFingerprint, DetectedTestRunner, ScopeAssessment, ScopeDelta, TestInventory, TestInventoryFile } from './model.js';
 
 /**
@@ -14,7 +15,9 @@ import type { ConfigFileFingerprint, DetectedTestRunner, ScopeAssessment, ScopeD
 
 /** 可能是测试文件的路径模式（Vitest 默认 glob 及常见约定）。 */
 const TEST_FILE_RE = /(?:^|\/)(?:[^/]+\.)?(?:test|spec)\.[cm]?[jt]sx?$/i;
-const SKIP_DIRS = new Set(['node_modules', '.git', '.studio', 'dist', 'dist-electron', 'build', 'coverage', 'out', '.next', '.cache']);
+// docs/ 里可能有文档示例源码（例如 *.test.ts 片段），测试运行器不会执行它们；
+// 不计入“测试范围”否则会把文档示例误当成测试覆盖。
+const SKIP_DIRS = new Set(['node_modules', '.git', '.studio', 'dist', 'dist-electron', 'build', 'coverage', 'out', '.next', '.cache', 'docs']);
 
 /** vitest / vite / jest 的配置文件候选（按优先级）。 */
 const CONFIG_CANDIDATES = [
@@ -53,7 +56,16 @@ export function isTestFilePath(relPath: string): boolean {
   return TEST_FILE_RE.test(relPath);
 }
 
-async function walkTestFiles(dir: string): Promise<string[]> {
+const SUPPORT_DIR_RE = /(^|\/)(?:tests?|__tests__|e2e|spec|fixtures|__fixtures__)(\/|$)/;
+
+/** 测试辅助文件：位于测试目录下、但不是测试用例文件（helpers / fixtures / setup / 数据文件等）。 */
+export function isTestSupportPath(relPath: string): boolean {
+  if (!relPath || isTestFilePath(relPath)) return false;
+  return SUPPORT_DIR_RE.test(relPath);
+}
+
+/** 遍历工作树内的普通文件（跳过内部缓存与依赖目录）。 */
+async function walkAllFiles(dir: string): Promise<string[]> {
   const out: string[] = [];
   const walk = async (rel: string): Promise<void> => {
     let entries: import('node:fs').Dirent[];
@@ -67,13 +79,30 @@ async function walkTestFiles(dir: string): Promise<string[]> {
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name)) continue;
         await walk(childRel);
-      } else if (e.isFile() && isTestFilePath(childRel)) {
+      } else if (e.isFile()) {
         out.push(childRel);
       }
     }
   };
   await walk('');
   return out.sort();
+}
+
+async function walkTestFiles(dir: string): Promise<string[]> {
+  return (await walkAllFiles(dir)).filter(isTestFilePath);
+}
+
+async function loadSupportFiles(dir: string): Promise<{ path: string; sha256: string }[]> {
+  const out: { path: string; sha256: string }[] = [];
+  for (const rel of await walkAllFiles(dir)) {
+    if (!isTestSupportPath(rel)) continue;
+    try {
+      out.push({ path: rel, sha256: sha256Bytes(await fs.readFile(path.join(dir, rel))) });
+    } catch {
+      // 读取失败不伪造：跳过该文件（缺失会在与基线对比时体现为差异）
+    }
+  }
+  return out;
 }
 
 interface ParsedTestFile {
@@ -119,11 +148,13 @@ function inventoryDigest(files: TestInventoryFile[]): string {
   return sha256Text(canonical.join('\n'));
 }
 
-function summarize(files: TestInventoryFile[]): TestInventory {
+function summarize(files: TestInventoryFile[], supportFiles: { path: string; sha256: string }[] = []): TestInventory {
   const sum = (k: 'testBlockCount' | 'assertionCount' | 'skipMarkerCount' | 'onlyMarkerCount' | 'todoMarkerCount', pick: (f: TestInventoryFile) => number) =>
     files.reduce((acc, f) => acc + pick(f), 0);
+  const supportDigest = sha256Text([...supportFiles].sort((a, b) => (a.path < b.path ? -1 : 1)).map((f) => `${f.path}:${f.sha256}`).join('\n'));
   return {
     files,
+    supportFiles,
     testFileCount: files.length,
     testBlockCount: sum('testBlockCount', (f) => f.testBlocks),
     assertionCount: sum('assertionCount', (f) => f.assertions),
@@ -131,6 +162,7 @@ function summarize(files: TestInventoryFile[]): TestInventory {
     onlyMarkerCount: sum('onlyMarkerCount', (f) => f.onlyMarkers),
     todoMarkerCount: sum('todoMarkerCount', (f) => f.todoMarkers),
     digest: inventoryDigest(files),
+    supportDigest,
   };
 }
 
@@ -157,7 +189,7 @@ export async function scanTestInventory(dir: string): Promise<TestInventory> {
       testNames: parsed.testNames,
     });
   }
-  return summarize(files);
+  return summarize(files, await loadSupportFiles(dir));
 }
 
 /**
@@ -195,7 +227,16 @@ export async function scanTestInventoryFromTree(dir: string, rev: string): Promi
       testNames: parsed.testNames,
     });
   }
-  return summarize(files);
+  const supportFiles: { path: string; sha256: string }[] = [];
+  for (const rel of all) {
+    if (!isTestSupportPath(rel)) continue;
+    try {
+      supportFiles.push({ path: rel, sha256: sha256Text(await git(dir, ['show', `${rev}:${rel}`])) });
+    } catch {
+      // 该提交没有这个文件
+    }
+  }
+  return summarize(files, supportFiles);
 }
 
 /** 读取存在的测试配置文件指纹。 */
@@ -266,6 +307,50 @@ function nodeModulesFromScript(script: string): string | undefined {
   return base && base !== '' ? `${base}/node_modules` : 'node_modules';
 }
 
+/** 读取某个已安装包的 package.json 摘要（用于运行器入口/依赖完整性）。 */
+async function packageIdentity(nodeModulesRoot: string, name: string): Promise<{ name: string; version: string; packageJsonSha256: string } | undefined> {
+  try {
+    const pkgPath = path.join(nodeModulesRoot, ...name.split('/'), 'package.json');
+    const buf = await fs.readFile(pkgPath);
+    const pkg = JSON.parse(buf.toString('utf8')) as { version?: string };
+    return { name, version: typeof pkg.version === 'string' ? pkg.version : 'unknown', packageJsonSha256: sha256Bytes(buf) };
+  } catch {
+    return undefined;
+  }
+}
+
+const RUNNER_DEPS = ['vite', '@vitest/runner'] as const;
+
+async function finishDetected(
+  nodeModulesRoot: string,
+  pkg: { version?: string },
+  buf: Buffer,
+  script: string,
+  argsAppendable: boolean,
+): Promise<DetectedTestRunner> {
+  const entryFile = path.join(nodeModulesRoot, 'vitest', 'vitest.mjs');
+  let entry: { pathHash: string; sha256: string } | undefined;
+  try {
+    entry = { pathHash: pathIdentityHash(entryFile), sha256: sha256Bytes(await fs.readFile(entryFile)) };
+  } catch {
+    entry = undefined;
+  }
+  const deps: { name: string; version: string; packageJsonSha256: string }[] = [];
+  for (const name of RUNNER_DEPS) {
+    const id = await packageIdentity(nodeModulesRoot, name);
+    if (id) deps.push(id);
+  }
+  return {
+    name: 'vitest',
+    version: typeof pkg.version === 'string' ? pkg.version : 'unknown',
+    packageJsonSha256: sha256Bytes(buf),
+    ...(entry ? { entry } : {}),
+    deps,
+    script,
+    argsAppendable,
+  };
+}
+
 /** 解析项目实际使用的测试运行器（目前完整支持 Vitest；其他运行器仅记录命令级结果）。 */
 export async function detectTestRunner(dir: string, script: string): Promise<DetectedTestRunner | undefined> {
   const parsed = parseVitestScript(script);
@@ -278,13 +363,7 @@ export async function detectTestRunner(dir: string, script: string): Promise<Det
     try {
       const buf = await fs.readFile(pkgPath);
       const pkg = JSON.parse(buf.toString('utf8')) as { version?: string };
-      return {
-        name: 'vitest',
-        version: typeof pkg.version === 'string' ? pkg.version : 'unknown',
-        packageJsonSha256: sha256Bytes(buf),
-        script,
-        argsAppendable: parsed.argsAppendable,
-      };
+      return await finishDetected(base, pkg, buf, script, parsed.argsAppendable);
     } catch {
       // 继续按 node 解析规则向上找
     }
@@ -297,13 +376,7 @@ export async function detectTestRunner(dir: string, script: string): Promise<Det
     try {
       const buf = await fs.readFile(pkgPath);
       const pkg = JSON.parse(buf.toString('utf8')) as { version?: string };
-      return {
-        name: 'vitest',
-        version: typeof pkg.version === 'string' ? pkg.version : 'unknown',
-        packageJsonSha256: sha256Bytes(buf),
-        script,
-        argsAppendable: parsed.argsAppendable,
-      };
+      return await finishDetected(path.join(probe, 'node_modules'), pkg, buf, script, parsed.argsAppendable);
     } catch {
       const parent = path.dirname(probe);
       if (parent === probe) break;
@@ -336,35 +409,46 @@ export function assessScopeChange(opts: {
   currentRunner?: { name: string; version: string; packageJsonSha256: string } | undefined;
   baselineScriptsDigest?: string | undefined;
   currentScriptsDigest?: string | undefined;
+  /** 报告里实际执行到的测试文件（相对工作树根）；用于防止只跑一部分测试仍取得可信 PASS */
+  executedFiles?: string[] | undefined;
 }): ScopeAssessment {
   const base = opts.baseline;
   const cur = opts.current;
+  const method: ScopeAssessment['method'] = 'conservative-static';
   if (base.testFileCount === 0 && cur.testFileCount === 0) {
-    return { kind: 'not_assessed', baselineAvailable: false, reasons: ['基线与当前都没有测试文件，无法评估测试范围。'] };
+    return { kind: 'not_assessed', baselineAvailable: false, reasons: ['基线与当前都没有测试文件，无法评估测试范围。'], method: 'none' };
   }
   const reasons: string[] = [];
+  const weakened: string[] = [];
+  const review: string[] = [];
   const byPath = new Map(cur.files.map((f) => [f.path, f]));
   const baseByPath = new Map(base.files.map((f) => [f.path, f]));
   const filesRemoved: string[] = [];
+  const filesAdded: string[] = [];
   const testsRemoved: string[] = [];
+  const testFilesModified: string[] = [];
+  const perFileAssertionDrops: { path: string; from: number; to: number }[] = [];
   let assertionsDelta = 0;
   let testBlocksDelta = 0;
+
   for (const bf of base.files) {
     const cf = byPath.get(bf.path);
     if (!cf) {
       filesRemoved.push(bf.path);
-      reasons.push(`测试文件被删除：${bf.path}`);
+      weakened.push(`测试文件被删除：${bf.path}`);
       continue;
     }
+    // 逐文件比较：任何单文件下降都必须独立成立，不能被其它文件的新增抵消
     if (cf.testBlocks < bf.testBlocks) {
       testBlocksDelta += cf.testBlocks - bf.testBlocks;
-      reasons.push(`测试块减少：${bf.path}（${bf.testBlocks} → ${cf.testBlocks}）`);
+      weakened.push(`测试块减少：${bf.path}（${bf.testBlocks} → ${cf.testBlocks}）`);
     } else if (cf.testBlocks > bf.testBlocks) {
       testBlocksDelta += cf.testBlocks - bf.testBlocks;
     }
     if (cf.assertions < bf.assertions) {
       assertionsDelta += cf.assertions - bf.assertions;
-      reasons.push(`断言减少：${bf.path}（${bf.assertions} → ${cf.assertions}）`);
+      perFileAssertionDrops.push({ path: bf.path, from: bf.assertions, to: cf.assertions });
+      weakened.push(`断言减少：${bf.path}（${bf.assertions} → ${cf.assertions}）`);
     } else if (cf.assertions > bf.assertions) {
       assertionsDelta += cf.assertions - bf.assertions;
     }
@@ -372,13 +456,29 @@ export function assessScopeChange(opts: {
     const removed = bf.testNames.filter((n) => !curNames.has(n));
     if (removed.length) {
       testsRemoved.push(...removed.map((n) => `${bf.path} :: ${n}`));
-      reasons.push(`测试用例被删除：${bf.path}（${removed.slice(0, 3).join(' / ')}${removed.length > 3 ? ' …' : ''}）`);
+      weakened.push(`测试用例被删除：${bf.path}（${removed.slice(0, 3).join(' / ')}${removed.length > 3 ? ' …' : ''}）`);
     }
-    if (cf.skipMarkers > bf.skipMarkers) reasons.push(`跳过标记增加：${bf.path}（${bf.skipMarkers} → ${cf.skipMarkers}）`);
-    if (cf.onlyMarkers > bf.onlyMarkers) reasons.push(`出现 .only（只运行部分测试）：${bf.path}`);
+    if (cf.skipMarkers > bf.skipMarkers) weakened.push(`跳过标记增加：${bf.path}（${bf.skipMarkers} → ${cf.skipMarkers}）`);
+    if (cf.onlyMarkers > bf.onlyMarkers) weakened.push(`出现 .only（只运行部分测试）：${bf.path}`);
+    // 已存在的测试文件内容发生变化（含断言逻辑、条件跳过等）：
+    // 静态分析无法证明语义未削弱 → 保守进入「待确认」，绝不算 assessed_unchanged。
+    if (cf.sha256 !== bf.sha256) testFilesModified.push(bf.path);
   }
+  for (const cf of cur.files) if (!baseByPath.has(cf.path)) filesAdded.push(cf.path);
   const skipMarkerDelta = cur.skipMarkerCount - base.skipMarkerCount;
   const onlyMarkerDelta = cur.onlyMarkerCount - base.onlyMarkerCount;
+
+  // 辅助文件（helpers/fixtures/setup/数据）变化同样需要保守复核
+  const baseSupport = new Map(base.supportFiles.map((f) => [f.path, f.sha256]));
+  const curSupport = new Map(cur.supportFiles.map((f) => [f.path, f.sha256]));
+  const supportFilesChanged: string[] = [];
+  for (const [p, sha] of curSupport) {
+    const b = baseSupport.get(p);
+    if (b === undefined) supportFilesChanged.push(`${p}（新增）`);
+    else if (b !== sha) supportFilesChanged.push(`${p}（改变）`);
+  }
+  for (const p of baseSupport.keys()) if (!curSupport.has(p)) supportFilesChanged.push(`${p}（删除）`);
+
   const configChanged: string[] = [];
   const baseCfg = new Map(opts.baselineConfigs.map((c) => [c.path, c.sha256]));
   const curCfg = new Map(opts.currentConfigs.map((c) => [c.path, c.sha256]));
@@ -388,7 +488,7 @@ export function assessScopeChange(opts: {
     else if (b !== sha) configChanged.push(`${p}（改变）`);
   }
   for (const p of baseCfg.keys()) if (!curCfg.has(p)) configChanged.push(`${p}（删除）`);
-  // 只有存在「批准时基线」时才比较运行器身份；否则不把「基线未知」误判成「运行器被替换」
+
   const runnerChanged = opts.baselineRunner !== undefined
     && (opts.currentRunner === undefined
       || opts.baselineRunner.name !== opts.currentRunner.name
@@ -397,37 +497,51 @@ export function assessScopeChange(opts: {
   const lockfileChanged = !!opts.baselineLock !== !!opts.currentLock || (!!opts.baselineLock && opts.baselineLock !== opts.currentLock);
   const scriptsChanged = !!opts.baselineScriptsDigest !== !!opts.currentScriptsDigest || (!!opts.baselineScriptsDigest && opts.baselineScriptsDigest !== opts.currentScriptsDigest);
 
-  // 基础设施变化（配置 / 运行器 / 锁文件 / 脚本）必须重新确认，不能静默当作通过
-  if (configChanged.length) reasons.push(`测试配置被修改：${configChanged.join('、')}`);
-  if (runnerChanged) reasons.push('测试运行器被替换或版本改变。');
-  if (lockfileChanged) reasons.push('依赖锁文件被修改（运行器可能被替换）。');
-  if (scriptsChanged) reasons.push('测试/构建脚本被修改。');
+  // 实际执行范围 vs 预期范围：报告必须覆盖全部预期测试文件，否则可能只跑了部分测试
+  let executedScope: ScopeDelta['executedScope'];
+  if (opts.executedFiles) {
+    const expected = cur.files.map((f) => f.path).sort();
+    const executedSet = new Set(opts.executedFiles);
+    const missing = expected.filter((p) => !executedSet.has(p));
+    executedScope = { expectedFiles: expected.length, executedFiles: executedSet.size, missing: missing.slice(0, 20) };
+    if (missing.length) review.push(`报告只执行了 ${executedSet.size}/${expected.length} 个测试文件，缺少：${missing.slice(0, 5).join('、')}${missing.length > 5 ? ' …' : ''}`);
+  }
 
-  const weakened = filesRemoved.length > 0 || testsRemoved.length > 0 || base.testBlockCount > cur.testBlockCount || base.assertionCount > cur.assertionCount || skipMarkerDelta > 0 || onlyMarkerDelta > 0;
+  if (testFilesModified.length) review.push(`已有测试文件内容发生变化（静态分析无法证明语义未削弱）：${testFilesModified.slice(0, 5).join('、')}${testFilesModified.length > 5 ? ' …' : ''}`);
+  if (supportFilesChanged.length) review.push(`测试辅助文件/夹具发生变化：${supportFilesChanged.slice(0, 5).join('、')}${supportFilesChanged.length > 5 ? ' …' : ''}`);
+  if (configChanged.length) review.push(`测试配置被修改：${configChanged.join('、')}`);
+  if (runnerChanged) review.push('测试运行器被替换或版本改变。');
+  if (lockfileChanged) review.push('依赖锁文件被修改（运行器可能被替换）。');
+  if (scriptsChanged) review.push('测试/构建脚本被修改。');
+
+  reasons.push(...weakened, ...review);
   const delta: ScopeDelta = {
     filesRemoved,
+    filesAdded,
     testsRemoved,
+    perFileAssertionDrops,
     assertionsDelta,
     testBlocksDelta,
     skipMarkerDelta,
     onlyMarkerDelta,
     configChanged,
+    testFilesModified,
+    supportFilesChanged,
     runnerChanged,
     lockfileChanged,
     scriptsChanged,
+    ...(executedScope ? { executedScope } : {}),
   };
-  if (weakened || configChanged.length > 0 || runnerChanged || lockfileChanged || scriptsChanged) {
-    return { kind: 'assessed_weakened', baselineAvailable: true, reasons, delta };
-  }
-  const stronger =
-    cur.testFileCount > base.testFileCount ||
-    cur.testBlockCount > base.testBlockCount ||
-    cur.assertionCount > base.assertionCount ||
-    cur.skipMarkerCount < base.skipMarkerCount;
-  return { kind: stronger ? 'assessed_stronger' : 'assessed_unchanged', baselineAvailable: true, reasons, delta };
+
+  const isWeakened = weakened.length > 0 || filesRemoved.length > 0 || testsRemoved.length > 0
+    || base.testBlockCount > cur.testBlockCount || base.assertionCount > cur.assertionCount
+    || skipMarkerDelta > 0 || onlyMarkerDelta > 0;
+  if (isWeakened) return { kind: 'assessed_weakened', baselineAvailable: true, reasons, delta, method };
+  if (review.length > 0) return { kind: 'assessed_needs_review', baselineAvailable: true, reasons, delta, method };
+  const stronger = cur.testFileCount > base.testFileCount || cur.testBlockCount > base.testBlockCount || cur.assertionCount > base.assertionCount || cur.skipMarkerCount < base.skipMarkerCount;
+  return { kind: stronger ? 'assessed_stronger' : 'assessed_unchanged', baselineAvailable: true, reasons, delta, method };
 }
 
-/** 测试范围清单的短指纹（用于把「重新确认」绑定到具体范围）。 */
 export function scopeFingerprint(inv: TestInventory, configs: ConfigFileFingerprint[], runner?: { version: string; packageJsonSha256: string }): string {
   const cfg = [...configs].sort((a, b) => (a.path < b.path ? -1 : 1)).map((c) => `${c.path}:${c.sha256}`).join(',');
   return sha256Text(`${inv.digest}|${cfg}|${runner ? `${runner.version}:${runner.packageJsonSha256}` : 'none'}`).slice(0, 32);

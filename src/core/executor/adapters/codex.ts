@@ -303,7 +303,7 @@ export class CodexExecutor implements Executor {
    * 任何一步无法确认（读不到 MCP 名单、自检不过、生效权限与期望不一致、进程起不来）→ unavailable，调用方标“未检查”；
    * 绝不在宿主上直接运行。
    */
-  readonly sandboxRunner: SandboxCommandRunner = { runCommand: (req) => this.execInSandbox(req) };
+  readonly sandboxRunner: SandboxCommandRunner = { kind: 'codex-app-server', runCommand: (req) => this.execInSandbox(req) };
 
   private async execInSandbox(req: SandboxExecRequest): Promise<SandboxExecResult> {
     let cwd = req.cwd;

@@ -26,9 +26,9 @@
 | A1 专项反向矩阵 | `npx vitest run tests/a1-trusted-evidence.test.ts tests/a1-evidence-chain.test.ts` | **34 passed / 0 failed，exit 0** | `a1-special-tests-excerpt.txt` |
 | 构建 | `npm run build` | core tsc + renderer vite build 通过 | CI 日志 |
 | Electron E2E | `npx vitest run -c vitest.e2e.config.ts` | **56 passed / 0 failed，exit 0** | `e2e-excerpt.txt` |
-| 真实项目工作树 | `node …/real-project-verify.mjs` | 验收 749/711/38 + 结构化报告 integrity ok + `checked=true` 保存 | `real-project-verify.log` |
-| 修复前对照（基线） | 同一探针放在基线 checkout 运行 | **5 failed / 0 passed，exit 1** | `probes/pre-fix-baseline-probe.log` |
-| 修复后对照（A1） | 同一探针放在 A1 运行 | **5 passed / 0 failed，exit 0** | `probes/post-fix-a1-probe.log` |
+| 真实项目工作树 | `node …/real-project-verify.mjs` | 验收 749/711/38 + 结构化报告 integrity ok + `checked=true` 保存 | `real-project-verify.txt` |
+| 修复前对照（基线） | 同一探针放在基线 checkout 运行 | **5 failed / 0 passed，exit 1** | `probes/pre-fix-baseline-probe.txt` |
+| 修复后对照（A1） | 同一探针放在 A1 运行 | **5 passed / 0 failed，exit 0** | `probes/post-fix-a1-probe.txt` |
 | 原工作区保护 | SHA-256 / HEAD / status / diff 哈希 | 8/8 一致，未修改 | `workspace-protection-before.txt`、`workspace-protection-after.txt` |
 
 ## 3. CI（exact HEAD）
@@ -55,6 +55,6 @@ npm ci && npm run typecheck && npm test && npm run build
 npx vitest run -c vitest.e2e.config.ts    # 需要真实显示环境（macOS）
 
 # 缺陷修复前后对照：同一探针
-cp docs/reviews/AISS-A1-TRUSTED-EVIDENCE-001/probes/a1-fix-proof.test.ts <checkout>/tests/probes/
-npx vitest run tests/probes/a1-fix-proof.test.ts   # 基线 checkout → 5 failed；A1 → 5 passed
+cp docs/reviews/AISS-A1-TRUSTED-EVIDENCE-001/probes/a1-fix-proof.probe.ts.txt <checkout>/tests/probes/
+npx vitest run tests/probes/a1-fix-proof.probe.ts.txt   # 基线 checkout → 5 failed；A1 → 5 passed
 ```

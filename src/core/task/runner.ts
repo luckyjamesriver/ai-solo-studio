@@ -26,6 +26,7 @@ import type { Decision, DeniedOperation, Executor, ExecutorRun, PermissionReques
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
 import {
   collectApprovedScopeBaseline,
+  currentScopeFingerprint,
   detectScripts,
   runCheck,
   runProjectChecks,
@@ -41,6 +42,7 @@ import {
 import type { CheckUnknownReason, HostCheckEvidence } from '../evidence/model.js';
 import { configFingerprintKey } from '../evidence/model.js';
 import { configFingerprintProblems, evidenceIdentityProblem } from '../evidence/validate.js';
+import { adjudicateTaskEvidence } from '../evidence/adjudicate.js';
 import { detectTestRunner, readConfigFingerprints, readPackageLockDigest } from '../evidence/inventory.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
 import { filterProofOutput, parseTestCases } from '../acceptance/proof.js';
@@ -61,6 +63,8 @@ export type OpFailReason =
   | 'conflict'
   | 'checks_failed'
   | 'acceptance_inconsistent'
+  | 'evidence_invalid'
+  | 'evidence_scope_unconfirmed'
   | 'unchecked_needs_confirm'
   | 'project_changed'
   | 'failed_restored'
@@ -808,6 +812,22 @@ export class TaskRunner extends EventEmitter {
    * 先检测外部驱动（命中则不读取任何内容、不运行检查）→ 算 tree（冻结）→ 跑检查 → 再算 tree；
    * 检查改动了文件则检查结果作废，并把检查之后的内容作为新的验收内容（改动清单如实列出，用户看到的就是将要保存的）。
    */
+  /** 统一证据身份上下文：验收卡/试检查/保存门禁都用它做同一套身份校验。 */
+  private evidenceContextFor(t: Task) {
+    const round = t.currentRound ?? 1;
+    return {
+      taskId: t.id,
+      round,
+      ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
+      ...(t.acceptanceRev !== undefined && t.acceptedTree ? { acceptanceVersion: `${t.acceptedTree.slice(0, 12)}-${t.acceptanceRev}` } : {}),
+      ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}),
+      ...(t.binding?.repoPath ? { projectRoot: t.binding.repoPath } : {}),
+      ...(t.worktree?.path ? { worktreePath: t.worktree.path } : {}),
+      ...(t.evidenceInvalid?.reason ? { deepInvalidReason: t.evidenceInvalid.reason } : {}),
+      ...(t.scopeReview ? { scopeReview: t.scopeReview } : {}),
+    };
+  }
+
   private async buildEvidence(t: Task, opts: { acceptCurrentScope?: boolean } = {}): Promise<void> {
     const wt = t.worktree!;
     const repo = this.opts.repo;
@@ -889,30 +909,28 @@ export class TaskRunner extends EventEmitter {
         tree = tree2;
       }
     }
-    // 测试范围被削弱 / 验证基础设施被修改：记录事实，自动通过被阻断，等待用户明确重新确认
+    // 测试范围被削弱 / 内容变化 / 验证基础设施被修改：记录复核要求，自动通过被阻断，等待用户明确重新确认。
     const testProof = checkProofs.find((p) => p.name === 'test');
-    const weakened = testProof?.evidence?.scope.kind === 'assessed_weakened';
-    if (weakened && testProof?.evidence) {
-      t.scopeChange = {
-        kind: 'weakened',
-        reasons: testProof.evidence.scope.reasons,
-        fingerprint: configFingerprintKey(testProof.evidence.config),
-        acceptanceVersion: acceptanceVersion(t),
-        at: new Date().toISOString(),
-      };
-    } else {
-      delete t.scopeChange;
-    }
+    const scopeKind = testProof?.evidence?.scope.kind;
     t.currentChecks = checkProofs;
     t.acceptedTree = tree;
-    if (opts.acceptCurrentScope) {
-      // 只有用户显式操作才会走到这里（acceptCurrentScope 仅由 confirmScopeChange 传入）。
-      // 绑定生成后的验收版本与当前测试范围指纹：之后任何变化都会让这次确认自动失效。
-      t.scopeReconfirmed = {
-        acceptanceVersion: acceptanceVersion(t),
-        fingerprint: testProof?.evidence ? configFingerprintKey(testProof.evidence.config) : '',
-        at: new Date().toISOString(),
-      };
+    if (!opts.acceptCurrentScope && testProof?.evidence && (scopeKind === 'assessed_weakened' || scopeKind === 'assessed_needs_review')) {
+      const key = testProof.evidence.scope.fingerprint ?? configFingerprintKey(testProof.evidence.config);
+      const prev = t.scopeReview;
+      // 用户确认必须绑定「其实际查看的内容」：内容/范围/版本任一变化都会让旧确认失效。
+      const stillSame = !!prev?.confirmedAt && prev.scopeFingerprint === key && prev.contentFingerprint === tree && prev.acceptanceVersion === acceptanceVersion(t);
+      if (!stillSame) {
+        t.scopeReview = {
+          kind: scopeKind === 'assessed_weakened' ? 'weakened' : 'changed',
+          reasons: testProof.evidence.scope.reasons,
+          scopeFingerprint: key,
+          contentFingerprint: tree,
+          acceptanceVersion: acceptanceVersion(t),
+          detectedAt: new Date().toISOString(),
+        };
+      }
+    } else if (!opts.acceptCurrentScope) {
+      delete t.scopeReview;
     }
     const savedRoundRef = await G.saveRoundRef(repo, {
       taskId: t.id,
@@ -933,6 +951,7 @@ export class TaskRunner extends EventEmitter {
       overallConfirmed: t.overallConfirmed === true,
       notes: this.cardNotes(t),
       ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
+      evidenceContext: this.evidenceContextFor(t),
     });
     this.syncCurrentRound(t, {
       roundBaseSha: wt.baseSha,
@@ -967,6 +986,8 @@ export class TaskRunner extends EventEmitter {
       delete t.overallNote;
       delete t.lastSave;
       delete t.trialChecks;
+      delete t.scopeReview;
+      delete t.evidenceInvalid;
       t.deniedAcks = t.denied.map(() => false);
       await this.buildEvidence(t);
       await this.persist(t);
@@ -986,9 +1007,46 @@ export class TaskRunner extends EventEmitter {
     try {
       const t = await this.load(id);
       if (t.state !== 'reviewing' && t.state !== 'save_failed_unmerged') throw new Error('任务不在验收阶段。');
-      if (!t.scopeChange) throw new Error('这个任务没有需要重新确认的测试范围变化。');
-      this.log(t, 'message', `你已确认：已知晓测试范围/验证基础设施变化（${t.scopeChange.reasons.join('；')}），并按当前范围验收。`, 'host');
+      if (!t.scopeReview || t.scopeReview.confirmedAt) throw new Error('这个任务没有需要重新确认的测试范围变化。');
+      if (!t.worktree) throw new Error('任务副本不存在，不能重新确认范围。');
+      // 1) 确认必须绑定「用户实际查看的内容」：版本、内容 tree、范围指纹任一变化都拒绝旧确认
+      if (t.scopeReview.acceptanceVersion !== acceptanceVersion(t)) throw new Error('验收版本已经变化，请重新检查后再确认。');
+      const currentTree = await G.computeTree(this.opts.repo, t.worktree.path);
+      if (!t.acceptedTree || currentTree !== t.acceptedTree || t.scopeReview.contentFingerprint !== currentTree) {
+        throw new Error('你查看之后任务内容又发生了变化，旧的确认已失效，请重新检查后再确认。');
+      }
+      const currentFp = await currentScopeFingerprint(t.worktree.path);
+      if (currentFp !== t.scopeReview.scopeFingerprint) throw new Error('测试范围在你查看之后又发生了变化，请重新检查后再确认。');
+      const reasons = [...t.scopeReview.reasons];
+      // 2) 重新确认前清空旧的验收决定（确认针对的是新的范围/内容，旧确认不能沿用）
+      t.criteria.forEach((c) => {
+        delete c.decision;
+        delete c.note;
+      });
+      t.previewed = false;
+      t.previewSkipped = false;
+      delete t.overallConfirmed;
+      delete t.overallDecision;
+      delete t.overallNote;
+      delete t.lastSave;
+      delete t.trialChecks;
+      delete t.evidenceInvalid;
+      delete t.uncheckedConfirm;
+      t.deniedAcks = t.denied.map(() => false);
+      // 3) 按用户确认的当前范围重新生成证据
       await this.buildEvidence(t, { acceptCurrentScope: true });
+      // 4) 绑定确认：新验收版本 + 新内容指纹 + 已核对的范围指纹（保存/试合并会消费它）
+      const confirmedFp = t.scopeReview?.scopeFingerprint ?? currentFp;
+      t.scopeReview = {
+        kind: 'changed',
+        reasons,
+        scopeFingerprint: confirmedFp === currentFp ? confirmedFp : currentFp,
+        contentFingerprint: t.acceptedTree ?? currentTree,
+        acceptanceVersion: acceptanceVersion(t),
+        detectedAt: t.scopeReview?.detectedAt ?? new Date().toISOString(),
+        confirmedAt: new Date().toISOString(),
+      };
+      this.log(t, 'message', `你已确认：已知晓测试范围/内容变化（${reasons.join('；')}），并按当前范围重新验收。`, 'host');
       await this.persist(t);
       return t;
     } finally {
@@ -1069,6 +1127,7 @@ export class TaskRunner extends EventEmitter {
       ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
       ...(t.evidenceInvalid ? { evidenceInvalid: t.evidenceInvalid.reason } : {}),
       ...(t.gitBinding ? { git: t.gitBinding } : {}),
+      evidenceContext: this.evidenceContextFor(t),
     });
     this.syncCurrentRound(t);
     await this.persist(t);
@@ -1500,6 +1559,7 @@ export class TaskRunner extends EventEmitter {
         testedTree,
         baselineRev: t.worktree?.baseSha ?? '',
         ...(t.checkAuth?.scope ? { approvedScope: t.checkAuth.scope } : {}),
+        ...(t.scopeReview?.confirmedAt ? { expectedScopeFingerprint: t.scopeReview.scopeFingerprint } : {}),
       },
     });
   }
@@ -1514,9 +1574,30 @@ export class TaskRunner extends EventEmitter {
     }
   }
 
+  /**
+   * 保存核心门禁：主动裁决当前证据。证据失效 / 范围未确认 / 真实失败一律在此拦截，
+   * 不能依赖界面是否禁用了保存按钮。返回 null 表示可以继续保存流程。
+   */
+  private evidenceSaveGate(t: Task): SaveResult | null {
+    const adj = adjudicateTaskEvidence(t);
+    if (adj.hasInvalidated) {
+      return { ok: false, reason: 'evidence_invalid', detail: '检查证据已失效（内容、验收版本、项目/副本身份或检查配置发生变化），请重新检查后再保存。' };
+    }
+    if (adj.needsScopeConfirm) {
+      return { ok: false, reason: 'evidence_scope_unconfirmed', detail: '测试范围发生了无法静态证明安全的变化，请先核对并明确重新确认后再保存。' };
+    }
+    if (adj.hasFailed) {
+      return { ok: false, reason: 'not_ready', detail: '还有自动检查没有通过，请先修复或退回修改。' };
+    }
+    return null;
+  }
+
   private async doSave(id: string, opts: SaveTaskOptions = {}): Promise<SaveResult> {
     const t = await this.load(id);
     const repo = this.opts.repo;
+    // R1-03/R1-04：保存核心门禁主动调用统一证据裁决（不依赖 UI 状态、不依赖可能过期的卡片）。
+    const evidenceGate = this.evidenceSaveGate(t);
+    if (evidenceGate) return evidenceGate;
     const prevPendingPreHead = t.uncheckedConfirm && t.uncheckedConfirm.version === acceptanceVersion(t) ? t.uncheckedConfirm.preHead : undefined;
     const saveSteps = initialSaveSteps();
     const recordSnapshot = (
@@ -1701,11 +1782,13 @@ export class TaskRunner extends EventEmitter {
       this.emitSaveProgress(t.id, saveSteps, false);
 
       // b. 在临时 worktree 里运行项目的自动检查（复用 checks/scripts.ts 的识别结果）
+      let checkOutcomeRef: { results: { name: 'build' | 'test'; evidence?: { identity: { evidenceId: string } } }[] } | undefined;
       let checksSummary = { passed: 0, failed: 0 };
       let checkedAt: string | undefined;
       try {
         const trialTreeBefore = await G.computeTree(repo, trialPath);
         const checkOutcome = await this.runTrialChecks(t, trialPath, trialTreeBefore);
+        checkOutcomeRef = checkOutcome;
         const trialTreeAfter = await G.computeTree(repo, trialPath);
         if (trialTreeAfter !== trialTreeBefore) {
           // 试检查期间内容被改动：证据作废，阻断保存并要求重新检查
@@ -1762,7 +1845,23 @@ export class TaskRunner extends EventEmitter {
           await this.persist(t);
           return { ok: false, reason: 'acceptance_inconsistent', detail: '合并后的检查结果与原验收证据不一致，本次没有保存。请重新检查后再保存。' };
         }
-        // 未检查（none 或 unavailable）：未传 confirmUnchecked 时不写入主项目，清理临时副本并返回待确认
+        // 试合并阶段的「范围变化/证据失效」属于硬阻断：不能用「仍要保存」的人工确认绕过
+        const scopeBlocked = checkOutcome.unverified.some((c) =>
+          c.status === 'unverified' && (c.unknownReason === 'test_scope_weakened' || c.unknownReason === 'test_scope_changed'),
+        );
+        if (scopeBlocked) {
+          delete t.uncheckedConfirm;
+          await cleanupTrial();
+          this.opStep(t, '试检查', false, 'scope_blocked');
+          saveSteps[2] = { ...saveSteps[2]!, status: 'failed', detail: '合并后的测试范围与已确认范围不一致' };
+          skipRemaining(3);
+          this.emitSaveProgress(t.id, saveSteps, true);
+          recordSnapshot('failed');
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'evidence_scope_unconfirmed', detail: '合并后的测试范围与已确认的范围不一致，本次没有保存。请重新检查并重新确认后再保存。' };
+        }
+        // 未检查（none / unavailable / 无可信证据）：未传 confirmUnchecked 时不写入主项目，清理临时副本并返回待确认
         if (!checkOutcome.checked) {
           const kind: UncheckedKind = checkOutcome.kind === 'none' ? 'none' : checkOutcome.kind === 'unverified' ? 'unverified' : 'unavailable';
           const reasonText = checkOutcome.reasonText ?? uncheckedReasonText(kind, checkOutcome.unavailableReason);
@@ -1905,9 +2004,27 @@ export class TaskRunner extends EventEmitter {
       }
 
       const mergeCommit = await G.headSha(repo);
+      const trialEvidenceIds = this.collectEvidenceIds(checkOutcomeRef);
+      // R1 数据完整性：真实保存后核对「任务内容被完整应用」——任务改动过的路径在合并结果里必须与冻结的验收内容逐字节一致。
+      // 发现漂移就恢复到保存前并如实返回 failed_restored（绝不静默保留一个与验收内容不同的结果）。
+      const drift = await this.verifySavedTaskContent(repo, t, mergeCommit);
+      if (drift.length) {
+        await cleanupTrial();
+        await G.restoreTo(repo, preHead, `studio: 保存后核对失败，已恢复「${t.plan?.goal ?? t.request}」`);
+        delete t.uncheckedConfirm;
+        delete t.trialChecks;
+        this.opStep(t, '保存后核对任务内容', false, drift.join(','));
+        saveSteps[3] = { ...saveSteps[3]!, status: 'failed', detail: '保存后核对发现任务内容与验收内容不一致，已恢复' };
+        this.emitSaveProgress(t.id, saveSteps, true);
+        recordSnapshot('failed_restored', { files: drift });
+        this.endOp(t, 'interrupted');
+        await this.persist(t);
+        return { ok: false, reason: 'failed_restored', detail: MESSAGES.failedRestored, files: drift };
+      }
       delete t.uncheckedConfirm;
       delete t.trialChecks;
       delete t.conflict;
+      delete t.scopeReview;
       saveSteps[3] = { ...saveSteps[3]!, status: 'done', detail: '期间没有新的改动，已写入主项目' };
       this.emitSaveProgress(t.id, saveSteps, true);
       recordSnapshot('saved');
@@ -1933,6 +2050,7 @@ export class TaskRunner extends EventEmitter {
         savedRound: t.currentRound ?? 1,
         executorText,
         trialCommit,
+        ...(trialEvidenceIds.build || trialEvidenceIds.test ? { evidenceIds: trialEvidenceIds } : {}),
       };
       this.opStep(t, '合并到项目', true, mergeCommit);
       await this.opPhase(t, 'merged', { mergeCommit }); // 合并完成立刻落盘，之后即使中断也能据此核对
@@ -1950,6 +2068,33 @@ export class TaskRunner extends EventEmitter {
   }
 
   /** 保存的收尾：清理副本与分支，再迁移到 saved / saved_cleanup_pending。保存与启动核对共用。 */
+  /**
+   * 保存后核对：任务改动过的路径在合并结果里必须与冻结的验收内容（acceptedTree）完全一致。
+   * 只核对任务改动过的路径，避免把「主项目在验收期间的其他合法改动」误判为漂移。
+   */
+  private async verifySavedTaskContent(repo: string, t: Task, mergeCommit: string): Promise<string[]> {
+    if (!t.acceptedTree || !t.worktree) return [];
+    const taskCommit = await G.commitTree(repo, t.acceptedTree, t.worktree.baseSha, `verify: ${t.id}`);
+    const taskTree = await G.treeOf(repo, taskCommit);
+    if (taskTree !== t.acceptedTree) return ['accepted_tree_mismatch'];
+    const taskPaths = await G.diffTreePaths(repo, t.worktree.baseSha, t.acceptedTree);
+    // 只比较任务改动过的路径（限制数量，避免超长命令行）
+    const sample = taskPaths.filter((p) => !p.includes('\0')).slice(0, 500);
+    if (!sample.length) return [];
+    const mergedTree = await G.treeOf(repo, mergeCommit);
+    const changed = await G.diffTreePaths(repo, t.acceptedTree, mergedTree, sample);
+    return changed.slice(0, 20);
+  }
+
+  /** 收集本次试检查的结构化证据 id（用于保存记录区分“当时有证据”与“历史未核实”）。 */
+  private collectEvidenceIds(outcome: { results: { name: 'build' | 'test'; evidence?: { identity: { evidenceId: string } } }[] } | undefined): { build?: string; test?: string } {
+    const ids: { build?: string; test?: string } = {};
+    for (const r of outcome?.results ?? []) {
+      if (r.evidence?.identity.evidenceId) ids[r.name] = r.evidence.identity.evidenceId;
+    }
+    return ids;
+  }
+
   private async finishSave(t: Task, fromReconcile = false, checked = false): Promise<SaveResult> {
     let cleanup: G.CleanupResult;
     if (fromReconcile) {
@@ -2227,6 +2372,8 @@ export class TaskRunner extends EventEmitter {
           configFiles,
           ...(lock ? { packageLockDigest: lock } : {}),
           runnerPackage: runner ? { name: runner.name, version: runner.version, packageJsonSha256: runner.packageJsonSha256 } : undefined,
+          ...(runner?.entry ? { runnerEntry: runner.entry } : {}),
+          ...(runner?.deps ? { deps: runner.deps } : {}),
         }),
       );
     }
@@ -2451,6 +2598,8 @@ export class TaskRunner extends EventEmitter {
   async previewSave(t: Task): Promise<OpFail | null> {
     const repo = this.opts.repo;
     if (t.manualReview) return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
+    const gate = this.evidenceSaveGate(t);
+    if (gate && !gate.ok) return { ok: false, reason: gate.reason, detail: gate.detail };
     const lock = await this.findProjectLock(t.id);
     if (lock) return this.projectLockFail(lock);
     const wt = t.worktree;

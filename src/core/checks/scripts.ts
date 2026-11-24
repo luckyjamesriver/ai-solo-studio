@@ -31,6 +31,7 @@ import {
   scopeFingerprint,
   sha256Text,
 } from '../evidence/inventory.js';
+import { pathIdentityHash } from '../evidence/model.js';
 import { buildReportEvidence, cleanupVitestRun, parseStdoutSummary, prepareVitestRun, readVitestReport } from '../evidence/vitest.js';
 
 /**
@@ -141,6 +142,10 @@ export function minimalCheckEnv(base: NodeJS.ProcessEnv, dir: string, developerD
   }
   // 临时目录放在副本内 .studio/tmp（该目录由 .git/info/exclude 忽略）。
   env.TMPDIR = path.join(dir, '.studio', 'tmp');
+  // R1：不扩大沙箱写权限的替代方案 —— 让被检项目的测试进程执行 git 探测时，
+  // 不要把「工作树内的临时目录」误认为仍在项目仓库内（否则 isRepo(tmpdir) 之类的测试会失败）。
+  // 天花板设在 .studio：从工作树根或更浅位置仍能找到 .git；从 .studio/tmp 向上探测则停止。
+  env.GIT_CEILING_DIRECTORIES = path.join(dir, '.studio');
   env.CI = '1';
   // B3-1 实测：同时设置 TMPDIR（副本内）与 DEVELOPER_DIR 才能消除 Apple git 的 xcrun 报错
   if (developerDirExists) env.DEVELOPER_DIR = '/Library/Developer/CommandLineTools';
@@ -175,6 +180,8 @@ export interface EvidenceIdentityContext {
   baselineRev?: string | undefined;
   /** 批准时记录的测试范围基线（可选） */
   approvedScope?: ApprovedScopeBaseline | undefined;
+  /** 用户已确认的测试范围指纹：保存前试合并用它验证「已批准范围仍然有效」 */
+  expectedScopeFingerprint?: string | undefined;
 }
 
 export interface RunCheckOptions {
@@ -196,7 +203,7 @@ export interface RunCheckOptions {
 }
 
 function hostPathHash(p: string): string {
-  return sha256Text(p).slice(0, 32);
+  return pathIdentityHash(p);
 }
 
 function newEvidenceId(): string {
@@ -227,6 +234,8 @@ async function collectFingerprints(dir: string, opts: RunCheckOptions, withInven
     ...(scripts ? { scriptsDigest: scripts } : {}),
     ...(packageLockDigest ? { packageLockDigest } : {}),
     ...(runner ? { runnerPackage: { name: runner.name, version: runner.version, packageJsonSha256: runner.packageJsonSha256 } } : {}),
+    ...(runner?.entry ? { runnerEntry: runner.entry } : {}),
+    ...(runner?.deps ? { deps: runner.deps } : {}),
     testConfigFiles,
     ...(inventory
       ? {
@@ -248,12 +257,35 @@ async function collectFingerprints(dir: string, opts: RunCheckOptions, withInven
 }
 
 /** 相对任务基线提交评估测试范围是否被削弱。 */
-async function assessTestScope(dir: string, opts: RunCheckOptions, fp: Fingerprints): Promise<ScopeAssessment> {
+async function currentRunnerIdentity(dir: string): Promise<{ name: string; version: string; packageJsonSha256: string } | undefined> {
+  const scripts = await detectScripts(dir);
+  const runner = scripts.test ? await detectTestRunner(dir, scripts.test) : undefined;
+  return runner ? { name: runner.name, version: runner.version, packageJsonSha256: runner.packageJsonSha256 } : undefined;
+}
+
+async function assessTestScope(dir: string, opts: RunCheckOptions, fp: Fingerprints, executedFiles?: string[]): Promise<ScopeAssessment> {
+  const current = fp.currentInventory ?? (await scanTestInventory(dir));
+  const runnerNow = await currentRunnerIdentity(dir);
+  const fingerprint = scopeFingerprint(current, fp.config.testConfigFiles, runnerNow ? { version: runnerNow.version, packageJsonSha256: runnerNow.packageJsonSha256 } : undefined);
   if (opts.acceptCurrentScope) {
-    return { kind: 'assessed_unchanged', baselineAvailable: true, reasons: ['你已明确确认按当前测试范围验收。'], baselineSource: '用户重新确认' };
+    return { kind: 'assessed_unchanged', baselineAvailable: true, reasons: ['你已明确确认按当前测试范围验收。'], baselineSource: '用户重新确认', method: 'none', fingerprint };
+  }
+  // 保存前试合并：若用户已确认过某个范围，就核对「当前范围是否仍等于已确认的范围」，
+  // 而不是无条件回到原始基线，也不是无条件跳过范围校验。
+  const expected = opts.identity?.expectedScopeFingerprint;
+  if (expected) {
+    if (expected === fingerprint) {
+      return { kind: 'assessed_unchanged', baselineAvailable: true, reasons: ['与用户已确认的测试范围一致。'], baselineSource: '用户已确认的范围', method: 'none', fingerprint };
+    }
+    return {
+      kind: 'assessed_needs_review',
+      baselineAvailable: true,
+      reasons: ['当前测试范围/配置与用户已确认的范围不一致，必须重新检查并重新确认。'],
+      method: 'conservative-static',
+      fingerprint,
+    };
   }
   const baselineRev = opts.identity?.baselineRev;
-  const current = fp.currentInventory ?? (await scanTestInventory(dir));
   const baseInventory = baselineRev ? await scanTestInventoryFromTree(dir, baselineRev) : undefined;
   if (!baseInventory || (baseInventory.testFileCount === 0 && current.testFileCount === 0)) {
     // 无基线提交：无法判断「已有覆盖是否被削弱」（历史任务）。如实标记未评估，不伪造结论。
@@ -276,8 +308,9 @@ async function assessTestScope(dir: string, opts: RunCheckOptions, fp: Fingerpri
       : undefined,
     baselineScriptsDigest: opts.authorizedDigest,
     currentScriptsDigest: fp.config.scriptsDigest,
+    ...(executedFiles ? { executedFiles } : {}),
   });
-  return { ...assessment, baselineSource: `基线提交 ${baselineRev ?? '（无）'}` };
+  return { ...assessment, baselineSource: `基线提交 ${baselineRev ?? '（无）'}`, fingerprint };
 }
 
 function makeIdentity(ctx: EvidenceIdentityContext | undefined, testedTree: string, dir: string): EvidenceIdentity | undefined {
@@ -370,6 +403,12 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
   const testRunner = name === 'test' && scripts.test ? await detectTestRunner(dir, scripts.test) : undefined;
 
   await makeDir(path.join(dir, '.studio', 'tmp'));
+  // R1：Vite/Vitest 在加载 TS 配置时会把临时文件写到它找到的「最近的 node_modules/.vite-temp」。
+  // 任务副本通常没有自己的 node_modules（依赖从主项目向上解析），于是它会尝试写主项目的 node_modules，
+  // 在标准模式沙箱里被拒绝（EPERM），导致真实 Vite 项目的检查无法运行。
+  // 解决方案不扩大沙箱权限：在副本内创建一个空的 node_modules 目录，让最近的 node_modules 落在可写副本内；
+  // 依赖解析仍会继续向上找到主项目的 node_modules，内容 tree/改动清单也会剔除未跟踪的 node_modules。
+  await makeDir(path.join(dir, 'node_modules')).catch(() => undefined);
   const developerDir = await fs.stat('/Library/Developer/CommandLineTools').then(() => true, () => false);
   const sandboxEnv = minimalCheckEnv(hostEnv(), dir, developerDir);
   const timeoutMs = opts.timeoutMs ?? 10 * 60_000;
@@ -450,10 +489,11 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
     return { name, status: 'unverified', unknownReason, reason, outcome, output, durationMs: r.durationMs, ...(evidence ? { evidence } : {}) };
   }
 
-  const reportParse = await readVitestReport(plan, { startMs: startMs - 1, endMs });
+  const reportParse = await readVitestReport(plan, { startMs: startMs - 1, endMs }, dir);
   await cleanupVitestRun(plan);
   const stdoutSummary = parseStdoutSummary(r.stdout);
-  const scope = await assessTestScope(dir, opts, fp);
+  const executedFilesForScope = reportParse.status === 'ok' ? reportParse.executedFiles : undefined;
+  const scope = await assessTestScope(dir, opts, fp, executedFilesForScope);
 
   const unverified = (unknownReason: CheckUnknownReason, reason: string, extra: Partial<HostCheckEvidence> = {}): CheckResult => {
     const evidence = evidenceFor('unverified', unknownReason, 'weak', { scope, ...extra });
@@ -464,6 +504,13 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
     return { name, status: 'failed', outcome, output, durationMs: r.durationMs, ...(evidence ? { evidence } : {}) };
   };
 
+  // R1-01 失败优先（也覆盖报告缺失/损坏/复用等组合）：真实进程失败永远先于报告状态判定，
+  // 不得因为报告问题降级成「可由用户确认放行」的 unverified。
+  if (outcome.kind !== 'exited' || outcome.code !== 0) {
+    const why = outcome.kind === 'timed_out' ? '测试进程超时被终止' : outcome.kind !== 'exited' ? `测试进程异常终止（${outcome.kind}）` : `测试进程退出码 ${outcome.code}`;
+    const partial = reportParse.status === 'ok' ? { report: buildReportEvidence({ plan, parse: reportParse, stdoutSummary: parseStdoutSummary(r.stdout) }) } : {};
+    return failed(`${why}，本次不能算通过。`, partial);
+  }
   if (reportParse.status === 'missing') {
     return unverified(
       'report_missing',
@@ -482,20 +529,27 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
   const counts = report.counts;
   const withReport: Partial<HostCheckEvidence> = { report };
 
-  // 报告是权威事实：真实失败优先（即使外层脚本把失败退出码吞成 0）
+  // 报告是权威事实：报告里的真实失败同样最高优先（即使外层脚本把失败退出码吞成 0）
   if (counts.failed > 0) return failed(`结构化报告显示有 ${counts.failed} 项测试失败。`, withReport);
+  // 结构性“没有真实测试”先于完整性细节判定（零测试 / 全跳过本身已经是否决项）
+  if (counts.total === 0) return unverified('tests_not_executed', '测试运行器正常结束，但报告显示没有执行任何测试用例（零测试不算通过）。', withReport);
+  if (counts.passed === 0 && counts.skipped + counts.todo > 0) {
+    return unverified('all_tests_skipped', `报告显示 ${counts.skipped} 项跳过 / ${counts.todo} 项待办，没有真实执行的通过用例（全部跳过不算通过）。`, withReport);
+  }
   if (!report.integrity.ok) {
     return unverified('report_inconsistent', `结构化测试报告的完整性校验未通过：${report.integrity.problems.join('；')}`, withReport);
   }
-  if (counts.total === 0) return unverified('tests_not_executed', '测试运行器正常结束，但报告显示没有执行任何测试用例（零测试不算通过）。', withReport);
-  if (counts.passed === 0 && counts.skipped > 0) {
-    return unverified('all_tests_skipped', `报告显示 ${counts.skipped} 项测试全部被跳过，没有真实执行（全部跳过不算通过）。`, withReport);
-  }
-  if (!exitZero) return failed('测试进程没有以 0 退出（即使报告没有失败用例，也不能算通过）。', withReport);
   if (scope.kind === 'assessed_weakened') {
     return unverified(
       'test_scope_weakened',
-      `相对任务基线，测试范围被削弱或验证基础设施被修改，自动通过已被阻断：${scope.reasons.join('；')}`,
+      `相对任务基线，测试范围被削弱，自动通过已被阻断：${scope.reasons.join('；')}`,
+      withReport,
+    );
+  }
+  if (scope.kind === 'assessed_needs_review') {
+    return unverified(
+      'test_scope_changed',
+      `已有测试内容/辅助文件/配置或实际执行范围发生变化，静态分析无法证明覆盖未被削弱，需你核对后明确重新确认：${scope.reasons.join('；')}`,
       withReport,
     );
   }
