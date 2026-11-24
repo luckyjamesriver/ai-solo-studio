@@ -12,7 +12,7 @@ documentation/evidence under `docs/` only; the product tree is byte-identical to
 | Repository / push URL | `https://github.com/luckyjamesriver/ai-solo-studio.git` → `refs/heads/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery` |
 | Audited baseline (`origin/rebuild`) | `e69ca8511a17acfc4427954af13ef6d364ffb553` |
 | Product tree of this branch | `cf305cd625296a9a098c07cf07ad93f494dd660a` = `origin/rebuild^{tree}` (byte-identical) |
-| Delivery branch HEAD SHA | {{DELIVERY_HEAD_SHA}} |
+| Delivery branch HEAD SHA | `7a367b1123f064ff2a2550cd70ef86da78481da4` — the **evidence commit** containing this README, verified readable on GitHub (see `REMOTE-VERIFICATION.log`). The branch also carries one subsequent commit that adds that verification log; the exact branch tip SHA is whatever `git ls-remote --heads origin audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery` returns. |
 | Original local audit worktree HEAD (never pushed; content reproduced here) | `a8561a9ba47b898bd41c670593ff46bda0995e16` |
 | Original local audit worktree path | protected read-only `~/ai-solo-studio-audit` |
 | Protected original workspace | `~/ai-solo-studio-rebuild` (branch `rebuild`, HEAD `8dfcfc19daf9ba890142be0075f9e869b6353731`) |
@@ -127,7 +127,13 @@ cd <checkout> && grep -rnE '…' docs/reviews
 
 ## Remote verification
 
-{{REMOTE_VERIFICATION}}
+**Verified** at `2026-11-24T03:04:52Z`; raw output in [`REMOTE-VERIFICATION.log`](REMOTE-VERIFICATION.log).
+
+- `git ls-remote --heads origin audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery` → `7a367b1123f064ff2a2550cd70ef86da78481da4` (exit 0)
+- `gh api repos/luckyjamesriver/ai-solo-studio/branches/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery` → `commit.sha = 7a367b1123f064ff2a2550cd70ef86da78481da4`, `protected: false` (exit 0)
+- Anonymous `raw.githubusercontent.com` reads of `README.md`, `report.md`, `source-identity.md`, `test-logs/npm-test.log` and the root report copy all returned **HTTP 200** with the expected byte sizes.
+
+This closes the "A0 material was not remotely readable" gap (`open-items.md` OPEN-1). The original branch name `audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001` and its commit `a8561a9…` remain local-only; the `-delivery` branch is the public, readable artifact.
 
 ## Governance / caveats
 

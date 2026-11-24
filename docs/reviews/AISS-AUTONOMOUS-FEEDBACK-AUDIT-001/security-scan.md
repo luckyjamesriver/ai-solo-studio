@@ -164,3 +164,36 @@ pattern /Users/[A-Za-z0-9._-]+: AISS-AUTONOMOUS-FEEDBACK-AUDIT-001.md AISS-AUTON
 ```
 
 **Conclusion:** no credential-shaped string, no private key, no `.env`/`.studio`/`node_modules` artifact, no file requiring exclusion. All hits are the documented false-positives above. **PASS — safe to push.**
+
+### Post-verification delta scan (commit B: README update + REMOTE-VERIFICATION.log)
+
+Changed/added files scanned: `README.md`, `open-items.md`, `security-scan.md`, `REMOTE-VERIFICATION.log`.
+
+```text
+delta_scan_utc: 2026-11-24T03:05:13Z
+pattern: sk- => 11 hits
+pattern: ghp_ => 3 hits
+pattern: gho_ => 3 hits
+pattern: ghu_ => 3 hits
+pattern: ghs_ => 3 hits
+pattern: github_pat_ => 4 hits
+pattern: AKIA => 4 hits
+pattern: AIza => 4 hits
+pattern: xox[baprs]- => 0 hits
+pattern: Bearer  => 5 hits
+pattern: PRIVATE KEY => 4 hits
+pattern: password => 4 hits
+pattern: token= => 3 hits
+pattern: \.env => 12 hits
+pattern: /Users/[A-Za-z0-9._-]+ => 5 hits
+--- genuine credential shapes ---
+NONE
+--- /Users hits (should be report/log-only; README/open-items/REMOTE-VERIFICATION expected 0) ---
+docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/security-scan.md:64:`/Users/jamesho/…` appears in:
+docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/security-scan.md:70:  header `pwd` fields and vitest's `RUN v5.0.5 /Users/...` line. These are
+docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/security-scan.md:79:2. The **same string** `/Users/jamesho/ai-solo-studio-rebuild` is already present
+docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/security-scan.md:89:scratch path was rewritten from `/Users/jamesho/a0-scratch/discardtest` to
+docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/security-scan.md:92:`~` / relative paths, not `/Users/jamesho/…`.
+```
+
+**Delta conclusion:** no credential-shaped content in the verification commit; the only pattern hits are the documentation literals in this file (self-reference, expected). No new secret, no new artifact class. **PASS.**

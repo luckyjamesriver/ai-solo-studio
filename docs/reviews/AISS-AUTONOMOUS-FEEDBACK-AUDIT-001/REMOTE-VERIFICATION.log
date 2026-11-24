@@ -1,0 +1,34 @@
+# Remote verification — A0 delivery branch
+
+| field | value |
+| :--- | :--- |
+| verified_utc | `2026-11-24T03:04:52Z` |
+| branch | `audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery` |
+| local `git rev-parse HEAD` | `7a367b1123f064ff2a2550cd70ef86da78481da4` |
+| remote | `origin` = https://github.com/luckyjamesriver/ai-solo-studio.git |
+
+## 1. `git ls-remote --heads origin audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery`
+```text
+7a367b1123f064ff2a2550cd70ef86da78481da4	refs/heads/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery
+exit_code: 0
+```
+
+## 2. `gh api repos/luckyjamesriver/ai-solo-studio/branches/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery`
+```json
+{"commit_sha":"7a367b1123f064ff2a2550cd70ef86da78481da4","name":"audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery","protected":false,"url":"https://api.github.com/repos/luckyjamesriver/ai-solo-studio/branches/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery"}
+exit_code: 0
+```
+
+## 3. Anonymous read of published files via raw.githubusercontent (no auth header used by curl)
+```text
+HTTP 200  bytes=8931  https://raw.githubusercontent.com/luckyjamesriver/ai-solo-studio/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery/docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/README.md
+HTTP 200  bytes=13787  https://raw.githubusercontent.com/luckyjamesriver/ai-solo-studio/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery/docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/report.md
+HTTP 200  bytes=17634  https://raw.githubusercontent.com/luckyjamesriver/ai-solo-studio/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery/docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/source-identity.md
+HTTP 200  bytes=45684  https://raw.githubusercontent.com/luckyjamesriver/ai-solo-studio/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery/docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/test-logs/npm-test.log
+HTTP 200  bytes=13787  https://raw.githubusercontent.com/luckyjamesriver/ai-solo-studio/audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery/docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001.md
+```
+
+## 4. Result
+
+Remote branch is readable and its commit SHA equals the local HEAD at verification time: `7a367b1123f064ff2a2550cd70ef86da78481da4`.
+The branch was created from baseline `e69ca8511a17acfc4427954af13ef6d364ffb553`; `rebuild` was not pushed to.
