@@ -1054,9 +1054,15 @@ export class TaskRunner extends EventEmitter {
       const newStatic = newTest?.evidence?.scope.fingerprint;
       const newExecution = newTest?.evidence?.scope.executionFingerprint;
       const missingNewEvidence = !newTest?.evidence || !newStatic || !newExecution;
+      // CLOSEOUT-01 修订二：只凭 evidence 对象 / 静态指纹 / 执行指纹“存在”不能认定重跑证据有效。
+      // 新的 test 证据必须通过与保存门禁完全相同的统一裁决（失败优先、身份、报告完整性、
+      // stdout 交叉核对、范围确认）才算有效；裁决不过就继续待确认，并继续阻断保存。
+      const rerunAdj = adjudicateTaskEvidence(t);
+      const newTestTrusted = newTest !== undefined && rerunAdj.test?.status === 'verified';
       // R4-03：重新执行的结果必须与用户查看时的内容/静态范围/实际执行清单完全一致；
-      // 任何变化（含缺少有效新证据）都重新进入待确认，绝不把新结果自动登记为用户已授权。
+      // 任何变化（含缺少有效新证据或证据未通过裁决）都重新进入待确认，绝不把新结果自动登记为用户已授权。
       const rerunChanged = missingNewEvidence
+        || !newTestTrusted
         || (t.acceptedTree ?? '') !== reviewedTree
         || newStatic !== reviewedStatic
         || (newExecution ?? '') !== (reviewedExecution ?? '');
@@ -1067,7 +1073,9 @@ export class TaskRunner extends EventEmitter {
             ...reasons,
             missingNewEvidence
               ? '确认后重新执行检查没有取得有效的测试证据或实际执行清单'
-              : '确认后重新执行检查时，内容/静态范围/实际执行的测试清单发生了变化',
+              : !newTestTrusted
+                ? '确认后重新执行检查没有取得经统一裁决可信的测试结果（报告完整性或 stdout 交叉核对未通过）'
+                : '确认后重新执行检查时，内容/静态范围/实际执行的测试清单发生了变化',
           ],
           scopeFingerprint: newStatic ?? reviewedStatic,
           ...(newExecution ?? reviewedExecution ? { executionFingerprint: newExecution ?? reviewedExecution } : {}),
@@ -2034,6 +2042,44 @@ export class TaskRunner extends EventEmitter {
         return { ok: false, reason: 'project_changed', detail: MESSAGES.projectChanged };
       }
       this.opStep(t, '写入前核对项目未变', true);
+
+      // CLOSEOUT-01 修订一：完整证据集合裁决必须在 `git merge --ff-only` 写入主项目之前完成。
+      // 写入前用“即将写入的试合并提交”作为期望的 merge 身份；写入后仍强制核对实际 HEAD 与它严格相等，
+      // 两者都不成立就不能当作保存成功。这里复用唯一的 adjudicateTrialEvidenceSet（正常保存/持久化/恢复同一口径）。
+      const trialEvidenceIds = this.collectEvidenceIds(checkOutcomeRef);
+      const trialProofsToPersist = checkOutcomeRef ? toStoredCheckProofs(checkOutcomeRef.results, checkEnv, ranTime) : undefined;
+      const setCheck = adjudicateTrialEvidenceSet({
+        taskId: t.id,
+        round: t.currentRound ?? 1,
+        acceptanceRev: t.acceptanceRev,
+        trialCommit,
+        trialCommitTree,
+        mergeCommit: trialCommit,
+        projectRootHash: pathIdentityHash(repo),
+        trialWorktreePathHash: pathIdentityHash(trialPath),
+        expectedChecks,
+        evidenceIds: trialEvidenceIds,
+        checks: trialProofsToPersist ?? [],
+      });
+      // 真实失败 / 身份失效（含集合不一致）是既定硬阻断：即使调用方带着「未检查也保存」的用户确认也不得绕过。
+      // 合法的未检查保存（证据缺项但身份自洽）仍由前面的用户明确确认机制放行，不在这里额外放行或额外阻断。
+      const setHardBlock = checkOutcomeRef !== undefined && (setCheck.status === 'failed' || setCheck.status === 'invalidated');
+      if (setHardBlock || (checked && !setCheck.ok)) {
+        delete t.uncheckedConfirm;
+        this.opStep(t, '试检查证据集合', false, (setCheck.problems.join('；') || setCheck.status).slice(0, 500));
+        await cleanupTrial();
+        saveSteps[2] = { ...saveSteps[2]!, status: 'failed', detail: '试检查证据集合未通过核对，没有写入项目' };
+        skipRemaining(3);
+        this.emitSaveProgress(t.id, saveSteps, true);
+        recordSnapshot('failed');
+        this.endOp(t, 'interrupted');
+        await this.persist(t);
+        return {
+          ok: false,
+          reason: 'evidence_invalid',
+          detail: '试检查证据集合未通过核对（缺项、重复、身份或提交绑定不一致），本次没有保存，你的项目保持原样。请重新检查后再保存。',
+        };
+      }
       await this.opPhase(t, 'writing');
 
       // d. 写入：主项目执行 git merge --ff-only trialCommit
@@ -2096,7 +2142,6 @@ export class TaskRunner extends EventEmitter {
         await this.persist(t);
         return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal };
       }
-      const trialEvidenceIds = this.collectEvidenceIds(checkOutcomeRef);
       // R1 数据完整性：真实保存后核对「任务内容被完整应用」——任务改动过的路径在合并结果里必须与冻结的验收内容逐字节一致。
       // 发现漂移就恢复到保存前并如实返回 failed_restored（绝不静默保留一个与验收内容不同的结果）。
       const drift = await this.verifySavedTaskContent(repo, t, mergeCommit);
@@ -2145,22 +2190,8 @@ export class TaskRunner extends EventEmitter {
 
       const execName = t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex');
       const executorText = t.model ? `${execName} · ${t.model}` : execName;
-      const trialProofsToPersist = checkOutcomeRef ? toStoredCheckProofs(checkOutcomeRef.results, checkEnv, ranTime) : undefined;
-      // R4-04：checked 只有在“本次试检查证据齐全且全部 verified”时才成立；缺证据绝不记 checked。
-      // R4-LAST-DELTA：统一证据集合校验（绑定 + 集合完全一致 + 每条证据裁决）
-      const setCheck = adjudicateTrialEvidenceSet({
-        taskId: t.id,
-        round: t.currentRound ?? 1,
-        acceptanceRev: t.acceptanceRev,
-        trialCommit,
-        trialCommitTree,
-        mergeCommit,
-        projectRootHash: pathIdentityHash(repo),
-        trialWorktreePathHash: pathIdentityHash(trialPath),
-        expectedChecks,
-        evidenceIds: trialEvidenceIds,
-        checks: trialProofsToPersist ?? [],
-      });
+      // CLOSEOUT-01 修订一：集合裁决已在写入前完成（见上），这里复用同一结果落盘，
+      // 配合上面「写入后实际 HEAD 必须等于 trialCommit」的核对，不再存在“先写后判”的窗口。
       checkedFinal = checked && setCheck.ok;
       t.saveRecord = {
         preMergeHead: preHead,
