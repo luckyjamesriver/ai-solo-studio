@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { git, initRepo } from '../src/core/git/git.js';
 import type { SandboxCommandRunner } from '../src/core/checks/scripts.js';
 
@@ -46,10 +47,20 @@ export { git };
  * 可信测试证据要求结构化报告，只有受支持的真实测试框架才能产出；
  * 因此需要“检查通过”语义的用例必须使用真实框架，而不是 echo / node -e 之类只关心退出码的脚本。
  */
+const requireFromTests = createRequire(import.meta.url);
+
+/**
+ * 真实 Vitest 可执行文件的绝对路径。
+ * 不使用 process.cwd()：这个测试套件本身也可能在“任务副本里”被执行（应用自检/真实项目验证），
+ * 此时 cwd 是副本路径、没有 node_modules，但模块解析仍指向主项目已安装的那一份。
+ */
+export function realVitestBin(): string {
+  const pkgDir = path.dirname(requireFromTests.resolve('vitest/package.json'));
+  return path.join(pkgDir, 'vitest.mjs');
+}
+
 export function realVitestScript(): string {
-  // cwd 在 vitest 运行时是仓库根目录（本地与 CI 相同）；temp 夹具不在仓库内，
-  // 因此脚本里写真实 vitest 可执行文件的绝对路径，运行器身份按该路径解析。
-  return `${path.resolve(process.cwd(), 'node_modules', '.bin', 'vitest')} run`;
+  return `${realVitestBin()} run`;
 }
 
 /**

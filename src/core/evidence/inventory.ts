@@ -251,15 +251,16 @@ export function parseVitestScript(script: string): { vitest: boolean; argsAppend
   if (!s) return null;
   // 含 shell 组合/重定向/命令替换：追加参数会落到错误的命令上，且可能吞掉失败退出码 → 不得视为可信结构化采集
   const shellCombined = /[;&|`$<>]|&&|\|\|/.test(s);
-  // 支持 `vitest ...`、`node_modules/.bin/vitest ...`、绝对路径 `.../node_modules/.bin/vitest ...`
-  const isVitest = /^(?:\S*\/)?(?:node_modules\/\.bin\/|\.bin\/)?vitest(?:\s|$)/.test(s);
+  // 支持 `vitest ...`、`.bin/vitest ...`、`node_modules/.bin/vitest ...`，以及直接执行包内入口
+  // `.../node_modules/vitest/vitest.mjs ...`（测试夹具用绝对路径调用真实运行器时就是这一种）。
+  const isVitest = /^(?:\S*\/)?(?:node_modules\/\.bin\/|\.bin\/)?vitest(?:\.mjs|\.js)?(?:\s|$)/.test(s);
   if (!isVitest) return { vitest: false, argsAppendable: false };
   return { vitest: true, argsAppendable: !shellCombined };
 }
 
 /** 从脚本中显式写出的 vitest 路径推断 node_modules 根目录（用于 fixtures / 非标准安装位置）。 */
 function nodeModulesFromScript(script: string): string | undefined {
-  const m = script.match(/(\S*?)\/node_modules\/(?:\.bin\/)?vitest(?:\s|$)/);
+  const m = script.match(/(\S*?)\/node_modules\/(?:\.bin\/)?vitest(?:\/vitest\.m?js)?(?:\s|$)/);
   if (!m) return undefined;
   const base = m[1];
   return base && base !== '' ? `${base}/node_modules` : 'node_modules';
