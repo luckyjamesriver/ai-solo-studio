@@ -169,13 +169,22 @@ describe('R4-02 执行清单指纹：数量相同也必须区分用例身份与�
 });
 
 describe('R4-04 已保存记录：严格绑定与历史展示', () => {
-  const boundRec = (ev: HostCheckEvidence) => ({
+  const TREE = 'b'.repeat(40);
+  const boundRec = (ev: HostCheckEvidence) => {
+    ev.identity.testedTree = TREE;
+    return {
     checked: true,
     acceptanceRev: 1,
     trialCommit: 'a'.repeat(40),
-    trialCommitTree: 'tree-1',
+    trialCommitTree: TREE,
+    mergeCommit: 'a'.repeat(40),
+    projectRootHash: ev.identity.projectRootHash,
+    trialWorktreePathHash: ev.identity.worktreePathHash,
+    expectedChecks: ['test' as const],
+    evidenceIds: { test: ev.identity.evidenceId },
     trialChecks: [{ name: 'test' as const, status: 'passed' as const, env: 'sandbox' as const, evidence: ev }],
-  });
+    };
+  };
 
   it('缺少 trialCommit/tree 绑定的旧记录 → 只能历史未核实', () => {
     const legacy = { checked: true, trialChecks: [{ name: 'test' as const, status: 'passed' as const, env: 'sandbox' as const, evidence: mkEvidence() }] };
@@ -184,9 +193,9 @@ describe('R4-04 已保存记录：严格绑定与历史展示', () => {
 
   it('绑定完整且证据可信 → verified；树不一致 → 不得 verified', () => {
     expect(adjudicateSaveRecord(boundRec(mkEvidence()), { taskId: 'task-1', round: 1 }).status).toBe('verified');
-    const wrongTree = mkEvidence();
-    wrongTree.identity.testedTree = 'other-tree';
-    expect(adjudicateSaveRecord(boundRec(wrongTree), { taskId: 'task-1', round: 1 }).status).not.toBe('verified');
+    const wrongTree = boundRec(mkEvidence());
+    wrongTree.trialChecks[0]!.evidence!.identity.testedTree = 'other-tree';
+    expect(adjudicateSaveRecord(wrongTree, { taskId: 'task-1', round: 1 }).status).not.toBe('verified');
   });
 
   it('历史轮次也不得用 historical 绕过被测 tree 校验', () => {

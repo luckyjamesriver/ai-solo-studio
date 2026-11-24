@@ -42,7 +42,7 @@ import {
 import type { CheckUnknownReason, HostCheckEvidence } from '../evidence/model.js';
 import { configFingerprintKey, pathIdentityHash } from '../evidence/model.js';
 import { configFingerprintProblems, evidenceIdentityProblem, hasTrustedBuildPass, hasTrustedTestPass } from '../evidence/validate.js';
-import { adjudicateCheckResult, adjudicateStoredProof, adjudicateTaskEvidence } from '../evidence/adjudicate.js';
+import { adjudicateCheckResult, adjudicateStoredProof, adjudicateTaskEvidence, adjudicateTrialEvidenceSet } from '../evidence/adjudicate.js';
 import { detectTestRunner, readConfigFingerprints, readPackageLockDigest } from '../evidence/inventory.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
 import { filterProofOutput, parseTestCases } from '../acceptance/proof.js';
@@ -1050,31 +1050,39 @@ export class TaskRunner extends EventEmitter {
       await this.buildEvidence(t, { acceptCurrentScope: true });
       // 4) 绑定确认：新验收版本 + 新内容指纹 + 已核对的静态范围与实际执行清单（保存/试合并会消费它）
       const newTest = (t.currentChecks ?? []).find((c) => c.name === 'test');
-      const confirmedStatic = newTest?.evidence?.scope.fingerprint ?? snap.scopeFingerprint;
-      const confirmedExecution = newTest?.evidence?.scope.executionFingerprint ?? snap.executionFingerprint;
+      // R4-LAST-DELTA：重新执行必须产生**有效的新证据与执行清单**；缺失时不得用旧指纹回填。
+      const newStatic = newTest?.evidence?.scope.fingerprint;
+      const newExecution = newTest?.evidence?.scope.executionFingerprint;
+      const missingNewEvidence = !newTest?.evidence || !newStatic || !newExecution;
       // R4-03：重新执行的结果必须与用户查看时的内容/静态范围/实际执行清单完全一致；
-      // 任何变化都重新进入待确认，绝不把新结果自动登记为用户已授权。
-      const rerunChanged = (t.acceptedTree ?? '') !== reviewedTree
-        || confirmedStatic !== reviewedStatic
-        || (confirmedExecution ?? '') !== (reviewedExecution ?? '');
+      // 任何变化（含缺少有效新证据）都重新进入待确认，绝不把新结果自动登记为用户已授权。
+      const rerunChanged = missingNewEvidence
+        || (t.acceptedTree ?? '') !== reviewedTree
+        || newStatic !== reviewedStatic
+        || (newExecution ?? '') !== (reviewedExecution ?? '');
       if (rerunChanged) {
         t.scopeReview = {
           kind: 'changed',
-          reasons: [...reasons, '确认后重新执行检查时，内容/静态范围/实际执行的测试清单发生了变化'],
-          scopeFingerprint: confirmedStatic,
-          ...(confirmedExecution ? { executionFingerprint: confirmedExecution } : {}),
+          reasons: [
+            ...reasons,
+            missingNewEvidence
+              ? '确认后重新执行检查没有取得有效的测试证据或实际执行清单'
+              : '确认后重新执行检查时，内容/静态范围/实际执行的测试清单发生了变化',
+          ],
+          scopeFingerprint: newStatic ?? reviewedStatic,
+          ...(newExecution ?? reviewedExecution ? { executionFingerprint: newExecution ?? reviewedExecution } : {}),
           contentFingerprint: t.acceptedTree ?? reviewedTree,
           acceptanceVersion: acceptanceVersion(t),
           detectedAt: new Date().toISOString(),
         };
         await this.persist(t);
-        throw new Error('确认后重新执行检查时内容或测试执行范围发生变化，请重新检查后再确认。');
+        throw new Error('确认后重新执行检查时没有取得有效证据或内容/范围发生变化，请重新检查后再确认。');
       }
       t.scopeReview = {
         kind: 'changed',
         reasons,
-        scopeFingerprint: confirmedStatic,
-        ...(confirmedExecution ? { executionFingerprint: confirmedExecution } : {}),
+        scopeFingerprint: newStatic,
+        ...(newExecution ? { executionFingerprint: newExecution } : {}),
         contentFingerprint: t.acceptedTree ?? currentTree,
         acceptanceVersion: acceptanceVersion(t),
         detectedAt: t.scopeReview?.detectedAt ?? new Date().toISOString(),
@@ -1832,6 +1840,7 @@ export class TaskRunner extends EventEmitter {
       let checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
       let ranTime = new Date().toISOString();
       let trialCommitTree = '';
+      let expectedChecks: ('build' | 'test')[] = [];
       try {
         const trialTreeBefore = await G.computeTree(repo, trialPath);
         // R4-04：试检查证据必须绑定本次 trialCommit 及其 tree；工作区内容与提交 tree 不同就说明
@@ -1845,6 +1854,8 @@ export class TaskRunner extends EventEmitter {
           await this.persist(t);
           return { ok: false, reason: 'acceptance_inconsistent', detail: '试合并提交的内容与试检查工作区不一致，试检查结果已作废。请重新检查后再保存。' };
         }
+        const detectedForSave = await detectScripts(trialPath);
+        expectedChecks = (['build', 'test'] as const).filter((n) => typeof detectedForSave[n] === 'string');
         const checkOutcome = await this.runTrialChecks(t, trialPath, trialTreeBefore, trialCommit);
         checkOutcomeRef = checkOutcome;
         const trialTreeAfter = await G.computeTree(repo, trialPath);
@@ -1977,6 +1988,7 @@ export class TaskRunner extends EventEmitter {
           ...(checkedAt ? { checkedAt } : {}),
           ...(opTrialProofs?.length ? { trialChecks: opTrialProofs } : {}),
           ...(opTrialEvIds.build || opTrialEvIds.test ? { trialEvidenceIds: opTrialEvIds } : {}),
+          ...(expectedChecks.length ? { expectedChecks } : {}),
           ...(!checked && uncheckedKind
             ? {
                 uncheckedKind,
@@ -2135,20 +2147,21 @@ export class TaskRunner extends EventEmitter {
       const executorText = t.model ? `${execName} · ${t.model}` : execName;
       const trialProofsToPersist = checkOutcomeRef ? toStoredCheckProofs(checkOutcomeRef.results, checkEnv, ranTime) : undefined;
       // R4-04：checked 只有在“本次试检查证据齐全且全部 verified”时才成立；缺证据绝不记 checked。
-      const trialProofsVerified = !!trialProofsToPersist?.length && trialProofsToPersist.every((p) => {
-        const ev = p.evidence;
-        return !!ev
-          && ev.identity.trialCommit === trialCommit
-          && ev.identity.testedTree === trialCommitTree
-          && adjudicateStoredProof(p, {
-            taskId: t.id,
-            round: t.currentRound ?? 1,
-            acceptanceRev: t.acceptanceRev ?? 0,
-            acceptedTree: trialCommitTree,
-            trialCommit,
-          }).status === 'verified';
+      // R4-LAST-DELTA：统一证据集合校验（绑定 + 集合完全一致 + 每条证据裁决）
+      const setCheck = adjudicateTrialEvidenceSet({
+        taskId: t.id,
+        round: t.currentRound ?? 1,
+        acceptanceRev: t.acceptanceRev,
+        trialCommit,
+        trialCommitTree,
+        mergeCommit,
+        projectRootHash: pathIdentityHash(repo),
+        trialWorktreePathHash: pathIdentityHash(trialPath),
+        expectedChecks,
+        evidenceIds: trialEvidenceIds,
+        checks: trialProofsToPersist ?? [],
       });
-      checkedFinal = checked && trialProofsVerified;
+      checkedFinal = checked && setCheck.ok;
       t.saveRecord = {
         preMergeHead: preHead,
         taskCommit,
@@ -2172,6 +2185,7 @@ export class TaskRunner extends EventEmitter {
         ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
         projectRootHash: pathIdentityHash(repo),
         trialWorktreePathHash: pathIdentityHash(trialPath),
+        expectedChecks,
         ...(trialEvidenceIds.build || trialEvidenceIds.test ? { evidenceIds: trialEvidenceIds } : {}),
         ...(trialProofsToPersist?.length ? { trialChecks: trialProofsToPersist } : {}),
       };
@@ -2663,18 +2677,20 @@ export class TaskRunner extends EventEmitter {
           } catch {
             recoveredTrialTree = '';
           }
-          const trialAdjs = recoveredTrialTree
-            ? (op.trialChecks ?? []).map((p) => adjudicateStoredProof(p, {
-                taskId: t.id,
-                round: t.currentRound ?? 1,
-                acceptanceRev: t.acceptanceRev ?? 0,
-                acceptedTree: recoveredTrialTree,
-                trialCommit: op.trialCommit!,
-                projectRootHash: pathIdentityHash(repo),
-              }))
-            : [];
-          const trialAllVerified = !!op.trialChecks?.length && trialAdjs.length === op.trialChecks!.length && trialAdjs.every((a) => a.status === 'verified');
-          const recoveredChecked = op.checked === true && !!op.trialChecks?.length && trialAllVerified;
+          const recoveredSet = adjudicateTrialEvidenceSet({
+            taskId: t.id,
+            round: t.currentRound ?? 1,
+            acceptanceRev: t.acceptanceRev,
+            trialCommit: op.trialCommit,
+            trialCommitTree: recoveredTrialTree || undefined,
+            mergeCommit: f.merged,
+            projectRootHash: pathIdentityHash(repo),
+            trialWorktreePathHash: op.trialWorktreePath ? pathIdentityHash(op.trialWorktreePath) : undefined,
+            expectedChecks: op.expectedChecks,
+            evidenceIds: op.trialEvidenceIds,
+            checks: op.trialChecks ?? [],
+          });
+          const recoveredChecked = op.checked === true && recoveredSet.ok;
           const recoveredUnchecked = op.checked === true && !recoveredChecked;
           t.saveRecord ??= {
             preMergeHead: op.preHead!,
@@ -2702,6 +2718,7 @@ export class TaskRunner extends EventEmitter {
             ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
             projectRootHash: pathIdentityHash(repo),
             ...(op.trialWorktreePath ? { trialWorktreePathHash: pathIdentityHash(op.trialWorktreePath) } : {}),
+            ...(op.expectedChecks?.length ? { expectedChecks: op.expectedChecks } : {}),
             ...(op.trialEvidenceIds ? { evidenceIds: op.trialEvidenceIds } : {}),
             ...(op.trialChecks?.length ? { trialChecks: op.trialChecks } : {}),
           };

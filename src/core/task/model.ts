@@ -59,6 +59,8 @@ export interface OpLog {
   trialCommit?: string;
   /** 试检查凭证与完整性数据（用于恢复时重构 SaveRecord） */
   trialChecks?: StoredCheckProof[];
+  /** R4-LAST-DELTA：试检查时项目声明的应执行检查项集合 */
+  expectedChecks?: ('build' | 'test')[];
   /** 试检查产生的结构化证据 id */
   trialEvidenceIds?: { build?: string; test?: string };
   /** 试检查是否运行并全部通过 */
@@ -166,6 +168,8 @@ export interface SaveRecord {
   projectRootHash?: string;
   /** 保存时试合并工作区路径哈希（R4-04：历史证据必须来自那次试检查） */
   trialWorktreePathHash?: string;
+  /** R4-LAST-DELTA：保存时项目声明的应执行检查项集合（build/test），用于证据集合完整性校验 */
+  expectedChecks?: ('build' | 'test')[];
   /** 保存时真实试检查产生的结构化证据 id（用于区分“当时有证据”与“历史记录未核实”） */
   evidenceIds?: { build?: string; test?: string };
   /** 保存时真实试检查凭证与完整性数据完整持久化（R2-04 证据持久化闭环） */

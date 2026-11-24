@@ -280,17 +280,23 @@ describe('R3-05 已保存记录与历史证据展示', () => {
     expect(r.status).toBe('historical_unverified');
   });
 
+  const TREE = 'b'.repeat(40);
   const bound = (over: Partial<HostCheckEvidence> = {}) => {
     const ev = mkEvidence(over);
     ev.identity.trialCommit = 'a'.repeat(40);
-    ev.identity.testedTree = 'tree-1';
+    ev.identity.testedTree = TREE;
     return ev;
   };
   const rec = (ev: HostCheckEvidence) => ({
     checked: true,
     acceptanceRev: 1,
     trialCommit: 'a'.repeat(40),
-    trialCommitTree: 'tree-1',
+    trialCommitTree: TREE,
+    mergeCommit: 'a'.repeat(40),
+    projectRootHash: ev.identity.projectRootHash,
+    trialWorktreePathHash: ev.identity.worktreePathHash,
+    expectedChecks: ['test' as const],
+    evidenceIds: { test: ev.identity.evidenceId },
     trialChecks: [{ name: 'test' as const, status: 'passed' as const, env: 'sandbox' as const, evidence: ev }],
   });
 
@@ -351,14 +357,20 @@ describe('R3-05 补充：保存结论文案必须来自统一裁决', () => {
   });
 
   it('可信试检查证据 → 检查通过；未取得可信证据 → 不得显示通过', () => {
+    const TREE = 'b'.repeat(40);
     const mk = (ev: HostCheckEvidence) => {
       ev.identity.trialCommit = 'a'.repeat(40);
-      ev.identity.testedTree = 'tree-1';
+      ev.identity.testedTree = TREE;
       return {
         checked: true,
         acceptanceRev: 1,
         trialCommit: 'a'.repeat(40),
-        trialCommitTree: 'tree-1',
+        trialCommitTree: TREE,
+        mergeCommit: 'a'.repeat(40),
+        projectRootHash: ev.identity.projectRootHash,
+        trialWorktreePathHash: ev.identity.worktreePathHash,
+        expectedChecks: ['test' as const],
+        evidenceIds: { test: ev.identity.evidenceId },
         trialChecks: [{ name: 'test' as const, status: 'passed' as const, env: 'sandbox' as const, evidence: ev }],
       };
     };

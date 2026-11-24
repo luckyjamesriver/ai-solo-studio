@@ -222,33 +222,65 @@ export function adjudicateEvidence(ev: HostCheckEvidence | undefined, name: 'bui
  * 记录里的 `status` 本身也是事实：失败就是失败；记录为未核实时，即使证据自称通过也不能升级为 verified。
  */
 export function adjudicateStoredProof(p: StoredCheckProof, ctx: Omit<EvidenceIdentityContextForAdjudication, 'kind'>): CheckAdjudication {
+  // R4-LAST-DELTA：外围 status 不能掩盖有效归属的真实宿主证据。
+  // 证据显示“已尝试且失败”时，即使记录状态是 not_available 也必须 failed。
+  if (p.evidence) {
+    const adj = adjudicateEvidence(p.evidence, p.name, { ...ctx, kind: p.name });
+    const attempted = p.evidence.run.attempted ?? p.evidence.verdict !== 'not_available';
+    if (p.status === 'not_available') {
+      if (adj.status === 'failed') return adj;
+      if (attempted) {
+        // 证据显示确实跑过：不能降级为“未检查”；成功与外围状态矛盾时也不能升级为 verified
+        return adj.status === 'verified'
+          ? { name: p.name, status: 'unverified', reason: 'no_structured_evidence', detail: '记录状态与证据内容矛盾（记录为未检查），不能升级为可信通过。' }
+          : adj;
+      }
+      return { name: p.name, status: 'not_checked', reason: (p.evidence.reason as CheckUnknownReason | undefined) ?? 'no_script', detail: p.unavailableReason ?? '未检查。' };
+    }
+    if (p.status === 'failed' && adj.status !== 'failed') {
+      return { name: p.name, status: 'failed', detail: p.name === 'build' ? '构建没有通过（历史记录）' : '自动测试没有通过（历史记录）' };
+    }
+    if (p.status === 'unverified' && adj.status === 'verified') {
+      return { name: p.name, status: 'unverified', reason: 'no_structured_evidence', detail: '记录状态与证据内容矛盾（记录为未核实），不能升级为可信通过。' };
+    }
+    return adj;
+  }
   if (p.status === 'not_available') {
-    return { name: p.name, status: 'not_checked', reason: (p.evidence?.reason as CheckUnknownReason | undefined) ?? 'no_script', detail: p.unavailableReason ?? '未检查。' };
+    return { name: p.name, status: 'not_checked', reason: 'no_script', detail: p.unavailableReason ?? '未检查。' };
   }
   if (p.status === 'failed') {
-    // 记录下来的真实失败事实：即使证据字段矛盾，也不得改写成通过
     return { name: p.name, status: 'failed', detail: p.name === 'build' ? '构建没有通过（历史记录）' : '自动测试没有通过（历史记录）' };
   }
-  if (!p.evidence) {
-    // 旧记录没有宿主证据：即使卡片写着 passed 也只是历史结论，不得变成可信 PASS
-    return { name: p.name, status: 'unverified', reason: 'legacy_unverified', detail: '历史记录未核实：旧记录没有结构化宿主证据，不能算通过。' };
-  }
-  const adj = adjudicateEvidence(p.evidence, p.name, { ...ctx, kind: p.name });
-  if (p.status === 'unverified' && adj.status === 'verified') {
-    return { name: p.name, status: 'unverified', reason: 'no_structured_evidence', detail: '记录状态与证据内容矛盾（记录为未核实），不能升级为可信通过。' };
-  }
-  return adj;
+  // 旧记录没有宿主证据：即使卡片写着 passed 也只是历史结论，不得变成可信 PASS
+  return { name: p.name, status: 'unverified', reason: 'legacy_unverified', detail: '历史记录未核实：旧记录没有结构化宿主证据，不能算通过。' };
 }
 
 /** 从刚运行完的检查结果裁决（runner → 验收卡）。 */
 export function adjudicateCheckResult(c: CheckResult, ctx: EvidenceIdentityContextForAdjudication): CheckAdjudication {
+  // 有宿主证据时以证据为准；外围 status 只作为补充事实，不能把“已尝试且失败”降级为未检查。
+  if (c.evidence) {
+    const adj = adjudicateEvidence(c.evidence, c.name, { ...ctx, kind: c.name });
+    if (c.status === 'not_available') {
+      if (adj.status === 'failed') return adj;
+      const attempted = c.evidence.run.attempted ?? c.evidence.verdict !== 'not_available';
+      if (attempted) {
+        return adj.status === 'verified'
+          ? { name: c.name, status: 'unverified', reason: 'no_structured_evidence', detail: '检查结果状态与证据内容矛盾（状态为未检查），不能判为通过。' }
+          : adj;
+      }
+      return { name: c.name, status: 'not_checked', reason: c.unknownReason, detail: c.reason };
+    }
+    if (c.status === 'failed' && adj.status !== 'failed') {
+      return { name: c.name, status: 'failed', detail: c.name === 'build' ? '构建没有通过' : '自动测试没有通过' };
+    }
+    return adj;
+  }
   if (c.status === 'not_available') {
     return { name: c.name, status: 'not_checked', reason: c.unknownReason, detail: c.reason };
   }
   if (c.status === 'failed') {
     return { name: c.name, status: 'failed', detail: c.name === 'build' ? '构建没有通过' : '自动测试没有通过' };
   }
-  if (c.evidence) return adjudicateEvidence(c.evidence, c.name, { ...ctx, kind: c.name });
   // 没有宿主证据的“成功”不得算通过：生产路径不得只凭 status 字符串
   return { name: c.name, status: 'unverified', reason: c.status === 'unverified' ? c.unknownReason : 'no_structured_evidence', detail: '没有可核验的宿主证据，不能算通过。' };
 }
@@ -298,6 +330,134 @@ export function adjudicateRoundChecks(
 
 export type SavedChecksStatus = 'verified' | 'failed' | 'unverified' | 'not_checked' | 'historical_unverified';
 
+export interface TrialEvidenceSetInput {
+  taskId: string;
+  round: number;
+  acceptanceRev?: number | undefined;
+  trialCommit?: string | undefined;
+  trialCommitTree?: string | undefined;
+  mergeCommit?: string | undefined;
+  projectRootHash?: string | undefined;
+  trialWorktreePathHash?: string | undefined;
+  expectedChecks?: ('build' | 'test')[] | undefined;
+  evidenceIds?: { build?: string; test?: string } | undefined;
+  checks: StoredCheckProof[];
+}
+
+export interface TrialEvidenceSetResult {
+  ok: boolean;
+  status: 'verified' | 'failed' | 'unverified' | 'invalidated' | 'legacy_unverified';
+  problems: string[];
+  checks: CheckAdjudication[];
+}
+
+const TRIAL_CHECK_NAMES = ['build', 'test'] as const;
+const HEX40 = /^[0-9a-f]{40}$/;
+
+function setInvalidated(problem: string): TrialEvidenceSetResult {
+  return { ok: false, status: 'invalidated', problems: [problem], checks: [] };
+}
+
+/**
+ * 试检查证据集合的唯一校验入口（正常保存 / 启动恢复 / 历史展示共用）。
+ *
+ * R4-LAST-DELTA：不能只用“非空数组 + every(verified)”。必须同时核对：
+ *  - trialCommit / mergeCommit 及其 tree；taskId / round / acceptanceRev；
+ *  - projectRootHash / trialWorktreePathHash；
+ *  - evidenceIds 与每条证据的实际 evidenceId 一致；
+ *  - 应执行检查项集合与实际证据集合完全一致（不缺项、不重复、不越项）。
+ * 缺少必要身份绑定（旧记录）时显式降级为 legacy_unverified，不补造证据。
+ */
+export function adjudicateTrialEvidenceSet(input: TrialEvidenceSetInput): TrialEvidenceSetResult {
+  const missing: string[] = [];
+  if (!HEX40.test(input.trialCommit ?? '')) missing.push('trialCommit');
+  if (!HEX40.test(input.trialCommitTree ?? '')) missing.push('trialCommitTree');
+  if (input.acceptanceRev === undefined) missing.push('acceptanceRev');
+  if (!input.projectRootHash) missing.push('projectRootHash');
+  if (!input.trialWorktreePathHash) missing.push('trialWorktreePathHash');
+  if (!input.expectedChecks?.length) missing.push('expectedChecks');
+  if (!input.checks.length) missing.push('trialChecks');
+  if (missing.length) {
+    return { ok: false, status: 'legacy_unverified', problems: [`缺少必要身份绑定：${missing.join('、')}`], checks: [] };
+  }
+  if (!input.mergeCommit) return setInvalidated('缺少 mergeCommit，无法确认保存写入的是本次试合并提交');
+  if (input.mergeCommit !== input.trialCommit) return setInvalidated('mergeCommit 与 trialCommit 不一致');
+
+  const expected = [...input.expectedChecks!];
+  if (new Set(expected).size !== expected.length) return setInvalidated('应执行检查项集合有重复项');
+  const actualNames = input.checks.map((p) => p.name);
+  if (new Set(actualNames).size !== actualNames.length) return setInvalidated('试检查证据集合有重复项');
+  if (actualNames.length !== expected.length) {
+    return setInvalidated(`应执行检查项与证据集合数量不一致：应执行=${expected.length}，实际=${actualNames.length}`);
+  }
+  const expectedSorted = [...expected].sort().join(',');
+  const actualSorted = [...actualNames].sort().join(',');
+  if (expectedSorted !== actualSorted) {
+    return setInvalidated(`应执行检查项与证据集合不一致：应执行=${expectedSorted}，实际=${actualSorted}`);
+  }
+  for (const name of expected) if (!(TRIAL_CHECK_NAMES as readonly string[]).includes(name)) return setInvalidated(`未知的检查项：${name}`);
+  const evidenceIdKeys = Object.entries(input.evidenceIds ?? {}).filter(([, v]) => !!v).map(([k]) => k);
+  for (const k of evidenceIdKeys) {
+    if (!expected.includes(k as 'build' | 'test')) return setInvalidated(`evidenceIds 含应执行集合之外的多余项：${k}`);
+  }
+
+  const ctx = {
+    taskId: input.taskId,
+    round: input.round,
+    acceptanceRev: input.acceptanceRev!,
+    acceptedTree: input.trialCommitTree!,
+    trialCommit: input.trialCommit!,
+    projectRootHash: input.projectRootHash!,
+    worktreePathHash: input.trialWorktreePathHash!,
+  };
+  const problems: string[] = [];
+  const checks: CheckAdjudication[] = [];
+  for (const name of expected) {
+    const proof = input.checks.find((p) => p.name === name)!;
+    const ev = proof.evidence;
+    if (!ev) {
+      problems.push(`${name}: 缺少宿主证据`);
+      checks.push({ name, status: 'unverified', reason: 'legacy_unverified', detail: '缺少宿主证据，不能算通过。' });
+      continue;
+    }
+    const recordedId = input.evidenceIds?.[name];
+    if (!ev.identity.evidenceId || !recordedId || ev.identity.evidenceId !== recordedId) {
+      problems.push(`${name}: evidenceId 与保存记录不一致`);
+      checks.push({ name, status: 'invalidated', reason: 'evidence_invalidated', detail: '证据 ID 与保存记录不一致，证据已失效。' });
+      continue;
+    }
+    if (ev.identity.testedTree !== input.trialCommitTree) {
+      problems.push(`${name}: testedTree 与 trialCommit 的 tree 不一致`);
+      checks.push({ name, status: 'invalidated', reason: 'evidence_invalidated', detail: '被测内容与试合并提交的 tree 不一致。' });
+      continue;
+    }
+    if (ev.identity.trialCommit !== input.trialCommit) {
+      problems.push(`${name}: trialCommit 不一致`);
+      checks.push({ name, status: 'invalidated', reason: 'evidence_invalidated', detail: '证据不属于本次试合并提交。' });
+      continue;
+    }
+    if (ev.identity.projectRootHash !== input.projectRootHash) {
+      problems.push(`${name}: projectRootHash 不一致`);
+      checks.push({ name, status: 'invalidated', reason: 'evidence_invalidated', detail: '证据来自另一个项目。' });
+      continue;
+    }
+    if (ev.identity.worktreePathHash !== input.trialWorktreePathHash) {
+      problems.push(`${name}: 副本路径身份不一致`);
+      checks.push({ name, status: 'invalidated', reason: 'evidence_invalidated', detail: '证据来自另一个任务副本。' });
+      continue;
+    }
+    const adj = adjudicateStoredProof(proof, ctx);
+    checks.push(adj);
+    if (adj.status !== 'verified') problems.push(`${name}: ${adj.status}${adj.reason ? `（${adj.reason}）` : ''}`);
+  }
+  if (checks.some((c) => c.status === 'failed')) return { ok: false, status: 'failed', problems, checks };
+  if (checks.some((c) => c.status === 'invalidated')) return { ok: false, status: 'invalidated', problems, checks };
+  if (problems.length === 0 && checks.length === expected.length && checks.every((c) => c.status === 'verified')) {
+    return { ok: true, status: 'verified', problems: [], checks };
+  }
+  return { ok: false, status: 'unverified', problems, checks };
+}
+
 export interface SaveRecordContext {
   taskId: string;
   round: number;
@@ -308,34 +468,36 @@ export interface SaveRecordContext {
 /**
  * 已保存记录的检查结论（历史展示 / 任务列表 / 验收页共用）。
  *
- * R4-04：不再用 historical 模式绕过身份校验。已保存的试检查证据必须用它自己的绑定来核对：
- * 任务、轮次（savedRound）、验收版本、试合并提交、试合并提交的 tree、项目；
- * 旧记录缺少这些绑定字段时只能显示“历史记录未核实”，绝不虚构检查通过。
+ * 统一走 `adjudicateTrialEvidenceSet`：完整绑定 + 证据集合一致性 + 每条证据统一裁决。
+ * 旧记录缺少必要绑定时显示“历史记录未核实”，不补造证据、不虚构通过。
  */
+export type SaveRecordLike = Pick<SaveRecord, 'checked'> & Partial<Omit<SaveRecord, 'checked'>>;
+
 export function adjudicateSaveRecord(
-  rec: Pick<SaveRecord, 'checked' | 'evidenceIds' | 'trialChecks' | 'acceptanceRev' | 'trialCommit' | 'trialCommitTree' | 'savedRound' | 'projectRootHash'> | undefined,
+  rec: SaveRecordLike | undefined,
   ctx: SaveRecordContext,
 ): { status: SavedChecksStatus; checks: CheckAdjudication[] } {
   if (!rec || rec.checked !== true) return { status: 'not_checked', checks: [] };
   const proofs = rec.trialChecks ?? [];
   if (proofs.length === 0) return { status: 'historical_unverified', checks: [] };
-  // 严格绑定：缺少任何一项都无法证明“这份证据就是这次写入的试检查结果”
-  if (rec.acceptanceRev === undefined || !rec.trialCommit || !rec.trialCommitTree) {
-    return { status: 'historical_unverified', checks: [] };
-  }
-  const checkCtx = {
+  const set = adjudicateTrialEvidenceSet({
     taskId: ctx.taskId,
     round: rec.savedRound ?? ctx.round,
     acceptanceRev: rec.acceptanceRev,
-    acceptedTree: rec.trialCommitTree,
     trialCommit: rec.trialCommit,
+    trialCommitTree: rec.trialCommitTree,
+    mergeCommit: rec.mergeCommit,
     // 优先用“当前项目”的哈希核对（项目被移动/换目录时历史证据不再可信）；没有当前绑定时退回记录值。
-    ...(ctx.projectRootHash ? { projectRootHash: ctx.projectRootHash } : rec.projectRootHash ? { projectRootHash: rec.projectRootHash } : {}),
-  };
-  const checks = proofs.map((p) => adjudicateStoredProof(p, checkCtx));
-  if (checks.some((c) => c.status === 'failed')) return { status: 'failed', checks };
-  if (checks.every((c) => c.status === 'verified')) return { status: 'verified', checks };
-  return { status: 'unverified', checks };
+    projectRootHash: ctx.projectRootHash ?? rec.projectRootHash,
+    trialWorktreePathHash: rec.trialWorktreePathHash,
+    expectedChecks: rec.expectedChecks,
+    evidenceIds: rec.evidenceIds,
+    checks: proofs,
+  });
+  if (set.status === 'verified') return { status: 'verified', checks: set.checks };
+  if (set.status === 'failed') return { status: 'failed', checks: set.checks };
+  if (set.status === 'legacy_unverified') return { status: 'historical_unverified', checks: set.checks };
+  return { status: 'unverified', checks: set.checks };
 }
 
 /**

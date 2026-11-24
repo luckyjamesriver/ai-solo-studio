@@ -215,14 +215,15 @@ function buildExecutionManifest(testResults: RawTestResult[], realRoot: string):
           : st === 'pending' || st === 'skipped' ? 'skipped'
             : st === 'todo' ? 'todo'
               : 'other';
-      const caseName = (typeof a.fullName === 'string' ? a.fullName : typeof a.title === 'string' ? a.title : '').slice(0, 300) || '（未命名用例）';
+      const fullCaseName = (typeof a.fullName === 'string' ? a.fullName : typeof a.title === 'string' ? a.title : '') || '（未命名用例）';
       counts.total += 1;
       if (status === 'passed') counts.passed += 1;
       else if (status === 'failed') counts.failed += 1;
       else if (status === 'skipped') counts.skipped += 1;
       else if (status === 'todo') counts.todo += 1;
-      canonical.push(JSON.stringify([rel, caseName, status]));
-      if (cases.length < CASE_SAMPLE_LIMIT) cases.push({ file: rel, name: caseName, status });
+      // R4-LAST-DELTA：完整性哈希必须用**完整**用例名；只有展示样本才允许截断。
+      canonical.push(JSON.stringify([rel, fullCaseName, status]));
+      if (cases.length < CASE_SAMPLE_LIMIT) cases.push({ file: rel, name: fullCaseName.slice(0, 300), status });
     }
     perFile.set(rel, counts);
   }
