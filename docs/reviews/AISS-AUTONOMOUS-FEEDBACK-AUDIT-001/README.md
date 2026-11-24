@@ -54,38 +54,39 @@ documentation/evidence under `docs/` only; the product tree is byte-identical to
 
 ## Files
 
-| File (relative to `docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/`) | Bytes | Purpose |
-| :--- | --: | :--- |
-| `README.md` | (generated) | index (this file) |
-| `report.md` | 13787 | verbatim copy of the A0 audit report |
-| `source-identity.md` | 17634 | maps the three test counts (677 / 94 / 9) to exact files+hashes |
-| `fingerprints.md` | 6689 | 8-file SHA-256, protected-worktree before/after, git diff hashes |
-| `environment.md` | 4338 | OS/arch/tool versions and exact reproduction commands |
-| `open-items.md` | 10773 | OPEN register (what is NOT proven) |
-| `security-scan.md` | (generated) | secret scan command, output and decisions |
-| `integration-patch/integration.patch` | 4243 | unified patch (task-controller + thinking/index) for e69ca85 |
-| `integration-patch/NOTE-conflicting-files.md` | 4168 | why App.tsx / SettingsPage.tsx / e2e are discarded |
-| `integration-patch/apply-check.log` | 710 | git apply --check run + exit code 0 |
-| `probes/audit-negative-probes.test.ts` | 4485 | verbatim probe test from audit worktree |
-| `probes/run.txt` | 899 | probe run log + exit code 0 |
-| `prototype-8-files/MANIFEST.md` | 6370 | 8 in-flight files: hashes, blob ids, diff map |
-| `prototype-8-files/diffs/01-e2e-shell.e2e.ts.diff` | 554 | discarded: e2e import line |
-| `prototype-8-files/diffs/02-src_core_app_task-controller.ts.diff` | 3778 | reusable: controller patch hunk |
-| `prototype-8-files/diffs/03-src_core_thinking_index.ts.diff` | 787 | reusable: thinking export hunk |
-| `prototype-8-files/diffs/04-src_renderer_App.tsx.diff` | 2393 | discarded: semantic conflict with P0-2 targetPid |
-| `prototype-8-files/diffs/05-src_renderer_SettingsPage.tsx.diff` | 36127 | discarded: squadExecutors UI prototype |
-| `prototype-8-files/post-images/src/core/app/task-controller.ts` | 63259 | full post-image of reusable modified file |
-| `prototype-8-files/post-images/src/core/thinking/index.ts` | 647 | full post-image of reusable modified file |
-| `prototype-8-files/post-images/e2e/shell.e2e.ts` | 211049 | full post-image (discarded file, for hash verification) |
-| `prototype-8-files/post-images/src/renderer/App.tsx` | 22421 | full post-image (discarded file, for hash verification) |
-| `prototype-8-files/post-images/src/renderer/SettingsPage.tsx` | 75007 | full post-image (discarded file, for hash verification) |
-| `prototype-8-files/untracked/src/core/app/autonomous-feedback-loop.ts` | 7531 | full copy of untracked source |
-| `prototype-8-files/untracked/src/core/thinking/chatgpt-devkit.ts` | 6243 | full copy of untracked source |
-| `prototype-8-files/untracked/tests/autonomous-feedback-loop.test.ts` | 10419 | full copy of untracked test |
-| `test-logs/typecheck.log` | 626 | npm run typecheck, exit 0 |
-| `test-logs/npm-test.log` | 45684 | full npm test, 677 passed, exit 0 |
-| `test-logs/94-test-selection.log` | 10208 | 94-test selection, exit 0 |
-| `test-logs/prototype-9-tests.log` | 2003 | 9 prototype tests in scratch dir, exit 0 |
+| File (relative to `docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/`) | Purpose |
+| :--- | :--- |
+| `README.md` | index (this file) |
+| `report.md` | verbatim copy of the A0 audit report |
+| `source-identity.md` | maps the three test counts (677 / 94 / 9) to exact files+hashes |
+| `fingerprints.md` | 8-file SHA-256, protected-worktree before/after, git diff hashes |
+| `environment.md` | OS/arch/tool versions and exact reproduction commands |
+| `open-items.md` | OPEN register (what is NOT proven) |
+| `security-scan.md` | secret scan command, output and decisions |
+| `REMOTE-VERIFICATION.log` | raw `git ls-remote` / `gh api` / anonymous HTTP read proof that the branch is readable |
+| `integration-patch/integration.patch` | unified patch (task-controller + thinking/index) for e69ca85 |
+| `integration-patch/NOTE-conflicting-files.md` | why App.tsx / SettingsPage.tsx / e2e are discarded |
+| `integration-patch/apply-check.log` | git apply --check run + exit code 0 |
+| `probes/audit-negative-probes.test.ts` | verbatim probe test from audit worktree |
+| `probes/run.txt` | probe run log + exit code 0 |
+| `prototype-8-files/MANIFEST.md` | 8 in-flight files: hashes, blob ids, diff map |
+| `prototype-8-files/diffs/01-e2e-shell.e2e.ts.diff` | discarded: e2e import line |
+| `prototype-8-files/diffs/02-src_core_app_task-controller.ts.diff` | reusable: controller patch hunk |
+| `prototype-8-files/diffs/03-src_core_thinking_index.ts.diff` | reusable: thinking export hunk |
+| `prototype-8-files/diffs/04-src_renderer_App.tsx.diff` | discarded: semantic conflict with P0-2 targetPid |
+| `prototype-8-files/diffs/05-src_renderer_SettingsPage.tsx.diff` | discarded: squadExecutors UI prototype |
+| `prototype-8-files/post-images/src/core/app/task-controller.ts` | full post-image of reusable modified file |
+| `prototype-8-files/post-images/src/core/thinking/index.ts` | full post-image of reusable modified file |
+| `prototype-8-files/post-images/e2e/shell.e2e.ts` | full post-image (discarded file, for hash verification) |
+| `prototype-8-files/post-images/src/renderer/App.tsx` | full post-image (discarded file, for hash verification) |
+| `prototype-8-files/post-images/src/renderer/SettingsPage.tsx` | full post-image (discarded file, for hash verification) |
+| `prototype-8-files/untracked/src/core/app/autonomous-feedback-loop.ts` | full copy of untracked source |
+| `prototype-8-files/untracked/src/core/thinking/chatgpt-devkit.ts` | full copy of untracked source |
+| `prototype-8-files/untracked/tests/autonomous-feedback-loop.test.ts` | full copy of untracked test |
+| `test-logs/typecheck.log` | npm run typecheck, exit 0 |
+| `test-logs/npm-test.log` | full npm test, 677 passed, exit 0 |
+| `test-logs/94-test-selection.log` | 94-test selection, exit 0 |
+| `test-logs/prototype-9-tests.log` | 9 prototype tests in scratch dir, exit 0 |
 
 ## One-line reproduction per item
 

@@ -1,7 +1,8 @@
 # Security / secret scan — before push
 
 Scope: **every file published by this branch**, i.e. everything under
-`docs/reviews/` (31 files, including both copies of the audit report), plus a
+`docs/reviews/` (32 files at the final branch tip, including both copies of the
+audit report and the verification log; 31 at the pre-commit scan), plus a
 repository-artifact check that no `node_modules/`, `.studio/`, `.env*` or key
 material is staged.
 
@@ -197,3 +198,37 @@ docs/reviews/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001/security-scan.md:92:`~` / relati
 ```
 
 **Delta conclusion:** no credential-shaped content in the verification commit; the only pattern hits are the documentation literals in this file (self-reference, expected). No new secret, no new artifact class. **PASS.**
+
+### Final content-correction delta scan (commit C: index/fingerprint accuracy fixes)
+
+Changed files scanned: `README.md`, `fingerprints.md`, `security-scan.md`. No new evidence content.
+
+```text
+delta_scan_utc: 2026-11-24T03:06:36Z
+pattern: sk- => 15 hits
+pattern: ghp_ => 4 hits
+pattern: gho_ => 4 hits
+pattern: ghu_ => 4 hits
+pattern: ghs_ => 4 hits
+pattern: github_pat_ => 5 hits
+pattern: AKIA => 5 hits
+pattern: AIza => 5 hits
+pattern: xox[baprs]- => 0 hits
+pattern: Bearer  => 6 hits
+pattern: PRIVATE KEY => 5 hits
+pattern: password => 5 hits
+pattern: token= => 4 hits
+pattern: \.env => 13 hits
+pattern: /Users/[A-Za-z0-9._-]+ => 10 hits
+--- genuine credential shapes ---
+NONE
+```
+
+**Delta conclusion:** accuracy-only edits; no credential-shaped content, no new artifact class. **PASS.**
+
+### Note on which commit each artifact describes
+
+- Commit `7a367b1` — evidence pack (all logs, diffs, report, identities, OPEN register).
+- Commit `7cb3012` — adds `REMOTE-VERIFICATION.log` + fills README remote-verification sections.
+- Commit (this one) — corrects the `fingerprints.md` porcelain-note wording, completes the
+  README file index and drops volatile byte sizes; no evidence value changes.

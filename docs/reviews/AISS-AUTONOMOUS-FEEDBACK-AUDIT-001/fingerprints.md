@@ -60,10 +60,10 @@ Before (`2026-11-24T02:56:43Z`) **and** after (`2026-11-24T03:01:21Z`), byte-ide
 ?? tests/autonomous-feedback-loop.test.ts
 ```
 
-The only difference from the pre-work baseline file is that the baseline snapshot
-was additionally listing the `node_modules` symlink as untracked in the *audit*
-worktree context; in the rebuild worktree `node_modules/` is gitignored, so the
-porcelain output is exactly the 5 `M` + 3 `??` shown above in both snapshots.
+This is **byte-identical** to the `--- status --porcelain ---` block of
+`~/a1-evidence/BASELINE-ORIGINAL-WORKSPACE.txt`, and identical between the before
+and after snapshots: 5 `M` + 3 `??`, no additions and no deletions. (`node_modules/`
+is gitignored in this worktree, so it correctly does not appear.)
 
 ## 4. `git diff | sha256` — before and after (must be unchanged)
 
