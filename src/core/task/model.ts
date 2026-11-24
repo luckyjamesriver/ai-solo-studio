@@ -158,6 +158,14 @@ export interface SaveRecord {
   executorText?: string;
   /** 试合并产生的提交（写入主项目 --ff-only 的源提交） */
   trialCommit?: string;
+  /** 试合并提交的内容 tree（R4-04：试检查证据必须绑定它） */
+  trialCommitTree?: string;
+  /** 保存时的验收版本序号（R4-04：历史证据按保存时的版本核对，而不是 current） */
+  acceptanceRev?: number;
+  /** 保存时项目根的真实路径哈希（R4-04：历史证据必须属于同一个项目） */
+  projectRootHash?: string;
+  /** 保存时试合并工作区路径哈希（R4-04：历史证据必须来自那次试检查） */
+  trialWorktreePathHash?: string;
   /** 保存时真实试检查产生的结构化证据 id（用于区分“当时有证据”与“历史记录未核实”） */
   evidenceIds?: { build?: string; test?: string };
   /** 保存时真实试检查凭证与完整性数据完整持久化（R2-04 证据持久化闭环） */

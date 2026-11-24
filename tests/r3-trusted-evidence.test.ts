@@ -280,19 +280,27 @@ describe('R3-05 已保存记录与历史证据展示', () => {
     expect(r.status).toBe('historical_unverified');
   });
 
+  const bound = (over: Partial<HostCheckEvidence> = {}) => {
+    const ev = mkEvidence(over);
+    ev.identity.trialCommit = 'a'.repeat(40);
+    ev.identity.testedTree = 'tree-1';
+    return ev;
+  };
+  const rec = (ev: HostCheckEvidence) => ({
+    checked: true,
+    acceptanceRev: 1,
+    trialCommit: 'a'.repeat(40),
+    trialCommitTree: 'tree-1',
+    trialChecks: [{ name: 'test' as const, status: 'passed' as const, env: 'sandbox' as const, evidence: ev }],
+  });
+
   it('试检查证据未取得可信通过：不得显示检查通过', () => {
-    const r = adjudicateSaveRecord(
-      { checked: true, trialChecks: [{ name: 'test', status: 'passed', env: 'sandbox', evidence: mkEvidence({ trust: 'weak' }) }] },
-      { taskId: 'task-1', round: 1 },
-    );
+    const r = adjudicateSaveRecord(rec(bound({ trust: 'weak' })), { taskId: 'task-1', round: 1 });
     expect(r.status).toBe('unverified');
   });
 
   it('真实可信的试检查证据：历史结论为 verified', () => {
-    const r = adjudicateSaveRecord(
-      { checked: true, trialChecks: [{ name: 'test', status: 'passed', env: 'sandbox', evidence: mkEvidence() }] },
-      { taskId: 'task-1', round: 1 },
-    );
+    const r = adjudicateSaveRecord(rec(bound()), { taskId: 'task-1', round: 1 });
     expect(r.status).toBe('verified');
   });
 
@@ -343,9 +351,18 @@ describe('R3-05 补充：保存结论文案必须来自统一裁决', () => {
   });
 
   it('可信试检查证据 → 检查通过；未取得可信证据 → 不得显示通过', () => {
-    const good = { checked: true, trialChecks: [{ name: 'test', status: 'passed', env: 'sandbox', evidence: mkEvidence() }] };
-    expect(saveChecksTextFor({ id: 'task-1', currentRound: 1, saveRecord: good } as never)).toBe('检查通过');
-    const weak = { checked: true, trialChecks: [{ name: 'test', status: 'passed', env: 'sandbox', evidence: mkEvidence({ trust: 'weak' }) }] };
-    expect(saveChecksTextFor({ id: 'task-1', currentRound: 1, saveRecord: weak } as never)).not.toBe('检查通过');
+    const mk = (ev: HostCheckEvidence) => {
+      ev.identity.trialCommit = 'a'.repeat(40);
+      ev.identity.testedTree = 'tree-1';
+      return {
+        checked: true,
+        acceptanceRev: 1,
+        trialCommit: 'a'.repeat(40),
+        trialCommitTree: 'tree-1',
+        trialChecks: [{ name: 'test' as const, status: 'passed' as const, env: 'sandbox' as const, evidence: ev }],
+      };
+    };
+    expect(saveChecksTextFor({ id: 'task-1', currentRound: 1, saveRecord: mk(mkEvidence()) } as never)).toBe('检查通过');
+    expect(saveChecksTextFor({ id: 'task-1', currentRound: 1, saveRecord: mk(mkEvidence({ trust: 'weak' })) } as never)).not.toBe('检查通过');
   });
 });

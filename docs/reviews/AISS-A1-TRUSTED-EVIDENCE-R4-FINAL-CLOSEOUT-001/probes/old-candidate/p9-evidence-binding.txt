@@ -1,0 +1,84 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r4-old
+
+ ❯ tests/r4-probes/p9-evidence-binding.probe.ts (4 tests | 4 failed) 15848ms
+   ❯ R4-04 探针 A：试检查证据绑定本次 trialCommit 及其 tree (1)
+     × trialChecks 证据身份带 trialCommit，且 testedTree === treeOf(trialCommit) 5174ms
+   ❯ R4-04 探针 B：历史展示不得用 historical 模式绕过树/版本身份 (1)
+     × 已保存证据的 testedTree 与绑定不一致 → 不得显示 verified 5338ms
+   ❯ R4-04 探针 C：失败证据不得显示为“检查通过” (1)
+     × trialChecks 里是真实失败 → 保存历史文案不得包含“检查通过” 4955ms
+   ❯ R4-04 探针 D：未执行检查 vs 真实启动失败 (1)
+     × not_available（未启动）不得被当成真实失败；真实启动失败必须是 failed 380ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r4-probes/p9-evidence-binding.probe.ts > R4-04 探针 A：试检查证据绑定本次 trialCommit 及其 tree > trialChecks 证据身份带 trialCommit，且 testedTree === treeOf(trialCommit)
+AssertionError: expected undefined to be '4c26a2cd5b39e04f2c411c110073fbef729ac…' // Object.is equality
+
+- Expected:
+"4c26a2cd5b39e04f2c411c110073fbef729ac581"
+
++ Received:
+undefined
+
+ ❯ tests/r4-probes/p9-evidence-binding.probe.ts:97:78
+     95|     const ev = test.evidence!;
+     96|     // 旧候选：EvidenceIdentity 没有 trialCommit 字段；证据只绑 testedTree（试合并工作区内容…
+     97|     expect((ev.identity as unknown as { trialCommit?: string }).trialC…
+       |                                                                              ^
+     98|     expect(ev.identity.testedTree).toBe((await treeOf(repo, rec.trialC…
+     99|     expect(ev.identity.taskId).toBe(task.id);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/r4-probes/p9-evidence-binding.probe.ts > R4-04 探针 B：历史展示不得用 historical 模式绕过树/版本身份 > 已保存证据的 testedTree 与绑定不一致 → 不得显示 verified
+AssertionError: expected 'verified' not to be 'verified' // Object.is equality
+ ❯ tests/r4-probes/p9-evidence-binding.probe.ts:120:26
+    118|       acceptanceRev: (mutated.saveRecord as unknown as { acceptanceRev…
+    119|     } as never);
+    120|     expect(r.status).not.toBe('verified');
+       |                          ^
+    121|     expect(saveChecksTextFor(mutated)).not.toBe('检查通过');
+    122|     void task;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/r4-probes/p9-evidence-binding.probe.ts > R4-04 探针 C：失败证据不得显示为“检查通过” > trialChecks 里是真实失败 → 保存历史文案不得包含“检查通过”
+AssertionError: expected '检查通过（历史记录未核实）' not to contain '检查通过'
+
+Expected: "检查通过"
+Received: "检查通过（历史记录未核实）"
+
+ ❯ tests/r4-probes/p9-evidence-binding.probe.ts:135:22
+    133|     });
+    134|     const text = saveChecksTextFor(mutated);
+    135|     expect(text).not.toContain('检查通过');
+       |                      ^
+    136|   }, 120_000);
+    137| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/r4-probes/p9-evidence-binding.probe.ts > R4-04 探针 D：未执行检查 vs 真实启动失败 > not_available（未启动）不得被当成真实失败；真实启动失败必须是 failed
+AssertionError: expected 'failed' to be 'not_checked' // Object.is equality
+
+Expected: "not_checked"
+Received: "failed"
+
+ ❯ tests/r4-probes/p9-evidence-binding.probe.ts:158:70
+    156|     expect(notRun.evidence).toBeTruthy();
+    157|     // 统一裁决必须识别为“未执行”，而不是“启动失败”
+    158|     expect(adjudicateEvidence(notRun.evidence, 'build', ctx).status).t…
+       |                                                                      ^
+    159|
+    160|     // 真实启动失败（进程没有返回退出码）→ failed
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+   Start at  23:09:47
+   Duration  16.14s (tests 99%, import 1%)
+

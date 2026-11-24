@@ -40,7 +40,7 @@ import {
   type UncheckedKind,
 } from '../checks/scripts.js';
 import type { CheckUnknownReason, HostCheckEvidence } from '../evidence/model.js';
-import { configFingerprintKey } from '../evidence/model.js';
+import { configFingerprintKey, pathIdentityHash } from '../evidence/model.js';
 import { configFingerprintProblems, evidenceIdentityProblem, hasTrustedBuildPass, hasTrustedTestPass } from '../evidence/validate.js';
 import { adjudicateCheckResult, adjudicateStoredProof, adjudicateTaskEvidence } from '../evidence/adjudicate.js';
 import { detectTestRunner, readConfigFingerprints, readPackageLockDigest } from '../evidence/inventory.js';
@@ -1027,6 +1027,10 @@ export class TaskRunner extends EventEmitter {
         throw new Error('测试范围（含实际执行的测试用例清单）在你查看之后又发生了变化，请重新检查后再确认。');
       }
       const reasons = [...t.scopeReview.reasons];
+      // R4-03：记录“用户实际查看/确认”的绑定快照，重新执行后必须逐项复核
+      const reviewedTree = currentTree;
+      const reviewedStatic = t.scopeReview.scopeFingerprint;
+      const reviewedExecution = t.scopeReview.executionFingerprint;
       // 2) 重新确认前清空旧的验收决定（确认针对的是新的范围/内容，旧确认不能沿用）
       t.criteria.forEach((c) => {
         delete c.decision;
@@ -1048,6 +1052,24 @@ export class TaskRunner extends EventEmitter {
       const newTest = (t.currentChecks ?? []).find((c) => c.name === 'test');
       const confirmedStatic = newTest?.evidence?.scope.fingerprint ?? snap.scopeFingerprint;
       const confirmedExecution = newTest?.evidence?.scope.executionFingerprint ?? snap.executionFingerprint;
+      // R4-03：重新执行的结果必须与用户查看时的内容/静态范围/实际执行清单完全一致；
+      // 任何变化都重新进入待确认，绝不把新结果自动登记为用户已授权。
+      const rerunChanged = (t.acceptedTree ?? '') !== reviewedTree
+        || confirmedStatic !== reviewedStatic
+        || (confirmedExecution ?? '') !== (reviewedExecution ?? '');
+      if (rerunChanged) {
+        t.scopeReview = {
+          kind: 'changed',
+          reasons: [...reasons, '确认后重新执行检查时，内容/静态范围/实际执行的测试清单发生了变化'],
+          scopeFingerprint: confirmedStatic,
+          ...(confirmedExecution ? { executionFingerprint: confirmedExecution } : {}),
+          contentFingerprint: t.acceptedTree ?? reviewedTree,
+          acceptanceVersion: acceptanceVersion(t),
+          detectedAt: new Date().toISOString(),
+        };
+        await this.persist(t);
+        throw new Error('确认后重新执行检查时内容或测试执行范围发生变化，请重新检查后再确认。');
+      }
       t.scopeReview = {
         kind: 'changed',
         reasons,
@@ -1533,7 +1555,7 @@ export class TaskRunner extends EventEmitter {
     await this.persist(t);
   }
 
-  private async runTrialChecks(t: Task, trialPath: string, testedTree: string): Promise<ProjectChecksOutcome> {
+  private async runTrialChecks(t: Task, trialPath: string, testedTree: string, trialCommit: string): Promise<ProjectChecksOutcome> {
     if (this.opts.runChecks === false) {
       const detected = await detectScripts(trialPath);
       const hasScripts = Object.keys(detected).length > 0;
@@ -1558,6 +1580,13 @@ export class TaskRunner extends EventEmitter {
             unverified: [],
           };
     }
+    // R4-02：普通验收与人工重新确认都必须绑定“实际执行清单”。
+    // 期望值优先取用户确认的范围；否则取本次验收的真实测试证据（普通验收路径）。
+    const acceptedTest = (t.currentChecks ?? []).find((p) => p.name === 'test')?.evidence;
+    const expectedScopeFingerprint = t.scopeReview?.confirmedAt ? t.scopeReview.scopeFingerprint : acceptedTest?.scope.fingerprint;
+    const expectedExecutionFingerprint = t.scopeReview?.confirmedAt
+      ? t.scopeReview.executionFingerprint
+      : acceptedTest?.scope.executionFingerprint;
     return runProjectChecks(trialPath, await this.sandboxForTask(t), {
       authorizedDigest: t.checkAuth?.digest,
       ...(t.plan?.capabilities ? { capabilities: t.plan.capabilities } : {}),
@@ -1569,10 +1598,11 @@ export class TaskRunner extends EventEmitter {
         round: t.currentRound ?? 1,
         acceptanceRev: t.acceptanceRev ?? 0,
         testedTree,
+        trialCommit,
         baselineRev: t.worktree?.baseSha ?? '',
         ...(t.checkAuth?.scope ? { approvedScope: t.checkAuth.scope } : {}),
-        ...(t.scopeReview?.confirmedAt ? { expectedScopeFingerprint: t.scopeReview.scopeFingerprint } : {}),
-        ...(t.scopeReview?.confirmedAt && t.scopeReview.executionFingerprint ? { expectedExecutionFingerprint: t.scopeReview.executionFingerprint } : {}),
+        ...(expectedScopeFingerprint ? { expectedScopeFingerprint } : {}),
+        ...(expectedExecutionFingerprint ? { expectedExecutionFingerprint } : {}),
       },
     });
   }
@@ -1723,6 +1753,7 @@ export class TaskRunner extends EventEmitter {
 
     await this.opPhase(t, 'trial_merging', { trialWorktreePath: trialPath });
     let checked = false;
+    let checkedFinal = false;
     let uncheckedKind: UncheckedKind | undefined;
     let unavailableReason: UnavailableReason | undefined;
     let uncheckedConfirmedAt: string | undefined;
@@ -1800,9 +1831,21 @@ export class TaskRunner extends EventEmitter {
       let checkedAt: string | undefined;
       let checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
       let ranTime = new Date().toISOString();
+      let trialCommitTree = '';
       try {
         const trialTreeBefore = await G.computeTree(repo, trialPath);
-        const checkOutcome = await this.runTrialChecks(t, trialPath, trialTreeBefore);
+        // R4-04：试检查证据必须绑定本次 trialCommit 及其 tree；工作区内容与提交 tree 不同就说明
+        // 试检查跑的不是这次合并结果，证据不能算数。
+        trialCommitTree = (await G.treeOf(repo, trialCommit)).trim();
+        if (trialCommitTree !== trialTreeBefore) {
+          await cleanupTrial();
+          delete t.uncheckedConfirm;
+          t.lastSave = { reason: 'failed', at: new Date().toISOString(), saveSteps };
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'acceptance_inconsistent', detail: '试合并提交的内容与试检查工作区不一致，试检查结果已作废。请重新检查后再保存。' };
+        }
+        const checkOutcome = await this.runTrialChecks(t, trialPath, trialTreeBefore, trialCommit);
         checkOutcomeRef = checkOutcome;
         const trialTreeAfter = await G.computeTree(repo, trialPath);
         if (trialTreeAfter !== trialTreeBefore) {
@@ -2091,14 +2134,29 @@ export class TaskRunner extends EventEmitter {
       const execName = t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex');
       const executorText = t.model ? `${execName} · ${t.model}` : execName;
       const trialProofsToPersist = checkOutcomeRef ? toStoredCheckProofs(checkOutcomeRef.results, checkEnv, ranTime) : undefined;
+      // R4-04：checked 只有在“本次试检查证据齐全且全部 verified”时才成立；缺证据绝不记 checked。
+      const trialProofsVerified = !!trialProofsToPersist?.length && trialProofsToPersist.every((p) => {
+        const ev = p.evidence;
+        return !!ev
+          && ev.identity.trialCommit === trialCommit
+          && ev.identity.testedTree === trialCommitTree
+          && adjudicateStoredProof(p, {
+            taskId: t.id,
+            round: t.currentRound ?? 1,
+            acceptanceRev: t.acceptanceRev ?? 0,
+            acceptedTree: trialCommitTree,
+            trialCommit,
+          }).status === 'verified';
+      });
+      checkedFinal = checked && trialProofsVerified;
       t.saveRecord = {
         preMergeHead: preHead,
         taskCommit,
         mergeCommit,
         branch: binding.branch,
         savedAt: new Date().toISOString(),
-        checked,
-        ...(!checked && uncheckedKind
+        checked: checkedFinal,
+        ...(!checkedFinal && uncheckedKind
           ? {
               uncheckedKind,
               ...(unavailableReason ? { unavailableReason } : {}),
@@ -2110,6 +2168,10 @@ export class TaskRunner extends EventEmitter {
         savedRound: t.currentRound ?? 1,
         executorText,
         trialCommit,
+        ...(trialCommitTree ? { trialCommitTree } : {}),
+        ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
+        projectRootHash: pathIdentityHash(repo),
+        trialWorktreePathHash: pathIdentityHash(trialPath),
         ...(trialEvidenceIds.build || trialEvidenceIds.test ? { evidenceIds: trialEvidenceIds } : {}),
         ...(trialProofsToPersist?.length ? { trialChecks: trialProofsToPersist } : {}),
       };
@@ -2125,7 +2187,7 @@ export class TaskRunner extends EventEmitter {
       }
     }
 
-    return this.finishSave(t, false, checked);
+    return this.finishSave(t, false, checkedFinal);
   }
 
   /**
@@ -2593,16 +2655,27 @@ export class TaskRunner extends EventEmitter {
             const tc = await G.removeTrialWorktree(repo, op.trialWorktreePath).catch((err) => ({ ok: false as const, error: String(err) }));
             this.opStep(t, '清理临时副本', tc.ok, tc.error);
           }
-          // R3-05：试检查结论必须重新经过统一裁决，不能只信落盘时的 checked 布尔值
-          const trialAdjs = (op.trialChecks ?? []).map((p) => adjudicateStoredProof(p, {
-            taskId: t.id,
-            round: t.currentRound ?? 1,
-            historical: true,
-            ...(t.scopeReview ? { scopeReview: t.scopeReview } : {}),
-          }));
-          const trialAllVerified = !!op.trialChecks?.length && trialAdjs.every((a) => a.status === 'verified');
-          const recoveredChecked = op.checked === true && (op.trialChecks?.length ? trialAllVerified : true);
-          const recoveredUnchecked = op.checked === true && !!op.trialChecks?.length && !trialAllVerified;
+          // R4-04：试检查结论必须重新经过统一裁决，并且必须绑定本次 trialCommit 及其 tree；
+          // 没有试检查证据时绝不能沿用 op.checked 记成“检查通过”。
+          let recoveredTrialTree = '';
+          try {
+            recoveredTrialTree = (await G.treeOf(repo, f.merged)).trim();
+          } catch {
+            recoveredTrialTree = '';
+          }
+          const trialAdjs = recoveredTrialTree
+            ? (op.trialChecks ?? []).map((p) => adjudicateStoredProof(p, {
+                taskId: t.id,
+                round: t.currentRound ?? 1,
+                acceptanceRev: t.acceptanceRev ?? 0,
+                acceptedTree: recoveredTrialTree,
+                trialCommit: op.trialCommit!,
+                projectRootHash: pathIdentityHash(repo),
+              }))
+            : [];
+          const trialAllVerified = !!op.trialChecks?.length && trialAdjs.length === op.trialChecks!.length && trialAdjs.every((a) => a.status === 'verified');
+          const recoveredChecked = op.checked === true && !!op.trialChecks?.length && trialAllVerified;
+          const recoveredUnchecked = op.checked === true && !recoveredChecked;
           t.saveRecord ??= {
             preMergeHead: op.preHead!,
             taskCommit: op.taskCommit!,
@@ -2625,6 +2698,10 @@ export class TaskRunner extends EventEmitter {
               ? `${t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex')} · ${t.model}`
               : (t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex')),
             ...(op.trialCommit ? { trialCommit: op.trialCommit } : {}),
+            ...(recoveredTrialTree ? { trialCommitTree: recoveredTrialTree } : {}),
+            ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}),
+            projectRootHash: pathIdentityHash(repo),
+            ...(op.trialWorktreePath ? { trialWorktreePathHash: pathIdentityHash(op.trialWorktreePath) } : {}),
             ...(op.trialEvidenceIds ? { evidenceIds: op.trialEvidenceIds } : {}),
             ...(op.trialChecks?.length ? { trialChecks: op.trialChecks } : {}),
           };

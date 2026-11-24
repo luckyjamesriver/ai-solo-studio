@@ -1,0 +1,16 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r4-probes/p7-execution-binding.probe.ts (3 tests) 14626ms
+   ✓ R4-02 探针 A：数量相同但用例身份变化（B → C） (1)
+     ✓ 试检查执行了不同的用例集合 → 不得可信保存 4912ms
+   ✓ R4-02 探针 B：参数化用例数量变化（3 → 2） (1)
+     ✓ 同一文件内参数化用例减少 → 不得可信保存 4843ms
+   ✓ R4-02 探针 C：数量相同但一条被动态跳过 (1)
+     ✓ passed → skipped（总数不变）→ 不得可信保存 4871ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  23:12:05
+   Duration  14.91s (tests 99%, import 1%)
+

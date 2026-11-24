@@ -161,7 +161,12 @@ export async function verifyOwnedDir(owned: OwnedDir): Promise<OwnedDirProblem |
 export type RemoveOutcome = 'removed' | 'already_gone' | 'retained_residual';
 
 /**
- * 只清理「本模块创建的最后一级目录」：先复核完整所有权链，再逐个删除其中的**非目录**条目，
+ * 只清理「本模块创建的最后一级目录」。
+ *
+ * R4-01：**生产路径已不再调用本函数**（报告目录改为保守保留，见 evidence/vitest.ts cleanupVitestRun）。
+ * 保留它只为历史安全回归测试证明“即使在旧实现里，身份/真实路径不符也会拒绝”；严禁新增生产调用。
+ *
+ * ：先复核完整所有权链，再逐个删除其中的**非目录**条目，
  * 最后 rmdir。遇到任何不能确认归属的情况（身份变化、真实路径漂移、出现子目录、目录非空）都保守保留。
  */
 export async function removeOwnedDir(owned: OwnedDir): Promise<RemoveOutcome> {

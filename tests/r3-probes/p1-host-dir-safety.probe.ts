@@ -64,23 +64,22 @@ describe('R3-01 探针 A：.studio 父目录被替换为指向外部目录的符
 });
 
 describe('R3-01 探针 B：目录身份相同但路径已离开授权根（移动后符号链接指回）', () => {
-  it('即使 dev/ino 与创建时一致，只要真实路径离开授权根就拒绝清理', async () => {
+  it('移动 .studio 后宿主不删除、不触碰任何外部文件（R4-01 保守保留）', async () => {
     const root = await tmp('r3p1-move-root-');
     const outside = await externalSentinel('r3p1-move-outside-');
     const plan = await prepareVitestRun(root, 'vitest run');
     const internalReport = path.join(plan.reportDir, 'INTERNAL_REPORT.txt');
     await fs.writeFile(internalReport, 'INTERNAL');
 
-    // 攻击：把真正的 .studio 目录整体移出工作树，再用符号链接指回去。
-    // 此时 .studio/evidence 的 dev/ino 与创建时完全相同——只靠身份校验仍会误删。
+    // 攻击：把 .studio 整体移出工作树，再用符号链接指回去
     await fs.rename(path.join(root, '.studio'), path.join(outside.dir, 'moved-studio'));
     await fs.symlink(path.join(outside.dir, 'moved-studio'), path.join(root, '.studio'), 'dir');
 
     await cleanupVitestRun(plan);
 
     await assertSentinel(outside);
-    // 被移出授权根的原始报告内容不得被删除
-    await expect(fs.readFile(internalReport, 'utf8')).resolves.toBe('INTERNAL');
+    // R4-01：宿主不做路径删除，被移动的报告内容原样保留（随任务副本由 git worktree remove 回收）
+    await expect(fs.readFile(path.join(outside.dir, 'moved-studio', 'evidence', plan.nonce, 'INTERNAL_REPORT.txt'), 'utf8')).resolves.toBe('INTERNAL');
   });
 });
 
@@ -93,6 +92,7 @@ describe('R3-01 探针 C：.studio/evidence 被替换为外部符号链接（R2 
     await fs.mkdir(externalReportDir, { recursive: true });
     await fs.writeFile(path.join(externalReportDir, 'A.txt'), 'A');
 
+    await fs.mkdir(path.join(root, '.studio'), { recursive: true });
     await fs.rm(path.join(root, '.studio', 'evidence'), { recursive: true, force: true });
     await fs.symlink(outside.dir, path.join(root, '.studio', 'evidence'), 'dir');
 

@@ -59,6 +59,11 @@ export interface EvidenceIdentityContextForAdjudication {
   projectRoot?: string | undefined;
   /** 当前任务副本真实路径（内部哈希后比较） */
   worktreePath?: string | undefined;
+  /** 已有哈希时直接比较（用于历史/已保存记录，不需要文件系统） */
+  projectRootHash?: string | undefined;
+  worktreePathHash?: string | undefined;
+  /** R4-04：试检查证据必须属于本次试合并提交 */
+  trialCommit?: string | undefined;
   /** 期望的证据类型 */
   kind?: 'build' | 'test' | undefined;
   /** 重启深度复核发现的问题（只对当前轮次有效） */
@@ -103,10 +108,13 @@ function attributionProblem(ev: HostCheckEvidence, ctx: EvidenceIdentityContextF
 
 /** 其余身份问题（验收版本 / 被测内容 / 项目 / 副本）。 */
 function identityProblem(ev: HostCheckEvidence, ctx: EvidenceIdentityContextForAdjudication): string | undefined {
-  if (ctx.historical) return undefined;
-  if ((ev.identity.acceptanceRev ?? 0) !== (ctx.acceptanceRev ?? 0)) return '验收版本已经变化，旧证据已失效。';
+  // R4-04：历史模式只允许跳过“当时的验收版本序号”，被测 tree / 项目 / 副本 / 试合并提交仍然必须核对。
+  if (!ctx.historical && (ev.identity.acceptanceRev ?? 0) !== (ctx.acceptanceRev ?? 0)) return '验收版本已经变化，旧证据已失效。';
   if (ctx.acceptedTree && ev.identity.testedTree !== ctx.acceptedTree) return '被测内容与验收冻结内容不一致，证据已失效。';
+  if (ctx.trialCommit && ev.identity.trialCommit !== ctx.trialCommit) return '试检查证据不属于本次试合并提交，证据已失效。';
+  if (ctx.projectRootHash && ev.identity.projectRootHash !== ctx.projectRootHash) return '证据来自另一个项目，已失效。';
   if (ctx.projectRoot && ev.identity.projectRootHash !== hashPath(ctx.projectRoot)) return '证据来自另一个项目，已失效。';
+  if (ctx.worktreePathHash && ev.identity.worktreePathHash !== ctx.worktreePathHash) return '证据来自另一个任务副本，已失效。';
   if (ctx.worktreePath && ev.identity.worktreePathHash !== hashPath(ctx.worktreePath)) return '证据来自另一个任务副本，已失效。';
   return undefined;
 }
@@ -118,6 +126,9 @@ function identityProblem(ev: HostCheckEvidence, ctx: EvidenceIdentityContextForA
 export function failureFactDetail(ev: HostCheckEvidence, name: 'build' | 'test'): string | undefined {
   const failedText = name === 'build' ? '构建没有通过' : '自动测试没有通过';
   if (ev.verdict === 'failed') return failedText;
+  // R4-04：not_available 的占位运行记录（attempted=false）表示“未执行检查”，不是启动失败。
+  const attempted = ev.run.attempted ?? ev.verdict !== 'not_available';
+  if (!attempted) return undefined;
   if (ev.run.exitKind !== 'exited') {
     return name === 'build' ? '构建进程没有正常结束' : '自动测试进程没有正常结束';
   }
@@ -149,7 +160,11 @@ export function adjudicateEvidence(ev: HostCheckEvidence | undefined, name: 'bui
   const attr = attributionProblem(ev, ctx, name);
   if (attr) return invalidated(attr);
 
-  // 2) 失败事实优先（含真实退出状态与 verdict 矛盾、退出码缺失、报告内真实失败）
+  // 2) 未执行检查（attempted=false）不是失败；真实启动失败/非零退出才是失败
+  const attempted = ev.run.attempted ?? ev.verdict !== 'not_available';
+  if (!attempted) {
+    return { ...base, status: 'not_checked', reason: ev.reason ?? 'no_script', detail: '没有执行这项自动检查。' };
+  }
   const failure = failureFactDetail(ev, name);
   if (failure) return failed(failure);
 
@@ -283,21 +298,41 @@ export function adjudicateRoundChecks(
 
 export type SavedChecksStatus = 'verified' | 'failed' | 'unverified' | 'not_checked' | 'historical_unverified';
 
+export interface SaveRecordContext {
+  taskId: string;
+  round: number;
+  /** 当前项目根哈希（可选；提供时用于核对历史证据确实属于这个项目） */
+  projectRootHash?: string | undefined;
+}
+
 /**
  * 已保存记录的检查结论（历史展示 / 任务列表 / 验收页共用）。
- * - 没有 checked → 未检查；
- * - checked 且有 trialChecks → 必须按统一裁决全部 verified 才算“检查通过”；
- * - checked 但没有结构化试检查证据（旧记录）→ 只能显示“历史记录未核实”，不得虚构历史通过。
+ *
+ * R4-04：不再用 historical 模式绕过身份校验。已保存的试检查证据必须用它自己的绑定来核对：
+ * 任务、轮次（savedRound）、验收版本、试合并提交、试合并提交的 tree、项目；
+ * 旧记录缺少这些绑定字段时只能显示“历史记录未核实”，绝不虚构检查通过。
  */
 export function adjudicateSaveRecord(
-  rec: Pick<SaveRecord, 'checked' | 'evidenceIds' | 'trialChecks'> | undefined,
-  ctx: { taskId: string; round: number; acceptedTree?: string | undefined },
+  rec: Pick<SaveRecord, 'checked' | 'evidenceIds' | 'trialChecks' | 'acceptanceRev' | 'trialCommit' | 'trialCommitTree' | 'savedRound' | 'projectRootHash'> | undefined,
+  ctx: SaveRecordContext,
 ): { status: SavedChecksStatus; checks: CheckAdjudication[] } {
   if (!rec || rec.checked !== true) return { status: 'not_checked', checks: [] };
-  const checks = (rec.trialChecks ?? []).map((p) =>
-    adjudicateStoredProof(p, { taskId: ctx.taskId, round: ctx.round, historical: true, ...(ctx.acceptedTree ? { acceptedTree: ctx.acceptedTree } : {}) }),
-  );
-  if (checks.length === 0) return { status: 'historical_unverified', checks };
+  const proofs = rec.trialChecks ?? [];
+  if (proofs.length === 0) return { status: 'historical_unverified', checks: [] };
+  // 严格绑定：缺少任何一项都无法证明“这份证据就是这次写入的试检查结果”
+  if (rec.acceptanceRev === undefined || !rec.trialCommit || !rec.trialCommitTree) {
+    return { status: 'historical_unverified', checks: [] };
+  }
+  const checkCtx = {
+    taskId: ctx.taskId,
+    round: rec.savedRound ?? ctx.round,
+    acceptanceRev: rec.acceptanceRev,
+    acceptedTree: rec.trialCommitTree,
+    trialCommit: rec.trialCommit,
+    // 优先用“当前项目”的哈希核对（项目被移动/换目录时历史证据不再可信）；没有当前绑定时退回记录值。
+    ...(ctx.projectRootHash ? { projectRootHash: ctx.projectRootHash } : rec.projectRootHash ? { projectRootHash: rec.projectRootHash } : {}),
+  };
+  const checks = proofs.map((p) => adjudicateStoredProof(p, checkCtx));
   if (checks.some((c) => c.status === 'failed')) return { status: 'failed', checks };
   if (checks.every((c) => c.status === 'verified')) return { status: 'verified', checks };
   return { status: 'unverified', checks };
@@ -305,11 +340,21 @@ export function adjudicateSaveRecord(
 
 /**
  * 保存记录的检查结论文案（统一裁决）。任何“检查通过”都必须来自统一的证据裁决，
- * 生产展示路径不得只凭 `checked` 或 `status` 字符串。
+ * 生产展示路径不得只凭 `checked` 或 `status` 字符串；失败/不可信必须有独立文案。
  */
-export function saveChecksTextFor(t: Pick<Task, 'id' | 'currentRound' | 'acceptedTree' | 'saveRecord'>): '检查通过' | '未检查' | '检查通过（历史记录未核实）' {
-  const r = adjudicateSaveRecord(t.saveRecord, { taskId: t.id, round: t.currentRound ?? 1, ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}) });
-  if (r.status === 'not_checked') return '未检查';
-  if (r.status === 'verified') return '检查通过';
-  return '检查通过（历史记录未核实）';
+export function saveChecksTextFor(
+  t: Pick<Task, 'id' | 'currentRound' | 'acceptedTree' | 'saveRecord' | 'binding'>,
+): '检查通过' | '未检查' | '检查通过（历史记录未核实）' | '检查未通过（历史记录）' | '证据不可信（历史记录）' {
+  const r = adjudicateSaveRecord(t.saveRecord, {
+    taskId: t.id,
+    round: t.currentRound ?? 1,
+    ...(t.binding?.repoPath ? { projectRootHash: pathIdentityHash(t.binding.repoPath) } : {}),
+  });
+  switch (r.status) {
+    case 'not_checked': return '未检查';
+    case 'verified': return '检查通过';
+    case 'failed': return '检查未通过（历史记录）';
+    case 'unverified': return '证据不可信（历史记录）';
+    default: return '检查通过（历史记录未核实）';
+  }
 }

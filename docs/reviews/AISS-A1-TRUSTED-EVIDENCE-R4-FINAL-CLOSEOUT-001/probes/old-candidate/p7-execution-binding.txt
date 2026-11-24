@@ -1,0 +1,76 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r4-old
+
+ ❯ tests/r4-probes/p7-execution-binding.probe.ts (3 tests | 3 failed) 14701ms
+   ❯ R4-02 探针 A：数量相同但用例身份变化（B → C） (1)
+     × 试检查执行了不同的用例集合 → 不得可信保存 4915ms
+   ❯ R4-02 探针 B：参数化用例数量变化（3 → 2） (1)
+     × 同一文件内参数化用例减少 → 不得可信保存 4854ms
+   ❯ R4-02 探针 C：数量相同但一条被动态跳过 (1)
+     × passed → skipped（总数不变）→ 不得可信保存 4932ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r4-probes/p7-execution-binding.probe.ts > R4-02 探针 A：数量相同但用例身份变化（B → C） > 试检查执行了不同的用例集合 → 不得可信保存
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/r4-probes/p7-execution-binding.probe.ts:129:20
+    127|     const out = await runScenario({ second: 'C', params: ['p1', 'p2', …
+    128|     expect(out.acceptedCounts).toMatchObject({ total: 5, passed: 5 });
+    129|     expect(out.ok).toBe(false);
+       |                    ^
+    130|     expect(out.saveRecord).toBe(false);
+    131|     expect(out.message).toMatch(/不一致|范围|执行/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/r4-probes/p7-execution-binding.probe.ts > R4-02 探针 B：参数化用例数量变化（3 → 2） > 同一文件内参数化用例减少 → 不得可信保存
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/r4-probes/p7-execution-binding.probe.ts:139:20
+    137|     const out = await runScenario({ second: 'B', params: ['p1', 'p2'],…
+    138|     expect(out.acceptedCounts).toMatchObject({ total: 5, passed: 5 });
+    139|     expect(out.ok).toBe(false);
+       |                    ^
+    140|     expect(out.saveRecord).toBe(false);
+    141|   }, 120_000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/r4-probes/p7-execution-binding.probe.ts > R4-02 探针 C：数量相同但一条被动态跳过 > passed → skipped（总数不变）→ 不得可信保存
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/r4-probes/p7-execution-binding.probe.ts:148:20
+    146|     const out = await runScenario({ second: 'B', params: ['p1', 'p2', …
+    147|     expect(out.acceptedCounts).toMatchObject({ total: 5, passed: 5 });
+    148|     expect(out.ok).toBe(false);
+       |                    ^
+    149|     expect(out.saveRecord).toBe(false);
+    150|   }, 120_000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  23:09:27
+   Duration  15.00s (tests 99%, import 1%)
+

@@ -57,7 +57,7 @@ export interface ActionState {
 export interface SaveRecordView {
   checked: boolean;
   /** 保存记录界面的检查结论：只有真实结构化证据支持才显示“检查通过”；历史记录标注未核实 */
-  checksText: '检查通过' | '未检查' | '检查通过（历史记录未核实）';
+  checksText: '检查通过' | '未检查' | '检查通过（历史记录未核实）' | '检查未通过（历史记录）' | '证据不可信（历史记录）';
   uncheckedKind?: UncheckedKind;
   uncheckedConfirmedAt?: string;
   passedCount: number;

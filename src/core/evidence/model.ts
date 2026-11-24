@@ -62,6 +62,8 @@ export interface EvidenceIdentity {
   testedTree: string;
   /** 任务副本路径哈希 */
   worktreePathHash: string;
+  /** R4-04：试检查对应的试合并提交（普通验收检查没有此字段） */
+  trialCommit?: string;
 }
 
 export interface CheckRunRecord {
@@ -74,6 +76,8 @@ export interface CheckRunRecord {
   /** 实际执行的 argv（仅本机受保护记录；界面显示前过滤） */
   argv: string[];
   timedOut: boolean;
+  /** R4-04：是否真的尝试启动过进程。false 表示“未执行检查”（not_available 的占位记录），不是启动失败。 */
+  attempted?: boolean;
   exitKind: 'exited' | 'signaled' | 'stopped' | 'timed_out' | 'spawn_error';
   exitCode: number | null;
   durationMs: number;

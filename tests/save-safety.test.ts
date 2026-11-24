@@ -436,12 +436,15 @@ describe('阶段 1 · 保存安全：先试合并、试检查，再写入主项�
     expect(await trialsEntries(repo)).toEqual([]);
     const after = (await fresh.store.get(id))!;
     expect(after.state).toBe('saved');
+    // R4-04：这次中断没有落盘的试检查证据（op.trialChecks 缺失），因此恢复后不能记 checked=true；
+    // 只能如实登记为未检查/证据不可信，绝不能凭 op.checked 布尔值虚构“检查通过”。
     expect(after.saveRecord).toMatchObject({
       preMergeHead: preHead,
       taskCommit,
       mergeCommit: trialCommit,
       trialCommit,
-      checked: true,
+      checked: false,
+      uncheckedKind: 'unverified',
       checksSummary: { passed: 1, failed: 0 },
     });
     expect(after.saveRecord?.checkedAt).toBeTruthy();

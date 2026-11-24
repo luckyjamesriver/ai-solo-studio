@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createOwnedDir, removeOwnedDir, verifyOwnedDir, readOwnedFile, type OwnedDir } from '../persistence/owned-dir.js';
+import { createOwnedDir, verifyOwnedDir, readOwnedFile, type OwnedDir } from '../persistence/owned-dir.js';
 import type { ExecutionCaseResult, ExecutionFileCounts, ExecutionManifest, TestCounts, TestReportEvidence } from './model.js';
 
 /**
@@ -27,11 +27,12 @@ export interface VitestRunPlan {
   argv: string[];
   /** 报告目录与会话随机标识（不保存到任务记录，只用于本次运行） */
   nonce: string;
-  /** 创建时核实的工作树真实根目录（用于清理前重新核实身份，防止符号链接逃逸与目录身份变化） */
+  /** 创建时核实的工作树真实根目录（读取时用于确认工作树身份） */
   realRootDir: string;
   /**
-   * R3-01：创建时固定的授权根与目录身份。清理/读取只信任这份记录，
-   * 绝不重新 realpath 一个可能已被执行体替换的父路径。
+   * R4-01：报告目录在本次运行创建时记录授权根与目录身份；读取只信任这份记录。
+   * **宿主绝不删除它**（见 cleanupVitestRun）：可变工作树路径上不做递归删除，
+   * 残留随任务副本一起由 git worktree remove（带归属校验）回收。
    */
   ownedEvidenceRoot?: OwnedDir;
   ownedReportDir?: OwnedDir;
@@ -56,7 +57,8 @@ export async function prepareVitestRun(dir: string, script: string): Promise<Vit
   const ownedEvidenceRoot = await createOwnedDir(dir, path.join('.studio', 'evidence'));
   const evidenceRootPath = ownedEvidenceRoot.chain[ownedEvidenceRoot.chain.length - 1]!.path;
 
-  // nonce 目录名是 128-bit 随机；若极端碰撞则换一个，绝不复用或清空已存在的目录
+  // 报告目录必须在沙箱可写范围内（任务副本），否则真实受限沙箱里的 Vitest 写不出报告。
+  // R4-01 的修复不是“换一个更隐蔽的路径”，而是**宿主不再删除这个可变路径**（见 cleanupVitestRun）。
   let nonce = '';
   let ownedReportDir: OwnedDir | undefined;
   for (let attempt = 0; attempt < 5 && !ownedReportDir; attempt += 1) {
@@ -66,8 +68,7 @@ export async function prepareVitestRun(dir: string, script: string): Promise<Vit
       nonce = candidate;
       ownedReportDir = owned;
     } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === 'EEXIST') continue;
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') continue;
       throw e;
     }
   }
@@ -78,14 +79,13 @@ export async function prepareVitestRun(dir: string, script: string): Promise<Vit
   return { reportPath, reportDir, argv, nonce, realRootDir: ownedEvidenceRoot.rootPath, ownedEvidenceRoot, ownedReportDir };
 }
 
-export async function cleanupVitestRun(plan: VitestRunPlan): Promise<void> {
-  // 只按创建时记录的所有权链清理；没有所有权记录的计划一律不删（保守保留残留）
-  if (!plan.ownedReportDir) return;
-  try {
-    await removeOwnedDir(plan.ownedReportDir);
-  } catch {
-    // 清理失败不抛给上层：所有权链不能确认时保守保留残留文件，绝不越界删除
-  }
+/**
+ * R4-01：**保守保留**。宿主不在可变的被测工作树路径上做任何递归删除。
+ * 报告目录位于任务副本内，会随副本由 `git worktree remove`（git 自身校验 `.git` 归属）一起回收；
+ * 这里保留目录和报告文件，避免“父目录被替换后宿主沿路径删除”的整类风险。
+ */
+export async function cleanupVitestRun(_plan: VitestRunPlan): Promise<void> {
+  return;
 }
 
 export function sha256Text(text: string): string {
@@ -163,6 +163,7 @@ export type ReportParseResult =
 /**
  * 报告必须位于「创建时固定的授权根」下的报告目录，且整条所有权链（工作树根 → .studio → evidence → nonce）
  * 的 dev/ino 与真实路径都必须与创建时一致。任何一级被替换/移动/链接都会让本次报告失效。
+ * （R4-01：这里只做读取校验；宿主不删除该目录。）
  */
 async function reportPathProblem(plan: VitestRunPlan, rootDir: string): Promise<string | undefined> {
   if (!plan.ownedEvidenceRoot || !plan.ownedReportDir) return '报告目录缺少创建时固定的所有权记录，无法确认归属';

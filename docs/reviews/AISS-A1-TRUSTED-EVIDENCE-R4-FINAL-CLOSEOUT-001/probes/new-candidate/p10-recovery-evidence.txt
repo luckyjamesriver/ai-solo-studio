@@ -1,0 +1,12 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r4-probes/p10-recovery-evidence.probe.ts (1 test) 16040ms
+   ✓ R4-04 探针 E：中断恢复时缺失试检查证据 → 不得 checked=true (1)
+     ✓ 删除落盘的 op.trialChecks（保留 op.checked=true）后恢复 → saveRecord.checked 不得为 true 16039ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  23:12:43
+   Duration  16.34s (tests 99%, import 1%)
+

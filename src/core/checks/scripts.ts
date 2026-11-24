@@ -188,6 +188,8 @@ export interface EvidenceIdentityContext {
   expectedScopeFingerprint?: string | undefined;
   /** R3-03：用户确认时绑定的**实际执行清单**指纹：试合并必须复现同一执行范围 */
   expectedExecutionFingerprint?: string | undefined;
+  /** R4-04：本次试检查对应的试合并提交（证据必须绑定它及其 tree） */
+  trialCommit?: string | undefined;
 }
 
 export interface RunCheckOptions {
@@ -313,8 +315,8 @@ async function assessTestScope(
   // 保存前试合并：用户确认同时绑定「静态范围」与「实际执行清单」，两者任一变化都必须重新确认
   const expected = opts.identity?.expectedScopeFingerprint;
   const expectedExecution = opts.identity?.expectedExecutionFingerprint;
-  if (expected) {
-    const staticSame = expected === fingerprint;
+  if (expected || expectedExecution) {
+    const staticSame = !expected || expected === fingerprint;
     const executionSame = !expectedExecution || expectedExecution === executionFingerprint;
     if (staticSame && executionSame && !hasExecutedShortage) {
       return {
@@ -329,7 +331,7 @@ async function assessTestScope(
     }
     const reasons: string[] = [];
     if (!staticSame) reasons.push('当前测试范围/配置与用户已确认的范围不一致，必须重新检查并重新确认。');
-    if (!executionSame) reasons.push('本次真实执行的测试用例清单与你确认时不一致（可能被动态跳过或过滤），必须重新检查并重新确认。');
+    if (!executionSame) reasons.push('本次真实执行的测试用例清单与已验收/已确认的执行清单不一致（可能被动态跳过、过滤或替换），必须重新检查。');
     if (hasExecutedShortage) reasons.push(`实际执行范围减少（缺少：${missingExecuted.slice(0, 5).join('、')}），必须重新检查。`);
     return {
       kind: 'assessed_needs_review',
@@ -380,6 +382,7 @@ function makeIdentity(ctx: EvidenceIdentityContext | undefined, testedTree: stri
     acceptanceRev: ctx.acceptanceRev,
     testedTree,
     worktreePathHash: hostPathHash(dir),
+    ...(ctx.trialCommit ? { trialCommit: ctx.trialCommit } : {}),
   };
 }
 
@@ -390,6 +393,8 @@ function makeRunRecord(opts: {
   env: 'sandbox' | 'local';
   sandboxKind: string;
   timedOut: boolean;
+  /** 是否真的尝试启动过进程；未执行检查（not_available）为 false */
+  attempted: boolean;
   outcome: ProcOutcome;
   durationMs: number;
   stdout: string;
@@ -403,6 +408,7 @@ function makeRunRecord(opts: {
     sandboxKind: opts.sandboxKind,
     argv: opts.argv,
     timedOut: opts.timedOut,
+    attempted: opts.attempted,
     exitKind: opts.outcome.kind,
     exitCode: opts.outcome.kind === 'exited' ? opts.outcome.code : null,
     durationMs: opts.durationMs,
@@ -435,6 +441,7 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
             env: envKind,
             sandboxKind,
             timedOut: false,
+            attempted: false,
             outcome: { kind: 'spawn_error', message: 'not started' },
             durationMs: 0,
             stdout: '',
@@ -498,6 +505,7 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
     argv,
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
+    attempted: true,
     env: envKind,
     sandboxKind,
     timedOut: r.timedOut,

@@ -30,3 +30,26 @@ jobs:
       - name: Electron end-to-end (macOS)
         if: runner.os == 'macOS'
         run: npx vitest run -c vitest.e2e.config.ts
+
+  # R4：R1/R2/R3/R4 真实反向探针独立门禁（真实 Git、真实 Vitest、真实 RecordStore、真实 SIGKILL 中断）。
+  # 与单测分开：探针需要 build:core，且故意包含真实进程/中断，失败信息直接指向上游缺陷。
+  probes:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: git config --global user.name ci && git config --global user.email ci@localhost
+      - run: npm run build:core
+      - name: Trusted-evidence reverse probes (R3/R4)
+        run: npx vitest run -c vitest.probes.config.ts

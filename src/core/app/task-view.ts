@@ -158,7 +158,7 @@ export interface TaskView {
   /** 外部执行交接信息（导出给外部工具后存在） */
   handoff: HandoffView | null;
   /** 保存记录的检查结论（已保存或曾保存任务显示“检查通过”或“未检查”，不含命令） */
-  saveCheckText: '检查通过' | '未检查' | '检查通过（历史记录未核实）' | null;
+  saveCheckText: '检查通过' | '未检查' | '检查通过（历史记录未核实）' | '检查未通过（历史记录）' | '证据不可信（历史记录）' | null;
   /** 由单思考者讨论生成、未经过独立评审的计划 */
   planUnreviewed: boolean;
   /** UI v2.1 第 3 节三层状态与看板归类 */

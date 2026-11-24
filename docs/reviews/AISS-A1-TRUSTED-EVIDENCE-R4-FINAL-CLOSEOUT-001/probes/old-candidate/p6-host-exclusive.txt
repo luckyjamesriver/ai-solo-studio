@@ -1,0 +1,38 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r4-old
+
+ ❯ tests/r4-probes/p6-host-exclusive.probe.ts (4 tests | 1 failed) 374ms
+   ❯ R4-01 探针 A：宿主不在可变工作树路径上删除报告目录（保守保留） (1)
+     × cleanup 之后报告目录仍然存在；宿主没有任何递归删除入口 10ms
+   ✓ R4-01 探针 B：父目录被替换成外部符号链接后清理不得触碰外部文件 (1)
+     ✓ 外部哨兵与外部同名报告目录必须原样保留，保留的报告目录不被移动/删除 5ms
+   ✓ R4-01 探针 C：报告读取仍必须拒绝被替换的报告文件 (1)
+     ✓ 宿主目录中的报告被换成指向外部文件的符号链接 → invalid 6ms
+   ✓ R4-01 探针 D：最终清理（任务副本）不得沿被替换的路径删除外部文件 (1)
+     ✓ 任务副本目录被替换成指向外部合法仓库的符号链接 → 拒绝清理，外部文件保留 352ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r4-probes/p6-host-exclusive.probe.ts > R4-01 探针 A：宿主不在可变工作树路径上删除报告目录（保守保留） > cleanup 之后报告目录仍然存在；宿主没有任何递归删除入口
+AssertionError: promise rejected "Error: ENOENT: no such file or directory,… { …(4) }" instead of resolving
+ ❯ tests/r4-probes/p6-host-exclusive.probe.ts:39:41
+     37|     await cleanupVitestRun(plan);
+     38|     // 旧候选：cleanup 删除报告目录；新候选：保守保留，随任务副本由 git worktree remove 回收
+     39|     await expect(fs.stat(plan.reportDir)).resolves.toBeTruthy();
+       |                                         ^
+     40|     // 静态证据：cleanupVitestRun 不再包含 rm/removeOwnedDir 等删除调用
+     41|     const src = await fs.readFile(path.resolve(HERE, '../../src/core/e…
+
+Caused by: Error: ENOENT: no such file or directory, stat '/private/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r4p6-root-MYqRlB/.studio/evidence/44e6bae9f885b96c92040b22007911fd'
+ ❯ tests/r4-probes/p6-host-exclusive.probe.ts:39:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errno: -2, code: 'ENOENT', syscall: 'stat', path: '/private/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r4p6-root-MYqRlB/.studio/evidence/44e6bae9f885b96c92040b22007911fd' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 passed (4)
+   Start at  23:09:26
+   Duration  563ms (tests 93%, import 4%, transform 3%, worker 1%)
+
