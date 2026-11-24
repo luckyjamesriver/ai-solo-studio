@@ -1,0 +1,35 @@
+# AISS-A1 合入前最终核对与受管合入证据
+# 采集时间：2026-11-24T19:34:32Z
+
+## 1) PR #7 远程状态（合入前）
+headRefOid = 1a454e45be12810f8ab8fb2b4b6f6e5157880420
+baseRefName = rebuild
+approved HEAD = 1a454e45be12810f8ab8fb2b4b6f6e5157880420 （严格一致）
+exact-HEAD CI run = 45455480459（4/4 success）
+target rebuild = e69ca8511a17acfc4427954af13ef6d364ffb553
+rebuild 是批准 HEAD 的祖先：true（目标分支未推进，可安全合入）
+
+## 2) 受管合入（GitHub merge commit，保留提交历史）
+PR state = MERGED
+mergedAt = 2026-11-24T19:28:38Z
+MERGE_SHA = 1c65aedd808b14207d8b6db6ef0d68ee3b065194
+merge parents = e69ca8511a17acfc4427954af13ef6d364ffb553 1a454e45be12810f8ab8fb2b4b6f6e5157880420
+
+## 3) 合并结果源码身份核对
+tree(MERGE_SHA)      = 48eb624338f5b30f5dd6e413b2f9ee8c292f8f9b
+tree(approved HEAD)  = 48eb624338f5b30f5dd6e413b2f9ee8c292f8f9b
+tree 相等            = true
+git diff 1a454e45be12810f8ab8fb2b4b6f6e5157880420..1c65aedd808b14207d8b6db6ef0d68ee3b065194 输出  = ''（空）
+git diff a739d024233cd0a099ab63ef2b1cbceddcd38db1..1c65aedd808b14207d8b6db6ef0d68ee3b065194 -- src tests vitest.probes.config.ts 输出 = ''（空）
+
+## 4) 关键文件 blob 身份（合并结果 = 批准候选）
+src/core/task/runner.ts  merge=c33b3fa1aa43e43d812b20a1f3d69412f7d8f889  approved=c33b3fa1aa43e43d812b20a1f3d69412f7d8f889
+src/core/evidence/adjudicate.ts  merge=63ef2887c9e13e9c30c33616562fed290ef21a6e  approved=63ef2887c9e13e9c30c33616562fed290ef21a6e
+src/core/evidence/vitest.ts  merge=6d9fb7cec042405f733245d7c4a0ed8460aca9ed  approved=6d9fb7cec042405f733245d7c4a0ed8460aca9ed
+vitest.probes.config.ts  merge=1c9b5cdd93ba93fffe9a8495fbccb1c02f5bb91c  approved=1c9b5cdd93ba93fffe9a8495fbccb1c02f5bb91c
+tests/closeout-probes/p16-save-set-gate.probe.ts  merge=75495008079c0155ac8f152b2647adb3c2819bcd  approved=75495008079c0155ac8f152b2647adb3c2819bcd
+tests/closeout-probes/p17-unchecked-identity-bypass.probe.ts  merge=7d099fc92eabac405ce2f7c038b156301a81efb7  approved=7d099fc92eabac405ce2f7c038b156301a81efb7
+tests/closeout-probes/p18-confirm-rerun-integrity.probe.ts  merge=10bbc197a696e44d186314dfe804bfc7c12e28d1  approved=10bbc197a696e44d186314dfe804bfc7c12e28d1
+
+## 5) PR 合入状态（远程）
+PR state = MERGED；mergeCommit.oid = 1c65aedd808b14207d8b6db6ef0d68ee3b065194

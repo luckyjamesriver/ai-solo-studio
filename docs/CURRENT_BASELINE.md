@@ -1,86 +1,121 @@
 # AI Solo Studio — 当前工程基线 (CURRENT_BASELINE)
 
-**更新时间：** 2026-11-24  
-**权威基线分支：** `rebuild` (`origin/rebuild`)  
-**产品代码交付基线 (Product Code Merge SHA)：** `9aecd45d94f0574930f833d83633cf9ac76ae744` (PR #3 Merged)  
-**当前任务基线（Reference HEAD）：** `e69ca8511a17acfc4427954af13ef6d364ffb553`（`AISS-A1-TRUSTED-EVIDENCE-001`；本工作树 HEAD，分支 `feat/aiss-a1-trusted-evidence-001`）  
-**工程状态声明：** `AISS_P0_2_CHATGPT_SECURE_INTERACTION_COMPLETE`  
-**基线解耦与治理原则：** 明确解耦产品代码合入基准与动态 Git HEAD。产品代码基线以 PR #3 合入提交 `9aecd45` 为静态唯一准绳；文档修订、工程地图与基线维护提交正常推进 Git 主干 HEAD，严禁因文档自身提交产生 SHA 循环修改。
+**更新时间：** 2026-11-25
+**权威基线分支：** `rebuild` (`origin/rebuild`)
+**产品代码交付基线 (Product Code Merge SHA)：** `1c65aedd808b14207d8b6db6ef0d68ee3b065194`（PR #7 Merged）
+**当前任务基线（Reference HEAD，写本文件时点）：** `1c65aedd808b14207d8b6db6ef0d68ee3b065194`
+**工程状态声明：** `AISS_A1_MERGED_VERIFIED_COMPLETE`
+**基线解耦与治理原则：** 严格区分三类 SHA，禁止自引用循环：
+1. **产品合入 SHA**：`1c65aed`（PR #7 合并提交，静态唯一准绳）；
+2. **动态主干 HEAD**：基线同步、工程治理与文档提交会正常推进，不以它替代产品合入 SHA；
+3. **索引构建 SHA**：CRG 图数据库构建时点（见 §四），与以上两者分离登记。
 
 ---
 
 ## 一、 当前工程的三层状态严格划分（按真实 Git 与 PR 状态核查）
 
-为了防止开发过程中将“未提交实验代码”或“待审 PR”误判为“主线已交付架构”，系统工程状态严格区分为三层：
-
 | 层次划分 | 覆盖范围与分支路径 | 当前真实状态与事实边界 |
 |---|---|---|
-| **第一层：主线已合并 (Mainline Merged)** | 分支：`origin/rebuild`<br>产品代码基线: `9aecd45`<br>(动态 HEAD 随文档与工程治理推进) | • **M0 / M1 / M2 / M3-BASE** 基础架构稳固。<br>• **PR #1 (Merged)**: CI 最小恢复与安全边界（`1b5fe76`）。<br>• **PR #2 (Merged)**: 修复 ADR 0005 存储语义、消除 URL 逃逸、收敛单源 SOP 蓝图（`443773c`）。<br>• **PR #4 (Merged)**: 统一 7 字段代理交付回复强制标准与全局工作区规则（`442c73f` / `255e635`）。<br>• **PR #5 (Merged)**: 代码地图、基线记忆与 CRG 索引试点及失效降级规范（`441770f` / `dfa38ef`）。<br>• **PR #3 (Merged)**: ChatGPT 网页安全交互、方案受控导入门禁与审查反馈包（`9aecd45` / `f2900a8`）。<br>• 此层代码为目前正式交付产品基线。 |
-| **第二层：独立 PR 待审 (Open PRs Pending Review)** | • **独立分支 (未提 PR)**: `docs/novice-website-mode` | • **独立分支 (未提 PR)**: `docs/novice-website-mode`（新手建站模式 PRD 及 N0-N7 规划 R1/v0.2，本地独立分支已就绪，等待维护者裁定 5 项方案后决定是否提交 PR）。<br>• 当前无任何 OPEN PR。 |
-| **第三层：本地工作区在研未提交 (Local In-Progress / Uncommitted)** | 路径：`/Users/jamesho/ai-solo-studio-rebuild`<br>（原工作区未提交文件） | • 包含 8 个未提交修改（`e2e/shell.e2e.ts`, `src/core/app/task-controller.ts`, `src/core/thinking/index.ts`, `App.tsx`, `SettingsPage.tsx` 以及未跟踪的 `autonomous-feedback-loop.ts`, `chatgpt-devkit.ts`, `tests/autonomous-feedback-loop.test.ts`）。<br>• **特别强调**：`src/core/thinking/chatgpt-devkit.ts` 为原工作区本地未跟踪原型文件（`??`），**绝不是 PR #3 的组成部分**。<br>• **严格约束**：受 100% 隔离保护，**严禁画入当前主线架构，不能作为现有代码引用**。 |
+| **第一层：主线已合并 (Mainline Merged)** | 分支：`origin/rebuild`<br>产品代码基线: `1c65aed`<br>(动态 HEAD 随文档与工程治理推进) | • **M0 / M1 / M2 / M3-BASE** 基础架构稳固。<br>• **PR #1 (Merged)**：CI 最小恢复与安全边界（`1b5fe76`）。<br>• **PR #2 (Merged)**：修复 ADR 0005 存储语义、消除 URL 逃逸、收敛单源 SOP 蓝图（`443773c`）。<br>• **PR #4 (Merged)**：统一 7 字段代理交付回复强制标准与全局工作区规则（`442c73f` / `255e635`）。<br>• **PR #5 (Merged)**：代码地图、基线记忆与 CRG 索引试点及失效降级规范（`441770f` / `dfa38ef`）。<br>• **PR #3 (Merged)**：ChatGPT 网页安全交互、方案受控导入门禁与审查反馈包（`9aecd45` / `f2900a8`）。<br>• **PR #7 (Merged)**：AISS-A1 可信证据链 R1–R4 与合入前门禁收尾（MERGE_SHA `1c65aed`；批准 HEAD `1a454e4`；产品代码提交 `a739d02`）。此层代码为目前正式交付产品基线。 |
+| **第二层：独立 PR 待审 (Open PRs Pending Review)** | 本轮基线同步 PR（`docs/aiss-a1-merge-baseline-sync`，本文件所在提交） | • 仅包含本文件、`CODE_MAP.md`、A1 任务台账/计划状态与最终验收报告，无产品代码改动。<br>• 合入后本层关闭；`docs/novice-website-mode` 仍为本地独立分支（未提 PR，等待维护者裁定）。 |
+| **第三层：本地工作区在研未提交 (Local In-Progress / Uncommitted)** | 路径：`/Users/jamesho/ai-solo-studio-rebuild`<br>（原工作区未提交文件） | • 包含 8 个未提交修改（`e2e/shell.e2e.ts`, `src/core/app/task-controller.ts`, `src/core/thinking/index.ts`, `App.tsx`, `SettingsPage.tsx`，以及未跟踪的 `autonomous-feedback-loop.ts`, `chatgpt-devkit.ts`, `tests/autonomous-feedback-loop.test.ts`）。<br>• 8 个文件 SHA-256 在 A1 全程与收尾时逐一核对一致（见 `docs/reviews/AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001/workspace-protection-after.txt`）。<br>• **严格约束**：受 100% 隔离保护，严禁画入当前主线架构，不能作为现有代码引用。 |
 
 ---
 
-## 二、 P0-2 安全边界与当前能力明确登记 (ChatGPT Interaction)
+## 二、 已交付能力登记
 
-1. **已合并提交与分支身份**:
-   - PR 编号：#3 (`feat/p0-2-chatgpt-interaction`)
-   - PR HEAD：`f2900a8583625dd96fa76e65bdc96e65ec77e774`
-   - 主干 MERGE_SHA：`9aecd45d94f0574930f833d83633cf9ac76ae744`
-   - 对应详细证据报告：`docs/reports/2026-11-24-chatgpt-interaction-final-delta.md`
-2. **已验证功能与技术安全边界**:
-   - **强隔离伴侣视界**: 独立 BrowserWindow、专属持久分区 `persist:ai_solo_chatgpt`、`sandbox: true`、`contextIsolation: true`、零 preload 注入、无 Node.js 能力；
-   - **受控导航与外部拦截**: 域名严格限定于官方白名单；服务端 302 重定向拦截、跨域 iframe 子框架导航拦截、非白名单弹窗全量拦截；
-   - **系统权限双重全拒绝**: 主进程 `setPermissionRequestHandler` 与 `setPermissionCheckHandler` 双全量拒绝，经由真实 Electron DOM 查询核验通过，杜绝测试假阳性；
-   - **方案信息完整性与门禁**: 明确区分用户核准要求（最高优先级）与原始方案参考（背景说明），清空目标强制阻断，全要素无静默丢失；多项目环境强制显式指定目标项目，提供提交锁防止并发重复创建；
-   - **反馈包安全审查与脱敏**: 区分宿主真实检查事实与 AI 自述；敏感凭证与绝对路径脱敏；外发前强制人工逐行核验，选项与正文改动即时重置核验状态。
-3. **未完成事项与后续边界界定**:
-   - **登录状态**: 伴侣视界内诚实标为 `LIVE_LOGIN_NOT_VERIFIED`（尚未进行也不伪造真实服务商反作弊与免登录验证，遇到登录阻断时采用系统浏览器降级）；
-   - **交互范式**: 当前正式能力为严格的人工确认式方案导入与反馈交接（Human-in-the-loop）；任何自动化双向通信通道属于后续规划（需依托官方 OAuth 与 Responses API）。
+### 2.1 P0-2 ChatGPT 安全交互（PR #3，保持有效）
+
+- **合入身份**：PR #3，主干 MERGE_SHA `9aecd45d94f0574930f833d83633cf9ac76ae744`，PR HEAD `f2900a8583625dd96fa76e65bdc96e65ec77e774`。
+- **已验证边界**：独立沙箱伴侣窗口（专属分区、双权限全拒绝、零 preload）、域名白名单与 302/iframe/弹窗拦截、方案全要素导入门禁与防重锁、反馈包脱敏与人工核验、真实 Electron DOM 权限查询 E2E。
+- **未验证**：伴侣视界内真实登录态 `LIVE_LOGIN_NOT_VERIFIED`；交互仍为人工确认式（Human-in-the-loop）。
+- **详细证据**：`docs/reports/2026-11-24-chatgpt-interaction-final-delta.md`。
+
+### 2.2 AISS-A1 可信证据链（PR #7，已合入并关闭）
+
+**合入与批准身份**
+
+| 项 | 值 |
+| :-- | :-- |
+| PR / 目标分支 | #7 `feat/aiss-a1-trusted-evidence-001` → `rebuild`（MERGED，2026-11-24T19:28:38Z） |
+| 独立复核批准 HEAD | `1a454e45be12810f8ab8fb2b4b6f6e5157880420` |
+| 产品代码提交 | `a739d024233cd0a099ab63ef2b1cbceddcd38db1` |
+| 主干 MERGE_SHA | `1c65aedd808b14207d8b6db6ef0d68ee3b065194`（父：`e69ca85` + `1a454e4`，合并结果 tree = 批准 HEAD tree） |
+| 合并前基线 | `e69ca8511a17acfc4427954af13ef6d364ffb553` |
+
+**已交付能力（真实源码与门禁）**
+
+1. **统一宿主证据模型**：`src/core/evidence/model.ts` / `inventory.ts` / `vitest.ts` / `validate.ts`；证据绑定项目根、任务、轮次、验收版本、被测 tree、任务副本、试合并提交、evidenceId。
+2. **统一裁决唯一入口**：`adjudicateEvidence` / `adjudicateStoredProof` / `adjudicateCheckResult` / `adjudicateTaskEvidence` / `adjudicateTrialEvidenceSet`；失败优先，归属优先，证据完整优先；历史记录缺绑定显式降级，不补造通过。
+3. **可信测试通过语义**：Vitest JSON 报告 + 运行窗口/计数一致性/失败优先 + **stdout 交叉核对**；零测试、全跳过、报告被复用/损坏、范围削弱均不得算通过。
+4. **保存门禁**：写主项目前完成完整证据集合裁决；真实失败与身份失效为硬阻断（`confirmUnchecked` 不能绕过）；合法未检查保存仍须用户明确确认；写入后强制 `mergeCommit === trialCommit` 并核对任务内容漂移。
+5. **试检查与范围确认**：试检查证据强制绑定本次 trialCommit 及其 tree；用户确认必须绑定内容 + 静态范围 + 实际执行清单 + 验收版本；确认后的重跑必须取得经统一裁决 `verified` 的新证据，否则保持待确认并继续阻断保存。
+6. **持久化与恢复**：`SaveRecord` / `OpLog` 携带 `trialCommit`、`trialCommitTree`、`acceptanceRev`、`projectRootHash`、`trialWorktreePathHash`、`expectedChecks`、`evidenceIds`、`trialChecks`；启动恢复与历史展示复用同一裁决口径。
+7. **诚实展示与反馈包**：验收卡/证据页/保存历史/ChatGPT 反馈包区分 verified / failed / not_checked / unverified / invalidated；失败与不可信有独立文案。
+
+**真实验证范围**
+
+- 反向探针：**45 项**（既有 40 项 + 合入前门禁收尾新增 5 项），真实 Git / 真实 Vitest / 真实 RecordStore / 真实 SIGKILL 中断；旧候选同一组新探针 **4 failed / 1 passed**，新候选 **45/45 passed**。
+- 全量单测 **773 passed / 38 skipped / 0 failed**；Electron E2E **56 passed**；标准 Seatbelt 25 项真实项目 **25/25**（save/undo tree 一致）。
+- 精确 CI：产品代码提交 `a739d02` Run `45451164433` 4/4；批准 HEAD `1a454e4` Run `45455480459` 4/4；合并提交 `1c65aed` Run `45470615272` 4/4（详见 §六 与最终验收报告）。
+
+**已接受风险（沿用既有登记，不重新打开）**
+
+1. 检查报告目录为保守保留：同一任务副本内按检查次数增长、不设上限（随副本回收）。
+2. 标准 Seatbelt 断网/端口限制沿用 R1 的 OPEN 登记；未扩大沙箱权限。
+3. `full_trust` 模式下执行体与用户同权限；不构成对同权限攻击的隔离保证。
+4. 历史轮次缺少 `acceptanceRev` 时只允许跳过该一项；版本/树/项目/副本/试合并提交仍强制核对。
+5. CRG/Graphify 为本地索引，不参与 CI；Graphify 语义边未生成（见 §四）。
+
+**未验证 / 未实现（如实登记）**
+
+- Windows 未验证（门禁为 macOS 本地 + Ubuntu/macOS CI）。
+- Graphify 语义索引：`NOT_VERIFIED`（仅 AST 抽取，0 条语义边；未配置 LLM）。
+- ChatGPT 伴侣视界真实登录态：`LIVE_LOGIN_NOT_VERIFIED`（P0-2 既有）。
+- **A2–A6 能力均未实现**：本文件不预注册、不承诺、不描述其存在；任何后续能力须在其实现并有真实源码/测试证据后另行登记。
+
+**详细证据**：`docs/reviews/AISS-A1-TRUSTED-EVIDENCE-001.md` … `-R4-FINAL-CLOSEOUT-001.md`、`docs/reviews/AISS-A1-R4-LAST-DELTA-001.md`、`docs/reviews/AISS-A1-PREMERGE-GATE-CLOSEOUT-001.md`、`docs/reviews/AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001.md`。
 
 ---
 
 ## 三、 关键决策与架构优先级（Decision Precedence）
 
-当不同文档表述冲突或存在历史演进差异时，严格按以下**最新正式决策优先、高阶架构规则优先**的原则判定：
-
 1. **最高优先级：已批准的正式 ADR 与最新修订**
-   - **ADR 0010 (2026-11-11，多执行体与订阅策略)**：
-     - **正式修订并覆盖了 ADR 0002 第 1 条与 ADR 0009 第 2.1 条**；
-     - 确立“通用 AI API Key 为官方推荐标准”；
-     - 允许本地订阅制 CLI（Codex, Claude Code, Antigravity, Cursor），但设立三项刚性门禁：**默认关闭、逐服务商独立风险弹窗人工确认、如实声明权限隔离上限**；
-     - **永久保留技术红线**：严禁跨工具接触或盗取外部凭证，严禁回退到无沙箱宿主环境执行项目测试。
-   - **ADR 0005 & 0006 (数据存储与代码分层)**：
-     - 文件存储为唯一持久化载体；主进程 `PersistenceService`（`store.ts`）为全系统唯一写入者（CAS 乐观锁 + 事件日志 `events.jsonl` + 启动对账）；
-     - `.studio/` 绝不入 Git（已列入 `.gitignore`）；`src/` 内部只有 `persistence/` 模块允许直接执行持久化文件写入，UI 与 Agent 严禁绕过。
-   - **ADR 0007 & 0008 (测试分层与依赖准入)**：
-     - Core 纯逻辑单元测试、Electron 冒烟测试、Playwright E2E 测试严格分层；
-     - 新增依赖必须精确版本且发布满 14 天，禁止引入未受审的原生编译模块。
-2. **第二优先级：项目级通用规范（`docs/standards/AGENT_REPORTING_STANDARD.md`，PR #4 已合并入主线）**
-   - 任务交付面向用户的回复强制使用 7 字段固定格式（最多 8 行、300 汉字）；详细证据必须完整落盘于项目文档中，严禁假装通过。
-3. **第三优先级：当前基线与代码地图（`CURRENT_BASELINE.md` / `docs/engineering/CODE_MAP.md`，PR #5 已合并入主线）**
-   - 必须 100% 映射 `origin/rebuild` 上真实存在的模块、函数签名与测试套件。
-4. **历史演进参考：早期报告与草稿（`docs/plans/`、`docs/reports/`）**
-   - 仅作为历史演进背景记录，凡与上述 ADR 冲突的早期描述一律失效。
+   - **ADR 0010**（多执行体与订阅策略）：通用 AI API Key 为官方推荐；本地订阅 CLI 需默认关闭、逐服务商风险弹窗、如实声明隔离上限；严禁跨工具接触凭证、严禁回退到无沙箱宿主执行测试。
+   - **ADR 0005 & 0006**：文件存储为唯一持久化载体；`PersistenceService`（`store.ts`）为唯一写入者（CAS + events.jsonl + 启动对账）；`.studio/` 不入 Git。
+   - **ADR 0007 & 0008**：单测 / Electron 冒烟 / E2E 严格分层；新增依赖精确版本且发布满 14 天，禁止未受审原生模块。
+2. **第二优先级：项目级通用规范**（`docs/standards/AGENT_REPORTING_STANDARD.md`，PR #4 已合并）：7 字段回执、证据完整落盘、未验证写 `NOT_VERIFIED`。
+3. **第三优先级：当前基线与代码地图**（本文件 / `docs/engineering/CODE_MAP.md`）：必须 100% 映射 `origin/rebuild` 真实存在的模块、函数签名与测试套件。
+4. **历史演进参考**（`docs/plans/`、`docs/reports/`）：仅作背景；与上述 ADR/基线冲突的早期描述一律失效。
 
 ---
 
-## 四、 本地代码索引与辅助机制有效性声明 (Code Review Graph)
+## 四、 本地代码索引与辅助机制有效性声明
 
-本节以三个**分离字段**登记索引身份，禁止把「源码等价」误读为「exact-HEAD 匹配」。依据：`docs/reports/2026-11-24-final-baseline-sync-evidence.md` 的构建记录，以及本工作树只读 Git 核查。
+### 4.1 Code Review Graph（本轮真实构建与检索核验）
 
-- **`build_sha`**：`9ce89e2b54a43054130487c12587abe3a040807a` — 仓库文档记录的索引构建来源提交（见 `docs/reports/2026-11-24-final-baseline-sync-evidence.md:46`）；该值为**仓库记录值，本次未复验**。
-- **`source_equivalence`**：`true`（构建后至当前 HEAD 的改动仅涉及文档，源码/测试等价）。
-  - 证据方法：`git diff --stat 9ce89e2b54a43054130487c12587abe3a040807a..e69ca8511a17acfc4427954af13ef6d364ffb553`
-  - 实测结果：`3 files changed, 128 insertions(+), 11 deletions(-)`，全部为 `docs/CURRENT_BASELINE.md`、`docs/engineering/CODE_MAP.md`、`docs/reports/2026-11-24-final-baseline-sync-evidence.md`；`git diff --name-only <build_sha>..<current> -- src tests` 输出为空。
-- **`exact_head_match`**：`false` — `build_sha`（`9ce89e2`）≠ 当前 HEAD（`e69ca8511a17acfc4427954af13ef6d364ffb553`）。
-- **索引注册状态**：`STALE_PENDING_SYNC`（exact-HEAD 未被证明，**不得**标记 `VALID`）。该索引仅可用于「源码等价」前提下的符号/引用检索辅助；**不得**作为 exact-HEAD 的 PR 审查、验收或发布证据。按 `docs/engineering/INDEX_PILOT_EVALUATION.md` 原则 1，凡与精确 HEAD 相关的结论一律降级为 Git / Ripgrep 原生源码检索。
-- **实时索引核验：`OPEN / 未核实`。** 当前工作区未检出 `.code-review-graph/` 索引库（`ls .code-review-graph` → `No such file or directory`），且本任务被限定只能修改 `docs/`，故未重建/读取实时索引。历史记录中的 218 文件 / 3060 节点 / 48324 边与 `query_graph_tool` 检索命中均为**仓库文档记录值，本次未复验**；`code-review-graph 2.4.0` 二进制本机存在（`which code-review-graph` → `/Users/jamesho/.local/bin/code-review-graph`），仅证明工具可用，不证明索引有效。
-- **失效降级策略**：HEAD 推进或 `exact_head_match: false` 时，开发代理立即降级为 Git / Ripgrep 原生源码检索，严禁阻塞开发，不引入任何常驻索引守护进程。
+- **`build_sha`**：`1c65aedd808b14207d8b6db6ef0d68ee3b065194`（= 产品合入 SHA；本机 `code-review-graph 2.4.0` 在干净检出上执行 `update --brief`，工具自报 `Built at commit: 1c65aedd808b`）。
+- **索引规模**：**3691 节点 / 56359 边 / 271 文件**（2026-11-25T03:32:01 更新）。
+- **`source_equivalence`**：`true`（构建后至本文件所在 HEAD 的改动仅为 `docs/`；`git diff --name-only 1c65aed..<本文件 HEAD> -- src tests e2e package.json vitest*.ts` 为空）。
+- **`exact_head_match`**：`false`（本文件提交会推进动态 HEAD）——构建时点匹配，登记时点不再 exact。
+- **索引注册状态**：`SOURCE_EQUIVALENT`（仅可用于源码等价前提下的符号/引用检索辅助；**不得**作为 exact-HEAD 的 PR 审查、验收或发布证据）。按 `docs/engineering/INDEX_PILOT_EVALUATION.md` 原则 1，涉及精确 HEAD 的结论一律降级为 Git / Ripgrep 原生检索。
+- **实际可用性核验（本次真实执行）**：`code-review-graph search "adjudicateTrialEvidenceSet"` → 命中 1 个节点：`src/core/evidence/adjudicate.ts:371-459`（Function，签名 `(input: TrialEvidenceSetInput) -> TrialEvidenceSetResult`）。
+- **索引位置**：工作树内 `.code-review-graph/`（被 `.gitignore` 排除，不入库）。A1 收尾工作树退役后索引可随时用 `code-review-graph update` 重建。
+- **失效降级策略**：`exact_head_match: false` 时开发代理立即降级为 Git / Ripgrep 原生源码检索，严禁阻塞开发，不引入常驻索引守护进程。
+
+### 4.2 Graphify
+
+- **语义索引状态：`NOT_VERIFIED`。** 本轮 `graphify update . --no-cluster` 仅完成 AST 抽取（3518 节点）；落盘 `graphify-out/graph.json` 实测 **0 条边**；未配置任何 LLM/外部服务，未生成语义边。**不把 AST 抽取冒充语义索引。**
+- `graphify-out/` 不入 Git，检查后已删除，可重复生成；MCP `graphify-shm` 指向其他项目（`PROJECT_SCOPE_MISMATCH`），与本仓库无关。
+- 详细记录：`docs/reviews/AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001/gates/graphify-status.txt`。
 
 ---
 
-## 五、 当前任务与能力登记 (AISS-A1-TRUSTED-EVIDENCE-001)
+## 五、 任务台账与能力状态（A2–A6 未实现）
 
-- **任务基线（Reference HEAD）**：`AISS-A1-TRUSTED-EVIDENCE-001` 基于精确基线提交 `e69ca8511a17acfc4427954af13ef6d364ffb553`（本工作树 `/Users/jamesho/ai-solo-studio-a1` HEAD，分支 `feat/aiss-a1-trusted-evidence-001`）。
-- **能力边界**：本任务仅修订工程文档的事实准确性（webBridge 实际能力、真实符号与函数签名、CRG 索引注册），**A2–A6 能力均未实现**，本文件不预注册、不承诺、不描述其存在；任何后续能力须在其实现并有真实源码/测试证据后另行登记。
+| 任务 | 状态 | 说明 |
+| :-- | :-- | :-- |
+| `AISS-P0-2-CHATGPT-SECURE-INTERACTION-001` | `COMPLETE`（PR #3 Merged） | 见 §2.1。 |
+| `AISS-A1-TRUSTED-EVIDENCE-001`（R1–R4 + 合入前门禁收尾 + 合入收尾） | **`AISS_A1_MERGED_VERIFIED_COMPLETE`**（PR #7 Merged，MERGE_SHA `1c65aed`） | 见 §2.2；最终验收报告 `docs/reviews/AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001.md`。 |
+| A2–A6 | **未实现 / 未登记** | 不预注册、不承诺；不得在文档或界面中描述为已存在能力。 |
+| `docs/novice-website-mode`（新手建站 PRD） | 本地独立分支，未提 PR | 等待维护者裁定 5 项方案，未开工。 |

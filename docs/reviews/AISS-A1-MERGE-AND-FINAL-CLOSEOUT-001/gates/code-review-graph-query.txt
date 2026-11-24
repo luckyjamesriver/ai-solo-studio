@@ -1,0 +1,43 @@
+{
+  "status": "ok",
+  "query": "adjudicateTrialEvidenceSet",
+  "search_mode": "fts",
+  "summary": "Found 1 node(s) matching 'adjudicateTrialEvidenceSet'",
+  "results": [
+    {
+      "name": "adjudicateTrialEvidenceSet",
+      "qualified_name": "/Users/jamesho/ai-solo-studio-a1-r3/src/core/evidence/adjudicate.ts::adjudicateTrialEvidenceSet",
+      "kind": "Function",
+      "file_path": "/Users/jamesho/ai-solo-studio-a1-r3/src/core/evidence/adjudicate.ts",
+      "line_start": 371,
+      "line_end": 459,
+      "language": "typescript",
+      "params": "(input: TrialEvidenceSetInput)",
+      "return_type": ": TrialEvidenceSetResult",
+      "signature": "def adjudicateTrialEvidenceSet((input: TrialEvidenceSetInput)) -> : TrialEvidenceSetResult",
+      "score": 0.262295
+    }
+  ],
+  "result_count": 1,
+  "total": 1,
+  "truncated": false,
+  "results_omitted": 0,
+  "_hints": {
+    "next_steps": [
+      {
+        "tool": "query_graph_tool",
+        "suggestion": "Inspect callers/callees of a search result"
+      },
+      {
+        "tool": "get_flow_tool",
+        "suggestion": "See the execution flow through a matched node"
+      },
+      {
+        "tool": "get_impact_radius_tool",
+        "suggestion": "Check the blast radius from matched nodes"
+      }
+    ],
+    "related": [],
+    "warnings": []
+  }
+}

@@ -1,5 +1,7 @@
 # AISS-A1-TRUSTED-EVIDENCE-001：统一宿主证据模型与可信测试证据
 
+- **最终状态**：`AISS_A1_MERGED_VERIFIED_COMPLETE`（PR #7 Merged；MERGE_SHA `1c65aedd808b14207d8b6db6ef0d68ee3b065194`，2026-11-24T19:28:38Z；独立复核批准 HEAD `1a454e45be12810f8ab8fb2b4b6f6e5157880420`；产品代码提交 `a739d024233cd0a099ab63ef2b1cbceddcd38db1`）
+- **关闭报告**：`docs/reviews/AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001.md`
 - **基线**：`origin/rebuild` = `e69ca8511a17acfc4427954af13ef6d364ffb553`
 - **性质**：正式产品修复（独立 PR），不是审计原型移植；审计实验代码不进入本分支。
 - **目标**：AI 可以报告任务成功，但不能决定任务是否通过验收；验收结论必须由真实、有效且与当前任务版本绑定的宿主证据决定。
