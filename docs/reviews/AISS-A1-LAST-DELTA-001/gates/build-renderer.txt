@@ -1,0 +1,14 @@
+vite v6.4.5 building for production...
+transforming...
+✓ 58 modules transformed.
+rendering chunks...
+computing gzip size...
+../../dist-renderer/index.html                                         0.56 kB │ gzip:   0.34 kB
+../../dist-renderer/assets/InstrumentSerif-Regular-DnsDnq_L.woff2     13.31 kB
+../../dist-renderer/assets/Lato-Bold-D9Zbghlx.woff2                   45.31 kB
+../../dist-renderer/assets/Lato-Regular-BkuDd1Mh.woff2                45.56 kB
+../../dist-renderer/assets/NotoSansSC-VF-DEknJwQL.woff2            1,870.60 kB
+../../dist-renderer/assets/NotoSerifSC-VF-D7OBEjKu.woff2           2,558.86 kB
+../../dist-renderer/assets/index-CmWdx9bp.css                         18.03 kB │ gzip:   3.88 kB
+../../dist-renderer/assets/index-XhbKr1CZ.js                         444.02 kB │ gzip: 127.31 kB
+✓ built in 662ms

@@ -1,0 +1,12 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r4-probes/p14-case-name-tail.probe.ts (1 test) 4881ms
+   ✓ LAST-DELTA 探针 P14：前 300 字符相同、尾部不同的参数化用例必须区分 (1)
+     ✓ 同数量、同文件、静态不变，但执行用例尾部不同 → 不得可信保存 4880ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  00:18:48
+   Duration  5.22s (tests 97%, import 2%, transform 1%)
+

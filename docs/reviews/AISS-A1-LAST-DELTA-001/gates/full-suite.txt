@@ -1,0 +1,571 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/stage8c-controller.test.ts (2 tests) 18130ms
+   ✓ 阶段 8C · 独立检查沙箱与控制器/验收/设置页全链路集成 (2)
+     ✓ 无可用独立沙箱（如 Linux 且无 Codex）时，诚实标为 sandbox_unavailable → 需要未检查保存确认，绝不宿主直跑 6306ms
+     ✓ macOS 脱离 Codex：纯 DeepSeek API 执行者 + 独立 Seatbelt 自动跑通 build/test 检查并直接完成已检查保存 11823ms
+ ✓ tests/stage7-handoff.test.ts (4 tests) 21682ms
+   ✓ 阶段 7 提交①：外部执行交接导出与等待页 (4)
+     ✓ 未确认说明时拒绝导出；确认后创建副本并写入 .studio/handoff/<taskId>/task.md，保留未评审标记与验收标准 2795ms
+     ✓ 工作台与侧栏对「外部执行中」不计入「需要你决定」角标；「取消外部执行」走放弃流程删除副本 1487ms
+     ✓ 导入报告：mismatch / unverified 只读留存记录并禁入验收；bound 跑本应用检查、以副本实际为准并进验收与保存 10316ms
+     ✓ 外部执行任务在验收页退回修改时提供「再次交给外部工具」与「改由 Codex 继续」（均记第 N+1 轮） 7083ms
+ ✓ tests/handoff.test.ts (29 tests) 25680ms
+   ✓ 导出 (9)
+     ✓ 默认导出为 <任务编号>-task.md：首行任务编号、符合协议要素；生成任务清单；不动 next-task.md 564ms
+     ✓ 单思考者时任务文件标注“未经独立评审” 1522ms
+     ✓ 已存在任务清单或同名任务文件 → 拒绝覆盖，且不写入任何东西 1715ms
+     ✓ 重复导出：允许覆盖时先读取当前修订号再提交，推进 revision；若写死 expectedRevision: 0 则会触发冲突 731ms
+     ✓ 必须给导出目录；任务编号必须合法 374ms
+     ✓ --set-current：next-task.md 已存在 → 显示首行并要求确认；确认后旧文件另存为 <旧编号>-task.md 625ms
+     ✓ --set-current：没有旧 next-task.md 时直接写入；未确认时保持原样 1622ms
+     ✓ --set-current：旧文件另存的目标已存在 → 不覆盖并提示，next-task.md 保持原样 1166ms
+     ✓ 线程：approved 之后导出，状态推进到 task_exported（引擎保存方案并拒绝在其他状态导出） 1250ms
+   ✓ 导入：三档结果 (17)
+     ✓ 已绑定：编号、仓库、分支、工作树、开始 HEAD 一致，结束 HEAD 是后代；可进入审查 1072ms
+     ✓ 结束 HEAD 与开始 HEAD 相同：仍是已绑定，但注明没有新提交 616ms
+     ✓ 任务编号不符 → 不符，列出矛盾项，不能审查 650ms
+     ✓ 分支不符 → 不符，列出矛盾项，不能审查 804ms
+     ✓ 仓库不符 → 不符，列出矛盾项，不能审查 708ms
+     ✓ 工作树不符 → 不符，列出矛盾项，不能审查 630ms
+     ✓ 开始 HEAD 不符 → 不符，列出矛盾项，不能审查 705ms
+     ✓ 结束 HEAD 不存在 → 不符，列出矛盾项，不能审查 617ms
+     ✓ 开始 HEAD 是仓库里另一个真实提交但与清单不符 → 不符 864ms
+     ✓ 结束 HEAD 存在但不是清单开始 HEAD 的后代 → 不符 923ms
+     ✓ 工作树有未提交与未跟踪改动：如实列出（不改变档位） 653ms
+     ✓ 缺少所有绑定信息 → 来源未核实：只读查看，不能审查 687ms
+     ✓ 只缺结束 HEAD → 来源未核实：只读查看，不能审查 731ms
+     ✓ 只缺开始 HEAD → 来源未核实：只读查看，不能审查 919ms
+     ✓ 报告首行没有任务编号 / 找不到任务清单 → 来源未核实 1079ms
+     ✓ 矛盾优先于缺失：同时有矛盾项与缺失项 → 不符 570ms
+     ✓ 导入记录写入 .studio/tasks/，明确标注档位 796ms
+   ✓ 导入后的规划者审查 (3)
+     ✓ 只有“已绑定”可审查；审查结果只是意见，交用户 964ms
+     ✓ “不符”与“来源未核实”被拒绝：思考者一次都没被调用 1196ms
+     ✓ 审查失败（非 complete）时没有 review 结果 921ms
+ ✓ tests/construction-ui.test.ts (44 tests) 25726ms
+   ✓ 完全信任：核心层门禁（TaskRunner） (3)
+     ✓ 没有确认就不能开工；确认后可以；计划一改，确认失效 2674ms
+     ✓ 只有选了完全信任且已批准的任务才能确认；标准模式任务不能被“确认完全信任” 605ms
+     ✓ 计划里的额外目录在核心层被完整校验：不存在 / 含 .git / 项目自身 都拒绝 368ms
+   ✓ 任务控制器：完全信任必须确认（界面状态 + 核心门禁两层） (5)
+     ✓ 完全信任不带确认勾选 → 拒绝（第一层）；带确认 → 开工，任务有“完全信任”标记，生效权限显示为完全信任 2140ms
+     ✓ 项目偏好只负责预选：上次选了完全信任，新任务开工前仍必须重新确认 4144ms
+     ✓ 标准模式开工不需要确认，施工中视图显示实际生效的权限（中文） 2382ms
+     ✓ 显示执行者：任务记录与视图能反映执行体报告的名称与模型（动态读取） 2085ms
+     ✓ 开工后不能再改计划；不存在的任务编号被拒绝；表单被校验 2216ms
+   ✓ 任务控制器：额外目录 (2)
+     ✓ 选择框取消 → 不改变计划；含 .git 的目录被拒绝并给出原因；合格的目录可添加、可移除 656ms
+     ✓ 生效权限摘要列出用户选定的文件夹；开启联网时如实写“可访问任意网站” 2216ms
+   ✓ FakeExecutor 与自定义执行体：长任务可以被停止 (2)
+     ✓ 停止 → 状态与既有中断流程一致（stopped → 验收） 3248ms
+     ✓ 执行体启动失败（例如权限无法核验）→ 结果里说明没有开工 2976ms
+ ✓ tests/adr-0005-scenarios.test.ts (13 tests) 26822ms
+   ✓ ADR 0005 验收场景 (9)
+     ✓ 2. 10 个任务并行更新同一项目：所有已确认提交的状态最终可恢复，项目汇总准确 2927ms
+     ✓ 3. 任务取消与完成几乎同时发生：最终状态符合明确的状态机规则 5807ms
+     ✓ 4. 任务完成事件重复回传：不重复提交，也不重复触发副作用 399ms
+     ✓ 5. App 退出后重开，旧 Agent 回传结果：过期运行身份不能覆盖新状态 1202ms
+     ✓ 6. 保存时进程被强制终止：可恢复为旧版本或新版本，不接受无法解析的半成品作为权威数据 1901ms
+     ✓ 8. 两个应用进程尝试操作同一数据目录：不允许两个独立写入者同时提交 6814ms
+     ✓ 9. 两个 Agent 修改同一源码文件：隔离或冲突检测生效，不出现无提示的最后写入覆盖 6641ms
+   ✓ ADR 0005 附加检查（不计入 9 条） (4)
+     ✓ 汇总丢失或损坏：由事件日志重建，逐字段与原来一致 331ms
+ ✓ tests/stage4-review.test.ts (9 tests) 26858ms
+   ✓ 阶段 4 · 第一节：三种验收状态计算与「不做部分通过」规则 (3)
+     ✓ rejectCriterion 保存「不符合」及可选说明、禁止保存；再选「符合」后清空说明并解锁 5560ms
+   ✓ 阶段 4 · 第二节：检查依据页、轮次绑定、测试解析与敏感信息脱敏 (3)
+     ✓ 真实运行自动检查保存原始记录到本机，界面视图与 CheckProofPage 只拿到过滤结果且默认折叠详细记录 5698ms
+   ✓ 阶段 4 · 第三节：退回修改与多轮独立记录 (2)
+     ✓ 退回修改在同一副本开始第 2 轮，自动附上不符合标准与说明，且第 1 轮记录与证据不被覆盖 8513ms
+     ✓ 停止/继续执行后进入第 2 轮且记录「接着上次停下的地方继续」，修改权限会退回 planned 重新批准 7069ms
+ ✓ tests/stage7-rounds.test.ts (2 tests) 29039ms
+   ✓ 阶段 7 提交③：各轮代码保留（refs/studio/rounds）与冲突重做引用上轮内容 (2)
+     ✓ 每轮进入 review 创建 refs/studio/rounds/<taskId>/<n>，冲突重做与保存/git gc 后仍可查看历史轮次差异；只保留 <=200 行全文或 >200 行冲突片段 23026ms
+     ✓ 放弃任务的轮次引用保留 30 天：30 天内 reconcileTasks 不删除；超过 30 天自动清理，已保存任务永久保留 6012ms
+ ✓ tests/r1-trusted-evidence.test.ts (17 tests) 32047ms
+   ✓ R1-01 失败优先：真实进程失败不得降级为可人工放行的 unverified (4)
+     ✓ 真实测试失败 + 报告缺失/损坏/复用 → failed（不是 unverified） 6786ms
+     ✓ 零测试 / 全部 skip / 全部 todo + 非零退出 → failed（不得因结构问题降级） 4621ms
+     ✓ 真实测试失败后 saveUncheckedTask 仍然阻断（不能绕过） 2585ms
+     ✓ 退出 0 但零测试 / 全跳过 → unverified（非 PASS），且原因结构化 3929ms
+   ✓ R1-02 保守范围复核：逐文件下降不可被其它文件新增抵消、内容变化必须待确认 (4)
+     ✓ 单文件断言减少 + 另一文件断言新增（总数不降）→ 仍判 weakened 863ms
+     ✓ 测试名称/数量完全相同但测试内容被改写（断言逻辑变化）→ needs_review，绝不 assessed_unchanged 973ms
+     ✓ 辅助文件（fixtures/helper）变化 → needs_review 992ms
+     ✓ 只执行部分测试文件（脚本带过滤）→ needs_review，不能取得可信 PASS 2880ms
+   ✓ R1-03 证据身份与统一裁决 (3)
+     ✓ 两个真实独立项目、相同任务 ID 与相同内容 tree → 跨项目证据被拒绝 3620ms
+     ✓ 统一裁决入口一致：任务记录一旦证据身份不符，卡片/证据页/保存门禁/反馈包事实同口径 3124ms
+   ✓ R1 Git 完整性：报告目录清理边界不越权 (1)
+     ✓ prepareVitestRun 只在受控的 .studio/evidence/<nonce> 下创建并清理 393ms
+ ✓ tests/stage5-discuss.test.ts (12 tests) 14102ms
+   ✓ 阶段 5a 提交①：暂停恢复 FlowUI + 控制器驱动 + 审批落盘 (3)
+     ✓ createPausedFlowUI 在五个需要用户决定的节点绝不默认通过，而是落盘暂停等待恢复 1396ms
+     ✓ 一个任务严格绑定一个线程；默认单思考者预设标记未经独立评审并拒绝未开启的开发者预设 1449ms
+     ✓ 双思考者控制器闭环：retryWith 重试、裁决驳回必须写理由且记录为已知风险、批准写入 docs/plans 1690ms
+   ✓ 阶段 5a 提交②：讨论页面、依据核验逐字呈现、未经独立评审、需求修改 (2)
+     ✓ 四类依据核验结论均原样渲染（不美化），且存在安全/未裁决问题时批准方案置灰并写明原因 1360ms
+     ✓ 单思考者界面隐藏「与复核对话」且标「未经独立评审」；冻结后点击修改需求终止旧线程并创建新讨论任务 1178ms
+   ✓ 阶段 5a 提交③：每个思考者的独立对话与隔离边界 (2)
+     ✓ 复核对话严格隔离（绝不传首席原始输出/决议/首席对话）；首席对话不传复核对话；未授权外发与预算超限均拦截；评审产物不变 1293ms
+     ✓ 单思考者模式下禁止发起复核对话 636ms
+   ✓ 阶段 5a 提交④：批准后转为施工计划、未经独立评审标志、工作台实时讨论分组 (2)
+     ✓ PlanCard 对单思考者生成的计划展示「未经独立评审」标记；双思考者计划不显示该标记 1175ms
+     ✓ 工作台与角标正确反映 5 个需要用户决定的讨论停靠点，运行中的讨论不计入角标 917ms
+   ✓ 阶段 5b 提交①：项目简介作为普通项目必带层 (1)
+     ✓ 无 docs/PROJECT_CONTEXT.md 也无简介时：getDiscussionView 标记缺失且 startDiscussion 拒绝发起调用；保存简介后即可开始并进必带层 1206ms
+   ✓ 阶段 5b 提交③：Claude API token 用量展示（零虚构金额） (2)
+     ✓ 仅有 token 用量而无 API 费用字段时，只显示输入/输出 token 数与不估算提示，不显示虚假美元金额 782ms
+     ✓ launchTurn 在任何异步 IO 前同步登记 inflight，confirmDiscussionSend 后 waitDiscussion 不会漏等 1018ms
+ ✓ tests/multi-project.test.ts (6 tests) 32820ms
+   ✓ 多项目后台与工作台汇总（阶段 2 第一部分） (6)
+     ✓ 同时打开两个项目分别施工互不干扰，项目级 manualReview 锁只锁定所在项目 14967ms
+     ✓ 有任务施工中时拒绝关闭项目；停止后允许关闭并释放存储锁；伪造 projectId 立即拒绝 3239ms
+     ✓ workbench:get 正确汇总所有已打开项目的三组任务、计数、异常优先排序与影响文案 11395ms
+     ✓ 一个项目只有运行中任务时，侧栏项目角标与待我处理角标均为 0（不显示） 3210ms
+ ✓ tests/git.test.ts (9 tests) 7032ms
+   ✓ Git 隔离与恢复 (9)
+     ✓ 识别与初始化仓库 510ms
+     ✓ worktree 内的改动不影响主线；diff 包含新增、修改、删除 963ms
+     ✓ 保存：合并回主线并形成保存点 1425ms
+     ✓ 无改动时 commitWorktree 返回 null 831ms
+     ✓ 撤销：删除 worktree 与分支，主线不变 704ms
+     ✓ 冲突时中止合并、主线保持原状、任务分支保留 1301ms
+     ✓ 主线有未保存改动时拒绝合并 554ms
+     ✓ 回到保存点：以新提交恢复内容，不改写历史 742ms
+ ✓ tests/b4-2-view.test.ts (24 tests) 12824ms
+   ✓ 成果片段：来自冻结的验收内容与基线（真实 Git） (3)
+     ✓ 改动的文本文件给出“原来 / 现在”；新文件“新文件”+ 开头最多 20 行；删除“已删除” 1367ms
+     ✓ 二进制、非 UTF-8、超过 200 KB：显示“这类文件无法直接显示，保存后可以自己打开查看” 1455ms
+     ✓ 改名的文件用原路径比对；片段内容就是将要保存的那一份（工作树之后再改也不影响展示） 1258ms
+   ✓ 启动核对：两步与安全收尾 (4)
+     ✓ 第一步只读：identifyTasks 不写任务记录、不动副本；第二步才收尾 2344ms
+     ✓ 执行体进程仍在运行：不删除副本，标 discard_cleanup_pending（需要处理），进程退出后“重试清理”成功 2116ms
+     ✓ 保存已合并但执行体进程无法核实：保存结果保留（saved_cleanup_pending），不删除副本 2663ms
+     ✓ 任务归属对不上（副本分支不是这个任务的）：不删除 1595ms
+ ✓ tests/b4-2-fix.test.ts (8 tests) 8780ms
+   ✓ 中文与带空格的文件名：片段与行数正确（真实 Git） (4)
+     ✓ 中文文件名修改：路径不被转义，行数正确，显示“原来/现在” 1212ms
+     ✓ 带空格的文件名新增：行数正确，显示“新文件”与内容 908ms
+     ✓ 中文文件改名（同时改一行）：同时拿到新旧路径与行数，片段按原路径比对 1007ms
+     ✓ 同一次改动里中文、空格、普通名字混在一起，也各自对得上 1120ms
+   ✓ 重试清理也要核实进程 (2)
+     ✓ 进程存活时重试清理：不删除、保持 cleanup_pending、返回固定文案；进程结束后重试成功 2514ms
+     ✓ 进程无法确认（认不出）同样不删除；归属对不上也不删除 2016ms
+ ✓ tests/stage3-plan-run.test.ts (9 tests) 7027ms
+   ✓ 阶段 3 · 第一节 3a/4：施工计划确认页与权限现状 (3)
+     ✓ approved 状态修改验收标准：通过 edit_plan 回到 planned（待开工确认），清除授权并给出提示；重新批准后清除 873ms
+   ✓ 阶段 3 · 第二节：施工中页（#05-build）与大白话折叠日志 (2)
+     ✓ 施工中收到 blocked 事件实时写入 task.denied 并在 TaskView.building.problems 展示 1928ms
+   ✓ 阶段 3 · 第三节：停止 / 中断后页（#06-stopped）与继续执行 (2)
+     ✓ 停止页「已经做完」的文件数来自真实 Git（忽略 AI 自夸数字），支持 stopped/timed_out/exec_failed 与额外目录提示 4160ms
+ ✓ tests/cli.test.ts (15 tests) 10459ms
+   ✓ 入口（runCli） (11)
+     ✓ 无 TTY：停在第一个确认点并保存线程，不默认通过；不修改 .gitignore 514ms
+     ✓ 无 TTY 且已确认过服务：停在需求条目确认点（需求未确认不起草） 801ms
+     ✓ TTY 全流程：确认外发 → 条目回车接受 → 评审 → 批准 → 导出任务文件；默认不更新 next-task.md 1200ms
+     ✓ TTY：需求条目可在确认点增删改 1168ms
+     ✓ --set-current：已存在 next-task.md 时 TTY 询问确认，确认后旧文件另存 1160ms
+     ✓ --single：不调用评审者；任务文件标注未经独立评审 887ms
+     ✓ 预设不可用时入口报错退出（不自动改用其他规划者） 425ms
+     ✓ 新线程缺少 --task/--export-dir → 用法错误，不创建线程 616ms
+     ✓ --resume：从确认点恢复并完成 949ms
+     ✓ --import：来源未核实 → 退出码 4，只读；缺少任务清单同样如此；不符 → 退出码 3 1157ms
+     ✓ --import：已绑定 → 规划者审查一次，结果只是意见；无 TTY 且未确认外发则跳过 1577ms
+ ✓ tests/b4-git.test.ts (7 tests) 4267ms
+   ✓ B4-1 受控 Git 层 (7)
+     ✓ 统一入口固定附加参数：命令行配置覆盖项目里的 hooksPath / fsmonitor / gpgsign 386ms
+     ✓ computeTree：等于副本内容；不动副本自己的索引；临时索引用后删除；已跟踪但被忽略的文件不会丢 1260ms
+     ✓ dirtyFiles：忽略 .studio/，文件名含空格与中文不被转义，重命名只算一个文件 333ms
+     ✓ removeWorktree：逐步返回结果；重复调用成功（幂等）；主线不受影响 698ms
+     ✓ hasCustomCommitChecks：.sample 与不可执行文件不算；hooksPath 或可执行钩子才算 581ms
+     ✓ detectExternalDrivers：内置 merge 驱动（text/binary/union）与未定义的驱动名不算 531ms
+     ✓ detectExternalDrivers：子目录里的 .gitattributes 同样生效 477ms
+ ✓ tests/stage5b-ai-roles.test.ts (3 tests) 3123ms
+   ✓ 阶段 5b 提交④：AI 接入与角色设置、优先级覆盖、同 AI 单思考者与线程隔离 (3)
+     ✓ 默认角色为 首席=Codex / 复核=不复核；选未接入 AI 不允许保存；项目设置覆盖全局设置 653ms
+     ✓ 首席与复核选同一 AI 时：设置页给出「未经独立评审」说明，引擎按单思考者运行且隐藏与复核对话 1026ms
+     ✓ 讨论中途修改设置不影响已开始的线程；删除 Key 后角色回退「未设置」，未开始的讨论先提示且禁止启动 1444ms
+ ✓ tests/r1-git-integrity.test.ts (4 tests) 6265ms
+   ✓ R1 数据完整性：已跟踪的内部目录文件绝不因目录名被剔除 (2)
+     ✓ 已跟踪 node_modules/fixture.js 的修改与删除都进入内容 tree 与改动清单；未跟踪缓存被排除 1825ms
+     ✓ 不污染用户 Git 索引与工作区状态（computeTree / diffSummary 只用临时索引） 1177ms
+   ✓ R1 数据完整性：验收 → 保存 → 撤销全链路（真实 Git） (2)
+     ✓ 已跟踪 node_modules 文件的删除在验收清单可见、保存后真实生效、撤销后文件树与保存前严格一致 1617ms
+     ✓ 试用合并工作树也遵循同一内容定义：已跟踪内部文件删除在试合并中可见、未跟踪缓存不干扰 1644ms
+ ✓ tests/stage8a-controller.test.ts (3 tests) 3336ms
+   ✓ 阶段 8A 提交③ · 执行者设置持久化、控制器解析、告知清单与界面渲染 (3)
+     ✓ AiSettingsStore 保存全局/项目执行者并拦截未测通工具调用的配置，删除配置后安全回退为 unset 462ms
+     ✓ TaskController 动态绑定与切换任务执行者、禁止启动 unset 与非编辑态切换，Disclosure 同步接入服务 2863ms
+ ✓ tests/stage8a-executor.test.ts (3 tests) 5544ms
+   ✓ 阶段 8A 提交② · ApiAgentExecutor 多协议工具执行与隔离 (3)
+     ✓ TaskRunner 通过 resolveExecutor 使用 ApiAgentExecutor 全流程写入文件并保存进主项目 5358ms
+ ✓ tests/persistence.test.ts (20 tests) 2745ms
+   ✓ 打开项目不弄脏用户的 Git 状态 (1)
+     ✓ 记录库一创建 .studio/，就已经被 .git/info/exclude 忽略：用户的 git status 里没有它；重复打开不重复写 463ms
+ ✓ tests/learning-engine.test.ts (7 tests) 1129ms
+   ✓ LearningEngine 真实持久化与跨进程重启恢复 (7)
+     ✓ 上限保护：单个项目最多保留 50 条最新经验 898ms
+ ✓ tests/codex-adapter.test.ts (66 tests) 14461ms
+   ✓ Codex 适配器（假 app-server） (16)
+     ✓ 被拒绝的操作以结构化记录随 exit 事件给出（种类、命令/路径、风险） 568ms
+     ✓ 文件修改审批：只删除 → delete_file；不知道改哪些文件 → other（不会被当作低风险） 554ms
+     ✓ 越界写入审批：被评为高风险且不可恢复，不能自动批准 1395ms
+     ✓ 中断被忽略时：宽限期后终止进程，仍然 stopped 695ms
+     ✓ 超时 → timed_out 309ms
+   ✓ Codex 适配器：能力映射与启动门禁 (20)
+     ✓ 模型服务地址核验：官方默认放行；非官方地址默认拒绝开始，并如实报告（只含地址的源，不含路径/密钥） 603ms
+     ✓ 模型服务地址：任务能力显式允许时放行，但 isolation 事件带“数据将发往非官方地址”警告 306ms
+     ✓ 授予的 MCP 不关闭、且不算违规；未授予的仍被关闭 416ms
+   ✓ Codex 适配器：detect() (6)
+     ✓ 提示无法关闭的用户级扩展：只报告是否存在（AGENTS.md、skills），不读取内容 594ms
+   ✓ B3-1：施工模式（标准 / 完全信任）与审批回调 (8)
+     ✓ 适配器：完全信任且已确认 → 以 danger-full-access + never 启动，并核验实际生效沙箱 459ms
+   ✓ B3-1：项目脚本检查进沙箱 (5)
+     ✓ Codex 沙箱运行器：核验生效权限后经 command/exec 运行；权限不一致或命令不可用 → unavailable 469ms
+ ✓ tests/env.test.ts (30 tests) 3833ms
+   ✓ 分层环境体检 (8)
+     ✓ Node 版本兼容：未打开项目=未知；项目未声明=不适用；不一致=不通过并提示安装；一致=通过 702ms
+     ✓ Codex：未登录=不通过；登录状态不明=未知；版本未经验证=未知（复用传入的已验证版本，不写死） 529ms
+     ✓ 已知限制：只在所选执行体 Codex 已安装时显示，且只来自适配器给出的条目 388ms
+   ✓ 最近项目 (4)
+     ✓ 文件损坏时按空列表处理；最多保留 10 项 672ms
+ ✓ tests/a1-trusted-evidence.test.ts (20 tests) 40771ms
+   ✓ A1 反向矩阵：自动测试的真实证据（真实进程） (9)
+     ✓ 真实测试全部通过 → 可信 PASS，数量来自结构化报告 2634ms
+     ✓ 实际测试失败 → FAIL（真实断言失败） 2702ms
+     ✓ 退出码 0，但测试脚本只执行 echo → 非 PASS（unverified，没有真实测试证据） 1314ms
+     ✓ 零测试（passWithNoTests）→ 非 PASS（tests_not_executed） 1927ms
+     ✓ 全部测试被跳过 → 非 PASS（all_tests_skipped） 2420ms
+     ✓ 输出伪造的测试成功摘要（无结构化报告）→ 非 PASS 1776ms
+     ✓ 测试失败但外层脚本吞掉失败退出码（|| true）→ 非 PASS（拿不到可信报告） 2099ms
+     ✓ 未适配的测试框架（node --test）→ unverified（只记录命令结果，不冒充测试通过） 1794ms
+     ✓ 构建检查仍以真实进程退出码为准：exit 0 → passed，exit 1 → failed 3280ms
+   ✓ A1 反向矩阵：证据身份（跨项目 / 跨任务 / 跨轮次 / 旧工作树 / 证据失效） (3)
+     ✓ 使用其他项目的证据 → 拒绝；使用其他任务或轮次的证据 → 拒绝；旧工作树内容 → 失效 2469ms
+   ✓ A1 反向矩阵：测试范围被削弱 / 验证基础设施被修改 (4)
+     ✓ 删除已有测试 → unverified（test_scope_weakened），阻断自动通过 2831ms
+     ✓ 增加 skip 标记 → unverified（范围削弱） 2472ms
+     ✓ 替换测试运行器配置 → unverified（验证基础设施变化） 2665ms
+     ✓ 经用户明确重新确认当前范围后 → 同一范围可按当前基线通过（acceptCurrentScope 只用于用户操作） 3678ms
+   ✓ A1 反向矩阵：runProjectChecks 四态语义 (1)
+     ✓ none / unavailable / unverified / ran 四态准确，且 checked 只在全部可信通过时为 true 3689ms
+   ✓ A1 证据采集：批准时记录测试范围基线 (1)
+     ✓ collectApprovedScopeBaseline 记录真实测试清单与运行器身份 709ms
+ ✓ tests/capabilities.test.ts (5 tests) 2038ms
+   ✓ 能力模型 (5)
+     ✓ 计划默认带最小权限能力；执行体收到的就是计划里的能力 2033ms
+ ✓ tests/stage8b-controller.test.ts (3 tests) 3482ms
+   ✓ 阶段 8B 提交③ · 订阅 CLI 状态存储、执行者解析、诚实隔离提示与设置界面渲染 (3)
+     ✓ SubscriptionCliStore 默认不自动启用、拦截未确认风险与未登录状态，停用后全局与项目回退 unset 325ms
+     ✓ TaskController 支持切换 sub:* 执行者、构建 executorNotice 与禁止未设置启动 3059ms
+ ✓ tests/thinking.test.ts (34 tests) 4940ms
+   ✓ CodexThinker（假 app-server） (6)
+     ✓ 额度用尽 / 频率限制 / 未登录 → 对应状态 663ms
+     ✓ 超时 → timeout 419ms
+   ✓ ClaudeCliThinker（假 claude） (7)
+     ✓ 开启且已登录 → 可用，并如实提示无法确认的隔离项；未登录 → 不可用 615ms
+     ✓ 围栏包裹的 JSON 可解析；不是 JSON / 缺字段 → incomplete 462ms
+     ✓ 错误分类：频率限制 / 额度用尽 / 未登录 / 其他 804ms
+     ✓ 调用后核验：init 里实际带有工具 → failed（隔离无法确认）；没有 init → failed 335ms
+     ✓ 超时 → timeout 417ms
+ ✓ tests/stage8b-acp.test.ts (3 tests) 1304ms
+   ✓ 阶段 8B 提交② · 通用 ACP 执行适配器（Antigravity & Cursor CLI） (3)
+     ✓ ACP 会话执行：放行副本内编辑、reject-once 拦截副本外写/.git 写与高危命令并记录为 Blocked 643ms
+     ✓ Cursor CLI detect() 正确识别登录态并支持 stop() 发送 session/cancel 停止子进程 584ms
+ ✓ tests/design-tokens.test.ts (3 tests) 28ms
+ ✓ tests/stage8b-claude-code.test.ts (3 tests) 1116ms
+   ✓ 阶段 8B 提交① · 本地订阅 CLI 风险门禁、状态持久化与 ClaudeCodeExecutor (3)
+     ✓ ClaudeCodeExecutor 生成受限安全参数、剔除宿主 API Key、校验 init 并转换 permission_denials 为 Blocked 事件 574ms
+ ✓ tests/chatgpt-secure-interaction.test.ts (25 tests) 13ms
+ ✓ tests/r2-trusted-evidence.test.ts (5 tests) 107ms
+ ✓ tests/stage8a-providers.test.ts (3 tests) 409ms
+   ✓ 阶段 8A 提交① · 主流 AI API 目录、三协议测试与加密存储 (3)
+     ✓ ProviderProfileStore：safeStorage 不可用拒存明文；加密保存只露尾号；支持本地无 Key 模型与无工具模型拦截 370ms
+ ✓ tests/stage5b-claude-key.test.ts (4 tests) 495ms
+ ✓ tests/preview-url.test.ts (1 test) 2ms
+ ✓ tests/state.test.ts (7 tests) 3ms
+ ✓ tests/policy.test.ts (7 tests) 5ms
+ ✓ tests/acceptance.test.ts (6 tests) 3ms
+ ✓ tests/external-services.test.ts (5 tests) 3ms
+ ↓ tests/integration/b3-1-probes.real.test.ts (11 tests | 11 skipped)
+ ↓ tests/integration/b3-modes.real.test.ts (10 tests | 10 skipped)
+ ↓ tests/integration/b3-1b-worktree.real.test.ts (3 tests | 3 skipped)
+ ↓ tests/integration/claude-api.real.test.ts (1 test | 1 skipped)
+ ✓ tests/proc.test.ts (7 tests) 1128ms
+   ✓ runProcess (7)
+     ✓ stop() 记为 stopped，即使进程忽略 SIGINT 也会被终止 356ms
+ ↓ tests/integration/b4-1.real.test.ts (1 test | 1 skipped)
+ ✓ tests/stage8c-seatbelt.test.ts (3 tests) 3976ms
+   ✓ 阶段 8C · 脱离 Codex 的独立沙箱检查运行器（Seatbelt 与跨平台兜底） (3)
+     ✓ macOS 真实 Seatbelt 哨兵测试：拦截读取 ~/.ssh、拦截写主项目与 .git、放行 worktree 写入、断网阻断外联并完成真实 npm build/test 3949ms
+ ↓ tests/integration/extensions.real.test.ts (2 tests | 2 skipped)
+ ↓ tests/integration/codex.real.test.ts (2 tests | 2 skipped)
+ ↓ tests/integration/path.real.test.ts (1 test | 1 skipped)
+ ↓ tests/integration/sentinel.real.test.ts (3 tests | 3 skipped)
+ ↓ tests/integration/thinker.real.test.ts (2 tests | 2 skipped)
+ ↓ tests/integration/persist.real.test.ts (1 test | 1 skipped)
+ ↓ tests/integration/think-flow.real.test.ts (1 test | 1 skipped)
+ ✓ tests/r4-trusted-evidence.test.ts (10 tests) 1934ms
+   ✓ R4-01 宿主删除：报告目录保守保留，读取仍校验所有权与身份 (3)
+     ✓ 最终清理：任务副本被替换成指向外部仓库的符号链接 → git 归属校验拒绝，外部文件保留 690ms
+   ✓ R4-02 执行清单指纹：数量相同也必须区分用例身份与状态 (1)
+     ✓ 文件与计数完全一致、用例身份不同 → 组合范围指纹必须不同 319ms
+   ✓ R4-04 未执行检查 vs 真实启动失败 (1)
+     ✓ not_available（占位 spawn_error、attempted=false）→ not_checked；真实 spawn_error → failed 824ms
+ ✓ tests/runner.test.ts (14 tests) 43189ms
+   ✓ 任务闭环（模拟执行体 + 真实 Git） (14)
+     ✓ 快乐路径：施工 → 验收 → 确认 → 保存到主线 5584ms
+     ✓ 执行体非零退出：如实记录失败，不可保存，可撤销且主线不变 2225ms
+     ✓ 停止：真实中断执行并记为 stopped 1775ms
+     ✓ 准备阶段收到停止：不启动执行体，任务进入 stopped 并照常验收 1914ms
+     ✓ 执行体刚启动的瞬间收到停止：同样生效，没有任何文件被写入 1813ms
+     ✓ 报告绑定 Git 状态：开始与结束时的主线 HEAD、工作树路径与 HEAD 记录在任务与验收卡里 1996ms
+     ✓ 任务提示词包含全部约束：目录内修改、不提交不推送、不读取或列出目录之外的内容 507ms
+     ✓ 超时记为 timed_out 1700ms
+     ✓ 权限请求：低风险可自动批准；默认需要用户决定 4167ms
+     ✓ 被拒绝的操作进入验收卡：需逐项确认知晓后才能保存 4395ms
+     ✓ 越界路径永远需要用户决定，即使开启了自动批准 1901ms
+     ✓ 修复：在同一隔离副本上继续，并重新要求确认 2801ms
+     ✓ 真实运行项目的 build / test 脚本，失败时如实标记 12122ms
+ ✓ tests/r3-trusted-evidence.test.ts (24 tests) 4661ms
+   ✓ R3-02 统一裁决：失败优先 + trust/完整性/矛盾 (6)
+     ✓ runProjectChecks 对没有宿主证据的“成功”不得算 checked 1299ms
+   ✓ R3-04 Git 字面路径语义 (3)
+     ✓ 通配文件名不会被当成通配符 672ms
+     ✓ 根目录以冒号开头的文件名不会被当成 pathspec magic 522ms
+     ✓ 超过 500 个路径时全量分批比较仍能发现长尾漂移 1494ms
+ ✓ tests/security.test.ts (62 tests) 43889ms
+   ✓ 安全基线（防回归） (62)
+     ✓ 阶段 1 补丁：未检查保存确认与 runChecks 安全门禁（只增不减） (3)
+       ✓ saveUncheckedTask 遇到 checks_failed / conflict / project_locked / acceptance_invalid 时结果与 saveTask 相同，只放行未检查 42279ms
+     ✓ 阶段 3：继续执行与施工安全边界（只增不减） (2)
+       ✓ continueTask 严格校验任务编号与状态，拒绝 manualReview / 非停止态 / 伪造参数 434ms
+     ✓ 阶段 4：退回修改与依据边界校验（只增不减） (2)
+       ✓ reworkTask / editReworkPermissions 严格校验参数与状态，拒绝伪造 id / 超长反馈 / manualReview / 非验收态 395ms
+     ✓ 阶段 5a：思考流程暂停恢复与隔离安全边界（只增不减） (2)
+       ✓ 所有讨论 IPC 均严格校验任务编号、参数边界、开发者预设可用性与 manualReview 状态 412ms
+ ✓ tests/flow.test.ts (54 tests) 46559ms
+   ✓ 正常路径与状态 (4)
+     ✓ requirements_draft → … → approved：每个状态按序前进，产物带版本号，方案写入 docs/plans/ 1317ms
+     ✓ 必带层只含 PROJECT_CONTEXT 第 1、2、4 节 1590ms
+     ✓ 线程状态与尝试分开：线程目录里 thread.json 记录尝试，正式产物各自成文件 766ms
+   ✓ 需求条目确认点 (3)
+     ✓ 未确认不能起草：无法询问时停在 requirements_confirmation，思考者没有收到起草请求 433ms
+     ✓ 用户可增、删、改条目；冻结后 ID 稳定，被删编号不复用 911ms
+     ✓ 冻结后思考者输出试图改条目 → 被忽略并记录；冻结产物不变 630ms
+   ✓ 非 complete 状态：每个步骤、每种状态 (29)
+     ✓ requirements 步骤遇到 failed：线程状态不前进、已有产物保留、可重试、重试产生新尝试 867ms
+     ✓ requirements 步骤遇到 rate_limited：线程状态不前进、已有产物保留、可重试、重试产生新尝试 853ms
+     ✓ requirements 步骤遇到 quota_exhausted：线程状态不前进、已有产物保留、可重试、重试产生新尝试 951ms
+     ✓ requirements 步骤遇到 auth_error：线程状态不前进、已有产物保留、可重试、重试产生新尝试 1091ms
+     ✓ requirements 步骤遇到 timeout：线程状态不前进、已有产物保留、可重试、重试产生新尝试 923ms
+     ✓ requirements 步骤遇到 incomplete：线程状态不前进、已有产物保留、可重试、重试产生新尝试 744ms
+     ✓ draft 步骤遇到 failed：线程状态不前进、已有产物保留、可重试、重试产生新尝试 927ms
+     ✓ draft 步骤遇到 rate_limited：线程状态不前进、已有产物保留、可重试、重试产生新尝试 931ms
+     ✓ draft 步骤遇到 quota_exhausted：线程状态不前进、已有产物保留、可重试、重试产生新尝试 798ms
+     ✓ draft 步骤遇到 auth_error：线程状态不前进、已有产物保留、可重试、重试产生新尝试 842ms
+     ✓ draft 步骤遇到 timeout：线程状态不前进、已有产物保留、可重试、重试产生新尝试 814ms
+     ✓ draft 步骤遇到 incomplete：线程状态不前进、已有产物保留、可重试、重试产生新尝试 852ms
+     ✓ review 步骤遇到 failed：线程状态不前进、已有产物保留、可重试、重试产生新尝试 722ms
+     ✓ review 步骤遇到 rate_limited：线程状态不前进、已有产物保留、可重试、重试产生新尝试 858ms
+     ✓ review 步骤遇到 quota_exhausted：线程状态不前进、已有产物保留、可重试、重试产生新尝试 949ms
+     ✓ review 步骤遇到 auth_error：线程状态不前进、已有产物保留、可重试、重试产生新尝试 948ms
+     ✓ review 步骤遇到 timeout：线程状态不前进、已有产物保留、可重试、重试产生新尝试 1172ms
+     ✓ review 步骤遇到 incomplete：线程状态不前进、已有产物保留、可重试、重试产生新尝试 1041ms
+     ✓ revise 步骤遇到 failed：线程状态不前进、已有产物保留、可重试、重试产生新尝试 1068ms
+     ✓ revise 步骤遇到 rate_limited：线程状态不前进、已有产物保留、可重试、重试产生新尝试 1205ms
+     ✓ revise 步骤遇到 quota_exhausted：线程状态不前进、已有产物保留、可重试、重试产生新尝试 1015ms
+     ✓ revise 步骤遇到 auth_error：线程状态不前进、已有产物保留、可重试、重试产生新尝试 952ms
+     ✓ revise 步骤遇到 timeout：线程状态不前进、已有产物保留、可重试、重试产生新尝试 1141ms
+     ✓ revise 步骤遇到 incomplete：线程状态不前进、已有产物保留、可重试、重试产生新尝试 924ms
+     ✓ 失败后选择“修改输入后重试”：补充说明进入下一次请求，并记录在尝试里 976ms
+     ✓ 选择“终止线程”→ stopped，已有正式产物全部保留 724ms
+     ✓ 不自动重试、不自动换模型：失败后思考者只被调用一次 746ms
+     ✓ 宿主结构检查：方案缺少对某冻结条目的覆盖说明 → 判为 incomplete，不产生正式产物 549ms
+     ✓ 思考者抛异常也只是一次失败尝试 801ms
+   ✓ 从磁盘恢复 (3)
+     ✓ 恢复后显示上次失败原因，并从未完成步骤继续（不重做已完成步骤） 906ms
+     ✓ 恢复时产物摘要不符 → 停止并报告，不使用旧产物，线程状态不变 494ms
+     ✓ 恢复时产物文件缺失也停止；不会静默更换规划者 482ms
+   ✓ 机械检查与裁决 (6)
+     ✓ 范围比对：遗漏条目、标注删除、出现新增 → 逐项裁决后才进入批准 807ms
+     ✓ 用户驳回某个范围差异 → 不提供批准（批准被拒绝） 685ms
+     ✓ 阻断意见未解决/交用户裁决 → 未裁决不能批准；裁决需要理由 2057ms
+     ✓ 安全检查未通过（思考者请求了工具）→ 不提供批准选项；UI 强行批准也被拒绝 1339ms
+     ✓ 依据核验：为空 / 文件不存在 / 文件存在（三种）+ 章节标题 421ms
+     ✓ 依据检查结果记入机械检查产物，并在裁决说明中展示 1202ms
+   ✓ 替换思考者 / 发送清单 (3)
+     ✓ 用另一个思考者类充当规划者，流程不变（不依赖 ClaudeCli） 818ms
+     ✓ 评审者请求中不含规划者的原始输出全文与推理（只含方案正文） 658ms
+     ✓ 首次向某服务发送前确认，按服务记录；已确认的服务不再询问；拒绝 → stopped 1293ms
+   ✓ 预算 / 次数 / 超时 (3)
+     ✓ 调用次数上限：到达后不再发起新调用，stopped，已有产物保留 389ms
+     ✓ 累计费用（仅统计有费用的思考者）与累计耗时：发起新调用之前检查 910ms
+     ✓ 单步超时作为 timeoutMs 传给思考者；timeout 状态是一次失败尝试 396ms
+   ✓ 无法询问（无 TTY）时一律停在确认点 (1)
+     ✓ 所有确认方法都返回 undefined：停在第一个确认点，线程已保存，不默认通过 812ms
+   ✓ 单思考者模式 (2)
+     ✓ 跳过评审；线程记录与方案文档明确标注“未经独立评审” 595ms
+ ✓ tests/b4-sentinel.test.ts (22 tests) 54464ms
+   ✓ B4-1 哨兵测试：项目配置里的程序不得被宿主运行 (22)
+     ✓ hookspath (2)
+       ✓ 对照：同样的配置交给不受控的 git，哨兵会出现（证明哨兵布置有效） 1869ms
+       ✓ 读证据 / 保存 / 撤销 / 放弃全流程跑通，哨兵一个都不出现 5881ms
+     ✓ githooks (2)
+       ✓ 对照：同样的配置交给不受控的 git，哨兵会出现（证明哨兵布置有效） 1172ms
+       ✓ 读证据 / 保存 / 撤销 / 放弃全流程跑通，哨兵一个都不出现 6099ms
+     ✓ fsmonitor (2)
+       ✓ 对照：同样的配置交给不受控的 git，哨兵会出现（证明哨兵布置有效） 631ms
+       ✓ 读证据 / 保存 / 撤销 / 放弃全流程跑通，哨兵一个都不出现 6161ms
+     ✓ gpg (2)
+       ✓ 对照：同样的配置交给不受控的 git，哨兵会出现（证明哨兵布置有效） 806ms
+       ✓ 读证据 / 保存 / 撤销 / 放弃全流程跑通，哨兵一个都不出现 6755ms
+     ✓ filter (3)
+       ✓ 对照：同样的配置交给不受控的 git，哨兵会出现（证明哨兵布置有效） 636ms
+       ✓ 配置在开工前就存在：开工被拒绝，没有创建副本，哨兵不出现 735ms
+       ✓ 配置在开工后才出现：保存、撤销都在检测处停止，副本保留；放弃仍可用；哨兵不出现 5762ms
+     ✓ merge (3)
+       ✓ 对照：同样的配置交给不受控的 git，哨兵会出现（证明哨兵布置有效） 1142ms
+       ✓ 配置在开工前就存在：开工被拒绝，没有创建副本，哨兵不出现 599ms
+       ✓ 配置在开工后才出现：保存、撤销都在检测处停止，副本保留；放弃仍可用；哨兵不出现 5546ms
+     ✓ diff-textconv (3)
+       ✓ 对照：同样的配置交给不受控的 git，哨兵会出现（证明哨兵布置有效） 964ms
+       ✓ 配置在开工前就存在：开工被拒绝，没有创建副本，哨兵不出现 471ms
+       ✓ 配置在开工后才出现：保存、撤销都在检测处停止，副本保留；放弃仍可用；哨兵不出现 4011ms
+     ✓ diff-command (3)
+       ✓ 对照：同样的配置交给不受控的 git，哨兵会出现（证明哨兵布置有效） 415ms
+       ✓ 配置在开工前就存在：开工被拒绝，没有创建副本，哨兵不出现 355ms
+       ✓ 配置在开工后才出现：保存、撤销都在检测处停止，副本保留；放弃仍可用；哨兵不出现 3696ms
+ ✓ tests/b4-save.test.ts (27 tests) 73984ms
+   ✓ B4-1 保存 (14)
+     ✓ 正常保存：提交内容 = 冻结的验收内容；--no-ff 合并；副本与分支清理；阶段日志完整 4351ms
+     ✓ 主线在基线之后前进（不冲突）：同样用 --no-ff 合并 3800ms
+     ✓ 未检查必须先确认再保存（没有 build/test 脚本） 5604ms
+     ✓ 检查失败不可保存；放弃后主项目不变 2901ms
+     ✓ 执行体失败（退出码 2）不可保存 1515ms
+     ✓ 隔离异常不可保存 1859ms
+     ✓ 验收标准为空：必须整体确认才能保存 4412ms
+     ✓ 有验收标准时不接受整体确认 1810ms
+     ✓ 保存前内容变化：拒绝保存（验收失效），重新检查后可再保存；主项目没有被动过 5191ms
+     ✓ 检查改动了文件：检查结果作废并如实提示，改动清单列出新增文件 4191ms
+     ✓ 主项目不干净：拒绝保存，列出文件，副本保留，没有提交或暂存任何用户文件 2229ms
+     ✓ 分支变化：拒绝保存，不让用户选分支 2429ms
+     ✓ 合并冲突：abort 后主项目与合并前一致，副本保留，状态 save_failed_unmerged；之后可以放弃 3023ms
+     ✓ 重复点击：保存、保存+放弃同时发起，后者被拒绝 5312ms
+   ✓ B4-1 放弃 (3)
+     ✓ 正常放弃：主项目不变，副本与分支删除，返回规定文案 1360ms
+     ✓ 扩展了额外目录的任务：追加“副本以外的修改无法撤销” 1266ms
+   ✓ B4-1 撤销 (3)
+     ✓ 撤销最近一次保存：以新提交恢复到合并前，历史不改写 2721ms
+     ✓ 撤销被拒：保存之后项目又有了新提交 2448ms
+     ✓ 撤销被拒：工作区有未提交改动；分支不一致 4427ms
+   ✓ B4-1 清理失败与重试 (2)
+     ✓ 保存后清理失败：进入 saved_cleanup_pending，不吞错，可重试 2312ms
+     ✓ 放弃时清理失败：discard_cleanup_pending，可重试 1140ms
+   ✓ B4-1 启动核对（reconcileTasks） (5)
+     ✓ 合并后、记录前中断：按 Git 真实状态修正为 saved，并完成清理 1715ms
+     ✓ 合并前中断（任务提交已生成、合并没发生）：项目保持原样，任务仍可保存 2692ms
+     ✓ 无法判定：标“需要人工查看”，不自动动手 1467ms
+     ✓ 放弃中断：继续清理并记为 discarded 1113ms
+     ✓ 撤销提交已在分支上、记录没来得及更新：修正为 undone 2515ms
+ ✓ tests/stage6-save-ui.test.ts (8 tests) 74527ms
+   ✓ 阶段 6 提交①：保存过程实时进度与 8 类结果视图 (3)
+     ✓ 保存进度事件严格按真实执行顺序发出（检查变化 → 合并 → 合并后检查 → 写入前核对），不跳过不伪造 13260ms
+     ✓ 精确生成所有 8 种保存结果的文案、标签与按钮（含 checks_failed 试检查依据、project_changed、failed_restored、manualReview、project_locked） 11199ms
+     ✓ 项目锁定真实控制器路径：任务 A 进入 manualReview，任务 B 验收视图与保存结果均带去处理跳转目标 3516ms
+   ✓ 阶段 6 提交②：保存冲突专页与基于最新项目重做（#11-save-conflict） (2)
+     ✓ 两个任务修改同一文件导致冲突：定位关联已保存任务、展示双边片段对照、重做更新副本后第 2 轮保存成功 23169ms
+     ✓ 找不到已保存任务记录时冲突来源显示「项目里后来的改动」；更新副本本身遇新冲突时立即中止、副本保持原样且不留冲突标记 5361ms
+   ✓ 阶段 6 提交③：保存记录与撤销界面（#12-history） (1)
+     ✓ 保存记录按倒序展示检查状态（通过/无脚本/没能运行+确认时间）与项目外的改动；仅最近一次可撤销且撤销后忠实交由核心层 undoCheck 判断 18018ms
+ ✓ tests/save-safety.test.ts (20 tests) 101858ms
+   ✓ 阶段 1 · 保存安全：先试合并、试检查，再写入主项目 (10)
+     ✓ 试合并冲突：主项目 HEAD、文件、分支在调用前后完全一致，临时 worktree 已清理 3905ms
+     ✓ 试检查失败：合并后才出现的改动让真实测试失败 → 主项目不动，返回 checks_failed 与失败项，临时 worktree 已清理 8707ms
+     ✓ 无检查项目：首次保存返回 unchecked_needs_confirm（主项目不变），带确认后保存成功且 checked=false，临时 worktree 已清理 5243ms
+     ✓ 写入前项目变了（在检查期间模拟另一次提交）：返回 project_changed，主项目只有那次外部提交，临时 worktree 已清理 12717ms
+     ✓ 写入前项目变了（检查期间主项目工作区变脏或分支切换）：返回 project_changed，主项目不变 6775ms
+     ✓ ff-only 失败且恢复一致：返回 failed_restored，不标 manualReview，临时 worktree 已清理 3574ms
+     ✓ ff-only 失败且恢复不一致：触发 manualReview 并返回 abnormal，临时 worktree 已清理 2697ms
+     ✓ 临时 worktree 在检查抛异常时同样被清理；清理失败只记录不影响保存成功结果 5918ms
+     ✓ 中断恢复：在 trial 阶段中断 → 识别阶段并清理残留临时副本，主项目不变且可再次保存 2760ms
+     ✓ 中断恢复：在 ff 写入后中断 → 识别已合入并清理残留临时副本与任务副本，修正为 saved 且可撤销 2117ms
+   ✓ 阶段 1 · 保存记录检查信息与界面文案 (2)
+     ✓ 有检查且通过：saveRecord 记录 checked=true、checksSummary、checkedAt、trialCommit，界面显示「检查通过」且不含命令 6198ms
+     ✓ 无可用检查：确认后 saveRecord 记录 checked=false、uncheckedKind、确认时间，界面显示「未检查」且绝不显示「通过」或「安全」 2122ms
+   ✓ 阶段 1 · 项目级锁（manualReview 锁定同项目其他任务的保存与撤销） (1)
+     ✓ A 任务处于 manualReview 时，同项目 B 任务保存、C 任务撤销均返回 project_locked；人工处理解除后恢复正常 5326ms
+   ✓ 阶段 1 · 撤销：说清楚为什么不能撤销 (2)
+     ✓ 撤销被后续 studio 保存挡住：返回原因包含挡住它的任务名与时间，替代笼统 undoRefused；且不跨保存撤销 7316ms
+   ✓ 阶段 1 补丁 · 未检查时必须由用户确认 (5)
+     ✓ runProjectChecks 准确区分四种结果：none（无脚本）/ unavailable（沙箱不可用、检查脚本变化需重新授权）/ unverified（跑了但没有可信测试证据）/ ran（全部运行且都有可信通过证据） 4450ms
+     ✓ 有检查但沙箱不可用：首次保存返回 unchecked_needs_confirm（type=unavailable，主项目不变），确认后写入并记录 uncheckedKind 与确认时间 3533ms
+     ✓ 合并改动了检查脚本：无论任务内改动还是主线改动导致合并后脚本变化，均返回 unavailable 且明确说明检查方式变化 5259ms
+     ✓ 两次调用之间项目被改：第二次带 confirmUnchecked 重新走试合并并返回 project_changed，绝不用旧的试合并结果写入 5930ms
+     ✓ 控制器与视图闭环：saveTask 返回待确认 → 打开预览保留确认 → recheck 清空「仍然保存」→ 再次触发后 saveUncheckedTask 成功写入 7309ms
+ ✓ tests/a1-evidence-chain.test.ts (16 tests) 104924ms
+   ✓ A1 全链路：任务结束后的 buildEvidence（真实 Vitest） (2)
+     ✓ 验收卡与检查依据页来自真实结构化证据，逐项数量真实、无虚构 5487ms
+     ✓ 没有真实测试框架证据（echo 脚本）时：卡上为「缺乏有效证据」，绝不显示为通过或「1 项通过」 3700ms
+   ✓ A1 全链路：用户重新检查时的证据更新 (1)
+     ✓ 重新检查 → 验收版本 +1，新证据替换旧证据（旧版本的确认一律失效） 8562ms
+   ✓ A1 全链路：保存前试合并工作树的 runProjectChecks (3)
+     ✓ 验收与试合并都真实通过 → 保存 checked=true 11018ms
+     ✓ 试合并后真实测试失败 → checks_failed，且不能被「未检查确认」绕过 14813ms
+     ✓ 保存前试合并结果与原验收证据不一致 → 阻断保存（不得静默按旧结论保存） 7196ms
+   ✓ A1 全链路：未检查风险的人工确认（仅记录人工确认） (2)
+     ✓ 缺乏可信测试证据时：保存需要用户明确确认，记录为 unchecked/unverified，而不是 PASS 7605ms
+     ✓ 验收版本变化后旧的「未检查确认」失效 8923ms
+   ✓ A1 全链路：测试范围削弱与明确的重新确认流程（R1-04 闭环） (2)
+     ✓ 执行体删除已有测试 → 自动通过被阻断；用户确认内容+范围+版本 → 重新检查 → 重新验收 → 试合并 → 正式保存 10988ms
+     ✓ 确认前内容发生变化 → 拒绝旧确认，必须重新检查 3248ms
+   ✓ R1-04 保存前试合并：已确认范围仍然有效才允许保存 (1)
+     ✓ 确认范围后主项目的测试内容变化 → 试合并范围指纹不一致 → 硬阻断保存（不能人工确认绕过） 14403ms
+   ✓ A1 全链路：ChatGPT 反馈包中的宿主事实 (2)
+     ✓ 反馈包把宿主证据与 AI 自述分开，未取得可信证据时明确标注不可视为通过 2104ms
+     ✓ 真实通过时宿主事实显示通过，并带报告事实（不是 AI 自述） 2675ms
+   ✓ A1 全链路：应用异常重启后的证据恢复 (2)
+     ✓ 重启后有效证据仍然有效（不被误判失效），并且证据详情页可核对 4199ms
+ ✓ tests/b4-2-controller.test.ts (26 tests) 114182ms
+   ✓ 保存与撤销 (5)
+     ✓ 保存成功 → 主项目可见；视图变为已保存，撤销入口可用 8722ms
+     ✓ 撤销 → 项目恢复；成功提示是 messages.undone（没有外部影响时不追加说明） 8986ms
+     ✓ 撤销条件不满足：入口仍可见但置灰并说明（保存之后项目又有改动）；条件恢复后可用 9555ms
+     ✓ 用过完全信任：放弃/撤销确认框与撤销成功提示都追加“无法撤销”的说明 8552ms
+     ✓ 同项目还有其他已保存且可撤销的任务：保存前提示“保存后，上一次保存就不能单独撤销了” 9345ms
+   ✓ 放弃与清理 (3)
+     ✓ 放弃：项目不变；标准模式不追加外部影响说明 2434ms
+     ✓ 放弃（完全信任）：提示里含外部影响说明 2002ms
+     ✓ 清理失败 → cleanup_pending（视图标“需要处理”并给出重试）→ 重试成功 2329ms
+   ✓ 检查失败、验收失效、重新检查 (4)
+     ✓ 检查失败时保存置灰，说明原因，且 Git 与命令原文不出现在视图里 2726ms
+     ✓ 自动检查项不可由任何确认方法改写；执行失败的任务确认全部后仍不可保存 3010ms
+     ✓ 验收失效（确认之后副本内容变了）→ 保存置灰并突出“重新检查”→ 重新检查后旧确认全部清空、旧版本的请求被拒绝 8238ms
+     ✓ 重新检查后即使内容没变，版本也不同（旧版本请求照样被拒绝） 3486ms
+   ✓ 主项目有未保存修改、冲突 (2)
+     ✓ dirtyMain：保存置灰，列出文件（相对路径），保存请求返回同样的文件清单 2801ms
+     ✓ 冲突：只有“放弃”（以及界面的“暂不处理”），没有保存、没有重新检查、没有让 AI 修改；成果仍保留；放弃后清理 4910ms
+   ✓ 重复点击、伪造参数、异常态 (4)
+     ✓ 重复点击保存只生效一次（另一次返回 busy），主项目只有一个合并提交 5957ms
+     ✓ 伪造参数被拒绝：任务编号、条目编号、版本格式；不存在的条目 1797ms
+     ✓ 被拦下的操作只能逐条确认；没有整体确认 3679ms
+     ✓ 异常态：只读，没有任何写操作；写请求被拒绝并不改变任何东西；诊断摘要不含命令与 Git 原文 2788ms
+   ✓ 重启后状态一致、成果片段、启动核对 (8)
+     ✓ 重启（新控制器）后：验收阶段的版本、按钮状态、确认情况与重启前一致；已保存的任务重启后仍可撤销 5845ms
+     ✓ 成果片段：可见“原来 / 现在”；文件清单是相对路径 1473ms
+     ✓ 启动核对：保存中断后重启，控制器第一次使用前完成核对，列表与视图标“已核对”并说明 3011ms
+     ✓ 成果预览（网页在浏览器打开，其他在访达显示） (5)
+       ✓ 产物含 index.html → preview.kind 为 web，按钮为“在浏览器中打开预览”；调用 openPreview 触发浏览器回调并标记完成 2346ms
+       ✓ 产物不含 index.html → preview.kind 为 finder，按钮为“在访达中显示”；调用 openPreview 打开目录 2350ms
+       ✓ 直接调用 skipPreview → 标记为已跳过查看并完成步骤 ①，无需触发外部打开 2625ms
+       ✓ 模拟打开失败 → previewed 仍为 false，第 ② 步仍锁定 2527ms
+       ✓ 未注入 openPreview 回调 → 同样视为失败，不得标记 previewed 2687ms
+
+ Test Files  53 passed | 12 skipped (65)
+      Tests  773 passed | 38 skipped (811)
+   Start at  00:16:05
+   Duration  114.76s (tests 99%)
+

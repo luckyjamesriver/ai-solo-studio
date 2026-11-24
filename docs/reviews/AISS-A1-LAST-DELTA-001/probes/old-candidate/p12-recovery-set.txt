@@ -1,0 +1,53 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-lastdelta-old
+
+ ❯ tests/r4-probes/p12-recovery-set.probe.ts (3 tests | 3 failed) 63471ms
+   ❯ LAST-DELTA 探针 P12：SIGKILL 恢复的证据集合完整性 (3)
+     × 部分证据丢失 → 不得 checked=true 27272ms
+     × evidenceIds 与证据实际 ID 错配 → 不得 checked=true 18088ms
+     × 副本身份错配 → 不得 checked=true 18110ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r4-probes/p12-recovery-set.probe.ts > LAST-DELTA 探针 P12：SIGKILL 恢复的证据集合完整性 > 部分证据丢失 → 不得 checked=true
+AssertionError: expected true not to be true // Object.is equality
+ ❯ tests/r4-probes/p12-recovery-set.probe.ts:105:39
+    103|     });
+    104|     expect(t.saveRecord).toBeTruthy();
+    105|     expect(t.saveRecord!.checked).not.toBe(true);
+       |                                       ^
+    106|   }, 240_000);
+    107|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/r4-probes/p12-recovery-set.probe.ts > LAST-DELTA 探针 P12：SIGKILL 恢复的证据集合完整性 > evidenceIds 与证据实际 ID 错配 → 不得 checked=true
+AssertionError: expected true not to be true // Object.is equality
+ ❯ tests/r4-probes/p12-recovery-set.probe.ts:113:39
+    111|     });
+    112|     expect(t.saveRecord).toBeTruthy();
+    113|     expect(t.saveRecord!.checked).not.toBe(true);
+       |                                       ^
+    114|   }, 240_000);
+    115|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/r4-probes/p12-recovery-set.probe.ts > LAST-DELTA 探针 P12：SIGKILL 恢复的证据集合完整性 > 副本身份错配 → 不得 checked=true
+AssertionError: expected true not to be true // Object.is equality
+ ❯ tests/r4-probes/p12-recovery-set.probe.ts:122:39
+    120|     });
+    121|     expect(t.saveRecord).toBeTruthy();
+    122|     expect(t.saveRecord!.checked).not.toBe(true);
+       |                                       ^
+    123|   }, 240_000);
+    124| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  00:16:25
+   Duration  63.89s (tests 100%)
+

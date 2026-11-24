@@ -150,7 +150,7 @@ P5-B: AssertionError: expected 'saved' not to be 'saved'（内容漂移的合并
 | 文件描述符与实际文件身份 | `openDirIdentity` / `readOwnedFile` 的 fstat | 单测 + P1-D |
 | 符号链接 | `O_NOFOLLOW`、`lstatIdentity`、realpath 严格相等 | P1-A/B/C/D |
 | 硬链接 | 报告 `nlink>1` 拒绝 | 单测「报告文件是外部文件的硬链接」 |
-| TOCTOU | 每次删除前重新复核直接父目录；读取后再复核 | 设计约束 + 单测（残留窗口见 §10） |
+| TOCTOU | 每次删除前重新复核直接父目录；读取时打开后、读取内容**前**复核父链（读取期间仍有理论窗口，不声称零 TOCTOU；LAST-DELTA 更正） | 设计约束 + 单测（残留窗口见 §10） |
 | `.studio/tmp` | `runCheck` 前置 `assertSafeControlledDir(dir, '.studio/tmp')` 改为同一所有权实现 | 单测「.studio/tmp 是外部符号链接」 |
 | 工作树外独立哨兵零污染 | 所有 P1 用例均断言外部哨兵/外部报告原样保留 | P1 4/4 |
 

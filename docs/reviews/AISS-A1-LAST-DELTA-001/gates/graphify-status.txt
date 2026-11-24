@@ -1,0 +1,8 @@
+# Graphify 真实状态（AISS-A1-R4-LAST-DELTA-001）
+
+- 工具：graphify 0.9.113（本机）。
+- 本仓库没有提交的语义图（graphify-out/ 不在 Git 中，且当前工作树未生成）。
+- 最近一次本地抽取（上一轮 `graphify update . --no-cluster`）：AST 抽取约 3399 节点、**0 条语义边**（未运行 LLM 边抽取/社区命名）。
+- 本轮未重新生成，也未把 AST 抽取冒充“语义索引完成”。
+- MCP `graphify-shm` 固定服务的是另一个项目（PROJECT_SCOPE_MISMATCH），与本仓库无关。
+- 结论：Graphify 语义索引：NOT_VERIFIED / 未完成；仅 AST 抽取可用性已核实。

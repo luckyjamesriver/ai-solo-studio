@@ -68,7 +68,7 @@ await ctl.savePlan(created.id, { goal: '改标题', criteria: ['标题已更新'
 await ctl.start(created.id, false);
 
 let view;
-for (let i = 0; i < 1500; i += 1) {
+for (let i = 0; i < 6000; i += 1) {
   view = await ctl.getAcceptanceView(created.id);
   if (view.state === 'reviewing' && !view.busy) break;
   await new Promise((r) => setTimeout(r, 20));

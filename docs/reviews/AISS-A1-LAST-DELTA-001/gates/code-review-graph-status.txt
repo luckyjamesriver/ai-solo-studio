@@ -1,0 +1,7 @@
+Nodes: 3657
+Edges: 55870
+Files: 267
+Languages: html, javascript, json, tsx, typescript, yaml
+Last updated: 2026-11-25T00:59:03
+Built on branch: takeover/AISS-A1-R3
+Built at commit: ef6700575a1e

@@ -1,0 +1,31 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-lastdelta-old
+
+ ❯ tests/r4-probes/p13-failure-first.probe.ts (1 test | 1 failed) 1003ms
+   ❯ LAST-DELTA 探针 P13：not_available 外围状态不得掩盖真实失败 (1)
+     × 真实未执行 → not_checked；真实启动失败/非零退出 + 外围 not_available → failed 1002ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r4-probes/p13-failure-first.probe.ts > LAST-DELTA 探针 P13：not_available 外围状态不得掩盖真实失败 > 真实未执行 → not_checked；真实启动失败/非零退出 + 外围 not_available → failed
+AssertionError: expected 'not_checked' to be 'failed' // Object.is equality
+
+Expected: "failed"
+Received: "not_checked"
+
+ ❯ tests/r4-probes/p13-failure-first.probe.ts:55:69
+     53|     // 外围 status 被写成 not_available（迁移/损坏/旧版本），但证据显示已经尝试且失败 → 必须 failed
+     54|     const contradictorySpawn: StoredCheckProof = { name: 'build', stat…
+     55|     expect(adjudicateStoredProof(contradictorySpawn, f.ctx).status).to…
+       |                                                                     ^
+     56|     const contradictoryExit: StoredCheckProof = { name: 'build', statu…
+     57|     expect(adjudicateStoredProof(contradictoryExit, f.ctx).status).toB…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  00:17:29
+   Duration  1.24s (tests 94%, transform 4%, import 2%)
+

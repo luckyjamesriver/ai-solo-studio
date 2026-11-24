@@ -79,7 +79,7 @@ R3 的实现虽然做了所有权链校验，但清理仍在**执行体可写的
 最终采用 R4 明确允许的**保守保留**方案：
 
 1. 报告目录仍在任务副本内（沙箱可写），创建时记录授权根与每级目录身份（`createOwnedDir`），**读取时**逐级校验身份/真实路径/`O_NOFOLLOW`（`readOwnedFile`）；
-2. `cleanupVitestRun` 变成**空操作**：宿主不在可变工作树路径上删除任何东西；报告目录随任务副本由 `git worktree remove` 回收；
+2. `cleanupVitestRun` 变成**空操作**：宿主不在可变工作树路径上删除任何东西；报告目录随任务副本由 `git worktree remove` 回收。**更正（LAST-DELTA）**：报告目录数量不是严格有界——同一任务副本内每次检查都会新增一个目录，按运行次数增长、不设上限；只是随副本生命周期一并回收。
 3. 最终清理的归属由 **git 自己**保证：`git worktree remove` 会校验目标目录的 `.git` 必须指回 `<repo>/.git/worktrees/<id>`（探针 P6-D 用“替换成外部合法仓库 / 同仓库其它任务副本”两种攻击反证：外部文件全部保留，清理被拒绝）。
 
 ### 2.3 入口核对
@@ -87,7 +87,7 @@ R3 的实现虽然做了所有权链校验，但清理仍在**执行体可写的
 | 入口 | 行为 | 验证 |
 | :-- | :-- | :-- |
 | 创建 | `createOwnedDir`：逐级 `lstat` 非链接 + `O_NOFOLLOW` 打开 + `fstat` 身份 + `realpath === 字面路径` | R3/R4 单测、P6 |
-| 读取 | `readOwnedFile`：复核所有权链 → `O_NOFOLLOW` 打开 → `fstat` 普通文件/`nlink<=1`/大小 → `realpath` → 读取后再复核父链 | P6-C、R4 单测 |
+| 读取 | `readOwnedFile`：复核所有权链 → `O_NOFOLLOW` 打开 → `fstat` 普通文件/`nlink<=1`/大小 → `realpath` → 读取内容**前**再复核父链（读取期间仍有理论窗口，不声称零 TOCTOU；LAST-DELTA 更正） | P6-C、R4 单测 |
 | 删除（报告） | **不删除**（保守保留）；`cleanupVitestRun` 内无 `fs.rm/unlink/rmdir`（探针静态断言 + 单测） | P6-A、R4 单测 |
 | 最终清理（副本） | `git worktree remove` 的 `.git` 归属校验；`checkOwnWorktree` 仍校验分支/路径前缀 | P6-D |
 | `.studio/tmp` | 只创建/使用（`assertSafeControlledDir`），从未递归删除 | R3 单测「.studio/tmp 是外部符号链接」 |
