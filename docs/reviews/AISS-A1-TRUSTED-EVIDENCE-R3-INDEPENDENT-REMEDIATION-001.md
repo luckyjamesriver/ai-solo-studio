@@ -4,6 +4,7 @@
 - **主干基线**：`e69ca8511a17acfc4427954af13ef6d364ffb553`
 - **接管时的旧候选**：`9d1533fc97fbf29af41b9bfbab77c4b52286c527`
 - **本报告对应的代码提交（exact HEAD）**：`13edb62cb4d2546c1430f70aa5f520ca3424cdc6`
+- **本报告所在提交（docs-only）**：`9c4d163f22647cdf4d024841b479968181bec596`
 - **PR**：#7 `feat/aiss-a1-trusted-evidence-001` → `rebuild`（保留，不新开产品 PR，不启动 A2，不合并）
 - **执行方式**：先复现反向证据，再改产品代码；旧候选与新候选用**同一组探针**对照
 - **结论**：R3-01 ~ R3-05 五个残留问题全部有真实反向证据 + 真实修复证据；全部门禁通过
@@ -35,7 +36,7 @@
 | `/Users/jamesho/ai-solo-studio-a1`（`feat/aiss-a1-trusted-evidence-001`，`9d1533f`） | Cursor 当前工作树 | **未改动**（只读查看源码） |
 | `/Users/jamesho/ai-solo-studio-a0-delivery` | A0 审计交付工作树 | **未改动** |
 | `/Users/jamesho/ai-solo-studio-a1-r3`（`takeover/AISS-A1-R3`） | **本轮独立接管工作树**：从 `9d1533f` 新建 | 本轮全部修改只在这里 |
-| `/Users/jamesho/ai-solo-studio-a1-r3-old`（detached `9d1533f`） | **旧候选对照工作树**（只为跑同一组探针） | 只加入探针副本与构建产物；不改产品源码 |
+| `/Users/jamesho/ai-solo-studio-a1-r3-old`（detached `9d1533f`） | **旧候选对照工作树**（只为跑同一组探针） | 只加入探针副本与构建产物；不改产品源码；**验证完成后已移除**（可按 §1.1 命令重建） |
 
 创建命令（可重复）：
 
@@ -433,7 +434,14 @@ CI 工作流 `.github/workflows/ci.yml`：`ubuntu-latest` 与 `macos-latest` 两
   - `test (macos-latest)`：success（12:30:15Z → 12:42:46Z）。步骤：npm ci / typecheck / npm test / build / Install Electron binary / **Electron end-to-end** 全部 success。
 - 证据：`gates/ci-13edb62.json`（完整 run + 每个 step 的 conclusion）
 
-> 本报告与 CI 证据作为后续 docs-only 提交推送；该提交不改变产品代码，CI 会以同一矩阵再次运行，最终回执记录其 exact-HEAD 结果。
+- 报告提交（docs-only）：`9c4d163f22647cdf4d024841b479968181bec596`
+- Run：`45396298686` — https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/45396298686
+- 结果：**conclusion=success**
+  - `test (ubuntu-latest)`：success（2m3s）
+  - `test (macos-latest)`：success（9m35s，含 Electron E2E）
+- 证据：`gates/ci-13edb62.json` 与 PR #7 checks（exact HEAD `9c4d163`）
+
+> 后续若再有 docs-only 提交，CI 会以同一矩阵再次运行；最终回执记录最后 HEAD 的结果。
 
 ### 8.8 远程证据逐文件读取与指纹核验
 
@@ -516,26 +524,29 @@ A1_WORKTREE=$PWD node docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R1-001/repro/real-pr
 # R3 探针（旧/新同一组）
 npm run build:core
 npx vitest run -c vitest.probes.config.ts
-# 旧候选：在 /Users/jamesho/ai-solo-studio-a1-r3-old 重复以上两步
+# 旧候选：在临时对照工作树（detached 9d1533f，验证后已移除，可按 §1.1 重建）重复以上两步
 ```
 
 ### 11.3 证据索引
 
 ```text
-docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/
-├── AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001.md   # 本报告
-├── workspace-protection-before.txt
-├── gates/
-│   ├── typecheck.txt
-│   ├── build-core.txt
-│   ├── build-renderer.txt
-│   ├── full-suite.txt
-│   ├── electron-e2e.txt
-│   ├── seatbelt-25-sample.txt
-│   ├── ci-13edb62.json                # 推送后回填
-│   └── remote-fingerprints.txt        # 推送后回填
-└── probes/
-    ├── r3-p5-child.mjs
-    ├── old-candidate/p{1..5}-*.txt
-    └── new-candidate/p{1..5}-*.txt
+docs/reviews/
+├── AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001.md   # 本报告（唯一权威）
+└── AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/    # 证据目录
+    ├── README.md                          # 证据目录索引
+    ├── workspace-protection-before.txt
+    ├── workspace-protection-after.txt
+    ├── gates/
+    │   ├── typecheck.txt
+    │   ├── build-core.txt
+    │   ├── build-renderer.txt
+    │   ├── full-suite.txt
+    │   ├── electron-e2e.txt
+    │   ├── seatbelt-25-sample.txt
+    │   ├── ci-13edb62.json
+    │   └── remote-fingerprints.txt
+    └── probes/
+        ├── r3-p5-child.mjs
+        ├── old-candidate/p{1..5}-*.txt
+        └── new-candidate/p{1..5}-*.txt
 ```
