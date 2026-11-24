@@ -325,8 +325,10 @@ export interface Task {
   scopeReview?: {
     kind: 'weakened' | 'changed';
     reasons: string[];
-    /** 测试范围指纹（测试清单 + 配置 + 运行器） */
+    /** **静态**测试范围指纹（测试清单 + 配置 + 脚本/锁/运行器入口与依赖） */
     scopeFingerprint: string;
+    /** R3-03：用户确认时绑定的**实际执行清单**指纹（文件 + 用例身份 + 执行状态） */
+    executionFingerprint?: string;
     /** 检测时冻结的内容指纹（acceptedTree） */
     contentFingerprint: string;
     /** 检测时的验收版本 */

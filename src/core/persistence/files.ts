@@ -74,31 +74,6 @@ export async function makeDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
 
-/**
- * 安全删除子目录树：
- * 校验 target 必须为 parentDir 的后代，且从 parentDir 到 target 之间的路径上不能包含符号链接或路径逃逸。
- * 针对 R2-01：严防符号链接逃逸与外部目录递归删除。
- */
-export async function removeSafeSubtree(parentDir: string, target: string): Promise<void> {
-  const realParent = await fs.realpath(parentDir);
-  const realTarget = await fs.realpath(target);
-  const rel = path.relative(realParent, realTarget);
-  if (rel.startsWith('..') || path.isAbsolute(rel) || rel === '') {
-    throw new Error(`目标路径越界，不在受控父目录内: ${target}`);
-  }
-  // 逐级核查从 realParent 到 target 的每一级目录，确保没有符号链接
-  const parts = rel.split(path.sep);
-  let cur = realParent;
-  for (const p of parts) {
-    cur = path.join(cur, p);
-    const lst = await fs.lstat(cur);
-    if (lst.isSymbolicLink()) {
-      throw new Error(`目标路径包含符号链接，拒绝清理: ${cur}`);
-    }
-  }
-  await fs.rm(target, { recursive: true, force: true });
-}
-
 /** 删除目录树（仅限持久化层自己管理的位置，例如用后即删的临时目录）。 */
 export async function removeTree(dir: string): Promise<void> {
   await fs.rm(dir, { recursive: true, force: true });

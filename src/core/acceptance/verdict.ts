@@ -6,6 +6,9 @@
  */
 export {
   adjudicateRoundChecks,
+  adjudicateSaveRecord,
   adjudicateTaskEvidence,
+  saveChecksTextFor,
   type CheckAdjudication,
+  type SavedChecksStatus,
 } from '../evidence/adjudicate.js';

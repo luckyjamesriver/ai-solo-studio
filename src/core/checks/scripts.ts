@@ -23,17 +23,20 @@ import {
 } from '../evidence/model.js';
 import {
   assessScopeChange,
+  combinedScopeFingerprint,
   detectTestRunner,
+  executionFingerprintOf,
   readConfigFingerprints,
   readConfigFingerprintsFromTree,
   readPackageLockDigest,
   readPackageLockDigestFromTree,
   scanTestInventory,
   scanTestInventoryFromTree,
-  scopeFingerprint,
   sha256Text,
 } from '../evidence/inventory.js';
 import { buildReportEvidence, cleanupVitestRun, parseStdoutSummary, prepareVitestRun, readVitestReport, assertSafeControlledDir } from '../evidence/vitest.js';
+import { adjudicateCheckResult, type EvidenceIdentityContextForAdjudication } from '../evidence/adjudicate.js';
+import type { ExecutionManifest } from '../evidence/model.js';
 
 /**
  * 项目脚本检查（build / test）。B3：脚本不再由宿主直接运行，而是通过执行体提供的「沙箱命令运行器」
@@ -181,8 +184,10 @@ export interface EvidenceIdentityContext {
   baselineRev?: string | undefined;
   /** 批准时记录的测试范围基线（可选） */
   approvedScope?: ApprovedScopeBaseline | undefined;
-  /** 用户已确认的测试范围指纹：保存前试合并用它验证「已批准范围仍然有效」 */
+  /** 用户已确认的**静态**范围指纹：保存前试合并用它验证「已批准范围仍然有效」 */
   expectedScopeFingerprint?: string | undefined;
+  /** R3-03：用户确认时绑定的**实际执行清单**指纹：试合并必须复现同一执行范围 */
+  expectedExecutionFingerprint?: string | undefined;
 }
 
 export interface RunCheckOptions {
@@ -268,15 +273,16 @@ async function assessTestScope(
   dir: string,
   opts: RunCheckOptions,
   fp: Fingerprints,
-  executedFiles?: string[],
-  executionCounts?: { passed: number; failed: number; skipped: number; total: number },
+  report?: { executedFiles: string[]; counts: { passed: number; failed: number; skipped: number; total: number }; execution?: ExecutionManifest },
 ): Promise<ScopeAssessment> {
   const current = fp.currentInventory ?? (await scanTestInventory(dir));
-  const runnerNow = await currentRunnerIdentity(dir);
+  // R3-03：静态范围（配置/脚本/锁/运行器入口与依赖/测试清单）与实际执行清单是两个维度
   const fingerprint = configFingerprintKey(fp.config);
+  const executionFingerprint = executionFingerprintOf(report?.execution);
 
   // 必须核对实际执行范围与预期清单是否覆盖完全（严防仅因静态配置一致就掩盖动态运行削弱）
   const expectedFiles = current.files.map((f) => f.path).sort();
+  const executedFiles = report?.executedFiles;
   const executedSet = new Set(executedFiles ?? []);
   const missingExecuted = expectedFiles.filter((p) => !executedSet.has(p));
   const hasExecutedShortage = executedFiles !== undefined && missingExecuted.length > 0;
@@ -290,35 +296,55 @@ async function assessTestScope(
         baselineSource: '用户重新确认',
         method: 'conservative-static',
         fingerprint,
+        ...(executionFingerprint ? { executionFingerprint } : {}),
       };
     }
-    return { kind: 'assessed_unchanged', baselineAvailable: true, reasons: ['你已明确确认按当前测试范围验收。'], baselineSource: '用户重新确认', method: 'none', fingerprint };
+    return {
+      kind: 'assessed_unchanged',
+      baselineAvailable: true,
+      reasons: ['你已明确确认按当前测试范围验收。'],
+      baselineSource: '用户重新确认',
+      method: 'none',
+      fingerprint,
+      ...(executionFingerprint ? { executionFingerprint } : {}),
+    };
   }
 
-  // 保存前试合并：若用户已确认过某个范围，就核对「当前范围是否仍等于已确认的范围」，
-  // 同时严查实际执行范围是否与已确认范围一致（不得因静态指纹一致而跳过实际执行范围核查）。
+  // 保存前试合并：用户确认同时绑定「静态范围」与「实际执行清单」，两者任一变化都必须重新确认
   const expected = opts.identity?.expectedScopeFingerprint;
+  const expectedExecution = opts.identity?.expectedExecutionFingerprint;
   if (expected) {
-    if (expected === fingerprint && !hasExecutedShortage) {
-      return { kind: 'assessed_unchanged', baselineAvailable: true, reasons: ['与用户已确认的测试范围及实际执行一致。'], baselineSource: '用户已确认的范围', method: 'none', fingerprint };
+    const staticSame = expected === fingerprint;
+    const executionSame = !expectedExecution || expectedExecution === executionFingerprint;
+    if (staticSame && executionSame && !hasExecutedShortage) {
+      return {
+        kind: 'assessed_unchanged',
+        baselineAvailable: true,
+        reasons: ['与用户已确认的测试范围及实际执行清单一致。'],
+        baselineSource: '用户已确认的范围',
+        method: 'none',
+        fingerprint,
+        ...(executionFingerprint ? { executionFingerprint } : {}),
+      };
     }
+    const reasons: string[] = [];
+    if (!staticSame) reasons.push('当前测试范围/配置与用户已确认的范围不一致，必须重新检查并重新确认。');
+    if (!executionSame) reasons.push('本次真实执行的测试用例清单与你确认时不一致（可能被动态跳过或过滤），必须重新检查并重新确认。');
+    if (hasExecutedShortage) reasons.push(`实际执行范围减少（缺少：${missingExecuted.slice(0, 5).join('、')}），必须重新检查。`);
     return {
       kind: 'assessed_needs_review',
       baselineAvailable: true,
-      reasons: [
-        expected !== fingerprint
-          ? '当前测试范围/配置与用户已确认的范围不一致，必须重新检查并重新确认。'
-          : `实际执行范围减少（缺少：${missingExecuted.slice(0, 5).join('、')}），必须重新检查。`,
-      ],
+      reasons,
       method: 'conservative-static',
       fingerprint,
+      ...(executionFingerprint ? { executionFingerprint } : {}),
     };
   }
   const baselineRev = opts.identity?.baselineRev;
   const baseInventory = baselineRev ? await scanTestInventoryFromTree(dir, baselineRev) : undefined;
   if (!baseInventory || (baseInventory.testFileCount === 0 && current.testFileCount === 0)) {
     // 无基线提交：无法判断「已有覆盖是否被削弱」（历史任务）。如实标记未评估，不伪造结论。
-    return { kind: 'not_assessed', baselineAvailable: false, reasons: ['缺少任务基线提交，无法核对已有测试覆盖是否被削弱。'] };
+    return { kind: 'not_assessed', baselineAvailable: false, reasons: ['缺少任务基线提交，无法核对已有测试覆盖是否被削弱。'], fingerprint };
   }
   const approved = opts.identity?.approvedScope;
   const baselineRunner = approved?.runnerVersion
@@ -338,8 +364,9 @@ async function assessTestScope(
     baselineScriptsDigest: opts.authorizedDigest,
     currentScriptsDigest: fp.config.scriptsDigest,
     ...(executedFiles ? { executedFiles } : {}),
+    ...(report?.execution ? { execution: report.execution } : {}),
   });
-  return { ...assessment, baselineSource: `基线提交 ${baselineRev ?? '（无）'}`, fingerprint };
+  return { ...assessment, baselineSource: `基线提交 ${baselineRev ?? '（无）'}`, fingerprint, ...(executionFingerprint ? { executionFingerprint } : {}) };
 }
 
 function makeIdentity(ctx: EvidenceIdentityContext | undefined, testedTree: string, dir: string): EvidenceIdentity | undefined {
@@ -522,9 +549,10 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
   const reportParse = await readVitestReport(plan, { startMs: startMs - 1, endMs }, dir);
   await cleanupVitestRun(plan);
   const stdoutSummary = parseStdoutSummary(r.stdout);
-  const executedFilesForScope = reportParse.status === 'ok' ? reportParse.executedFiles : undefined;
-  const executionCounts = reportParse.status === 'ok' ? reportParse.counts : undefined;
-  const scope = await assessTestScope(dir, opts, fp, executedFilesForScope, executionCounts);
+  const scopeReport = reportParse.status === 'ok'
+    ? { executedFiles: reportParse.executedFiles, counts: reportParse.counts, ...(reportParse.execution ? { execution: reportParse.execution } : {}) }
+    : undefined;
+  const scope = await assessTestScope(dir, opts, fp, scopeReport);
 
   const unverified = (unknownReason: CheckUnknownReason, reason: string, extra: Partial<HostCheckEvidence> = {}): CheckResult => {
     const evidence = evidenceFor('unverified', unknownReason, 'weak', { scope, ...extra });
@@ -614,6 +642,23 @@ export interface ProjectChecksOutcome {
   checkedAt?: string;
 }
 
+/** 把检查运行上下文换算成统一裁决上下文（证据身份必须与运行时的身份完全一致）。 */
+function adjudicationContext(identity: EvidenceIdentityContext | undefined, dir: string): EvidenceIdentityContextForAdjudication {
+  if (!identity) {
+    // 没有身份上下文 → 不可能产出宿主证据；统一裁决会把“成功”降级为 unverified
+    return { taskId: '（未绑定任务）', round: 0 };
+  }
+  return {
+    taskId: identity.taskId,
+    round: identity.round,
+    acceptanceRev: identity.acceptanceRev,
+    acceptanceVersion: `${identity.testedTree.slice(0, 12)}-${identity.acceptanceRev}`,
+    acceptedTree: identity.testedTree,
+    projectRoot: identity.projectRoot,
+    worktreePath: dir,
+  };
+}
+
 function classifyUnavailable(
   notAvailable: Extract<CheckResult, { status: 'not_available' }>[],
   digestChangedOrMissing: boolean,
@@ -650,10 +695,18 @@ export async function runProjectChecks(
   }
   const results: CheckResult[] = [];
   for (const name of names) results.push(await runCheck(dir, name, runner, opts));
-  const passed = results.filter((c) => c.status === 'passed').length;
-  const failed = results.filter((c): c is Extract<CheckResult, { status: 'passed' | 'failed' }> => c.status === 'failed');
-  const notAvail = results.filter((c): c is Extract<CheckResult, { status: 'not_available' }> => c.status === 'not_available');
-  const unverified = results.filter((c): c is Extract<CheckResult, { status: 'unverified' }> => c.status === 'unverified');
+
+  // R3-02：分类与 checked 一律由统一证据裁决得出，不再只凭 status 字符串。
+  const adjCtx = adjudicationContext(opts.identity, dir);
+  const adjudications = results.map((c) => adjudicateCheckResult(c, adjCtx));
+  const passed = adjudications.filter((a) => a.status === 'verified').length;
+  const failed = results.filter((_, i) => adjudications[i]!.status === 'failed');
+  const notAvail = results.filter((c) => c.status === 'not_available');
+  const unverified = results.filter((_, i) => {
+    const st = adjudications[i]!.status;
+    return st !== 'verified' && st !== 'failed' && st !== 'not_checked';
+  });
+  const allVerified = results.length > 0 && adjudications.every((a) => a.status === 'verified');
   const anyRan = results.some((c) => c.status !== 'not_available');
   const checkedAt = anyRan ? { checkedAt: new Date().toISOString() } : {};
   if (notAvail.length > 0) {
@@ -687,7 +740,7 @@ export async function runProjectChecks(
   return {
     kind: 'ran',
     results,
-    checked: failed.length === 0,
+    checked: allVerified,
     summary: { passed, failed: failed.length },
     failed,
     unverified,
@@ -702,10 +755,47 @@ export function testCountsFromEvidence(c: CheckResult): { passed: number; failed
   return { passed: counts.passed, failed: counts.failed, skipped: counts.skipped, total: counts.total };
 }
 
-/** 测试范围指纹（供「重新确认验收范围」绑定当前范围）。 */
-export async function currentScopeFingerprint(dir: string, executedFiles?: string[], executionCounts?: { passed: number; failed: number; skipped: number; total: number }): Promise<string> {
+export interface CurrentScopeSnapshot {
+  /** 静态范围（配置/脚本/锁/运行器入口与依赖/测试清单） */
+  scopeFingerprint: string;
+  /** 实际执行清单（文件 + 用例身份 + 执行状态）；没有报告时为 undefined */
+  executionFingerprint?: string;
+  /** 两者组合后的单一比较键（用于“当前范围是否还是确认时的范围”） */
+  combinedFingerprint: string;
+}
+
+/**
+ * 采集「当前范围快照」：静态范围与实际执行清单分开给出，同时提供组合键。
+ * R3-03：只比较静态指纹会漏掉“同一文件内用例减少 / 动态跳过 / 过滤变化”。
+ */
+export async function currentScopeSnapshot(dir: string, execution?: ExecutionManifest): Promise<CurrentScopeSnapshot> {
   const fp = await collectFingerprints(dir, {}, true);
-  return configFingerprintKey(fp.config);
+  const scopeFingerprint = configFingerprintKey(fp.config);
+  const executionFingerprint = executionFingerprintOf(execution);
+  return {
+    scopeFingerprint,
+    ...(executionFingerprint ? { executionFingerprint } : {}),
+    combinedFingerprint: combinedScopeFingerprint(scopeFingerprint, executionFingerprint),
+  };
+}
+
+/**
+ * 当前范围指纹（供「重新确认验收范围」绑定当前范围）。
+ * 传入真实执行清单时，指纹同时覆盖静态范围与执行范围；只传文件/计数时按计数合成执行部分（兼容旧调用）。
+ */
+export async function currentScopeFingerprint(
+  dir: string,
+  executedFiles?: string[],
+  executionCounts?: { passed: number; failed: number; skipped: number; total: number },
+  execution?: ExecutionManifest,
+): Promise<string> {
+  if (execution) return (await currentScopeSnapshot(dir, execution)).combinedFingerprint;
+  const fp = await collectFingerprints(dir, {}, true);
+  const scopeFingerprint = configFingerprintKey(fp.config);
+  const syntheticExecution = executedFiles
+    ? sha256Text(JSON.stringify({ files: [...executedFiles].sort(), counts: executionCounts ?? null }))
+    : undefined;
+  return combinedScopeFingerprint(scopeFingerprint, syntheticExecution);
 }
 
 /**

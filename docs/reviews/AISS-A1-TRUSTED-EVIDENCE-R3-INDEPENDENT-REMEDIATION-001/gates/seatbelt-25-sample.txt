@@ -1,0 +1,9 @@
+{"event":"project-copied","proj":"/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r1-sandbox-dfyv4b/real-project","headBefore":"ce01674dce601eb259df1a5373d419ef3e03ba74","treeBefore":"63b6b19afbe9c2c4de4a266ae67fcf3e1d774fa9"}
+{"event":"sandbox","status":{"available":true,"kind":"seatbelt","label":"可用（独立受限检查）","detail":"不依赖 Codex 登录即可自动运行构建与测试检查：拦截常见凭证目录读取、禁止修改任务副本与额外目录以外文件、标准模式默认断网。"}}
+{"event":"planned","taskId":"20261124122929-3491a7"}
+{"event":"acceptance","buildStatus":"passed","testStatus":"passed","counts":{"total":25,"passed":25,"failed":0,"skipped":0,"todo":0},"executedFiles":["tests/dates.test.ts","tests/math.test.ts","tests/slug.test.ts","tests/store.test.ts","tests/text.test.ts"],"integrity":{"ok":true,"problems":[],"checks":{"regularFile":true,"notSymlink":true,"noHardlink":true,"sizeOk":true,"mtimeInWindow":true,"startTimeInWindow":true,"countsConsistent":true,"successConsistent":true,"testResultsArray":true,"crossCheckPerformed":true,"crossCheckAgrees":true}},"crossCheck":{"performed":true,"stdoutSummary":{"passed":25,"failed":0},"agrees":true},"runEnv":"sandbox","sandboxKind":"seatbelt","scope":"assessed_unchanged","items":[["build","verified"],["test","verified"]]}
+{"event":"save","ok":true,"outcome":"saved","message":"已保存到项目。"}
+{"event":"saved","state":"saved","mergeCommit":"cfc82f2422ed21458dd8df53374eafa6a26c9a4d","checksSummary":{"passed":2,"failed":0},"evidenceIds":{"build":"9e39b7e407bc68912d2de6d0ce212006","test":"4677d66323c559c4fdf1b9ce2c898c07"},"headAfter":"cfc82f2422ed21458dd8df53374eafa6a26c9a4d","markerCommitted":true,"subApplied":true}
+{"event":"undo","ok":true,"message":"已撤销这次保存，项目回到保存之前的样子。"}
+{"event":"undone","treeUndone":"63b6b19afbe9c2c4de4a266ae67fcf3e1d774fa9","treeBefore":"63b6b19afbe9c2c4de4a266ae67fcf3e1d774fa9","markerGone":true}
+{"event":"done","root":"/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r1-sandbox-dfyv4b","result":"A1_R1_STANDARD_SANDBOX_FULL_PROJECT_VERIFICATION_OK"}

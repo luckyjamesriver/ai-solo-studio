@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { makeDir, removeSafeSubtree, removeTree } from '../persistence/files.js';
-import type { TestCounts, TestReportEvidence } from './model.js';
+import { createOwnedDir, removeOwnedDir, verifyOwnedDir, readOwnedFile, type OwnedDir } from '../persistence/owned-dir.js';
+import type { ExecutionCaseResult, ExecutionFileCounts, ExecutionManifest, TestCounts, TestReportEvidence } from './model.js';
 
 /**
  * Vitest 结构化证据采集（AISS-A1 第一阶段完整支持链）。
@@ -29,86 +29,62 @@ export interface VitestRunPlan {
   nonce: string;
   /** 创建时核实的工作树真实根目录（用于清理前重新核实身份，防止符号链接逃逸与目录身份变化） */
   realRootDir: string;
+  /**
+   * R3-01：创建时固定的授权根与目录身份。清理/读取只信任这份记录，
+   * 绝不重新 realpath 一个可能已被执行体替换的父路径。
+   */
+  ownedEvidenceRoot?: OwnedDir;
+  ownedReportDir?: OwnedDir;
 }
 
 /**
- * 校验并确保工作树受控父目录存在且绝对非符号链接（针对 R2-01：严防符号链接逃逸与非预期目录）。
- * 返回受控的 .studio/evidence 真实路径。
+ * 校验并确保工作树受控父目录存在，并记录创建时的授权根与每一级目录身份（R3-01）。
+ * 绝不信任事后可被替换的父路径。
  */
-export async function assertSafeControlledDir(dir: string, subPath: string): Promise<{ realRoot: string; controlledPath: string }> {
-  let realRoot: string;
+export async function assertSafeControlledDir(dir: string, subPath: string): Promise<{ realRoot: string; controlledPath: string; owned: OwnedDir }> {
   try {
-    realRoot = await fs.realpath(dir);
+    const owned = await createOwnedDir(dir, subPath);
+    const leaf = owned.chain[owned.chain.length - 1]!;
+    return { realRoot: owned.rootPath, controlledPath: leaf.path, owned };
   } catch (e) {
-    throw new Error(`被测工作树不可解析或不存在: ${(e as Error).message}`);
+    throw new Error(`被测工作树的受控目录不可信任：${(e as Error).message}`);
   }
-  const rootStat = await fs.lstat(realRoot);
-  if (!rootStat.isDirectory()) {
-    throw new Error(`工作树根路径不是普通目录: ${realRoot}`);
-  }
-
-  // 严格逐级校验与安全创建，沿途（.studio 及子路径）严禁为符号链接
-  const parts = subPath.split(path.sep).filter(Boolean);
-  let cur = realRoot;
-  for (const part of parts) {
-    cur = path.join(cur, part);
-    try {
-      const lst = await fs.lstat(cur);
-      if (lst.isSymbolicLink()) {
-        throw new Error(`受控目录沿途包含符号链接，拒绝使用: ${cur}`);
-      }
-      if (!lst.isDirectory()) {
-        throw new Error(`受控路径不是目录: ${cur}`);
-      }
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        await makeDir(cur);
-        const postLst = await fs.lstat(cur);
-        if (postLst.isSymbolicLink() || !postLst.isDirectory()) {
-          throw new Error(`创建受控目录后校验失败: ${cur}`);
-        }
-      } else {
-        throw err;
-      }
-    }
-    const realCur = await fs.realpath(cur);
-    if (realCur !== cur) {
-      throw new Error(`受控目录发生真实路径漂移或包含链接: ${cur} !== ${realCur}`);
-    }
-  }
-
-  return { realRoot, controlledPath: cur };
 }
 
 /** 生成宿主专用的报告路径，并确保运行前不存在任何旧文件。 */
 export async function prepareVitestRun(dir: string, script: string): Promise<VitestRunPlan> {
-  const { realRoot, controlledPath: evidenceRootPath } = await assertSafeControlledDir(dir, path.join('.studio', 'evidence'));
-  const nonce = randomBytes(16).toString('hex');
-  const reportDir = path.join(evidenceRootPath, nonce);
+  const ownedEvidenceRoot = await createOwnedDir(dir, path.join('.studio', 'evidence'));
+  const evidenceRootPath = ownedEvidenceRoot.chain[ownedEvidenceRoot.chain.length - 1]!.path;
 
-  // 若预存 nonce 目录则先清理
-  try {
-    await removeSafeSubtree(evidenceRootPath, reportDir);
-  } catch (err: any) {
-    if (err.code !== 'ENOENT') throw err;
+  // nonce 目录名是 128-bit 随机；若极端碰撞则换一个，绝不复用或清空已存在的目录
+  let nonce = '';
+  let ownedReportDir: OwnedDir | undefined;
+  for (let attempt = 0; attempt < 5 && !ownedReportDir; attempt += 1) {
+    const candidate = randomBytes(16).toString('hex');
+    try {
+      const owned = await createOwnedDir(evidenceRootPath, candidate);
+      nonce = candidate;
+      ownedReportDir = owned;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') continue;
+      throw e;
+    }
   }
-  await makeDir(reportDir);
-  const lstat = await fs.lstat(reportDir);
-  if (lstat.isSymbolicLink() || !lstat.isDirectory()) {
-    throw new Error(`新建报告目录不安全: ${reportDir}`);
-  }
-
+  if (!ownedReportDir) throw new Error('无法创建本次运行的报告目录（随机路径连续冲突）');
+  const reportDir = ownedReportDir.chain[ownedReportDir.chain.length - 1]!.path;
   const reportPath = path.join(reportDir, 'vitest-report.json');
   const argv = ['npm', 'run', 'test', '--silent', '--', '--reporter=default', '--reporter=json', `--outputFile.json=${reportPath}`];
-  return { reportPath, reportDir, argv, nonce, realRootDir: realRoot };
+  return { reportPath, reportDir, argv, nonce, realRootDir: ownedEvidenceRoot.rootPath, ownedEvidenceRoot, ownedReportDir };
 }
 
 export async function cleanupVitestRun(plan: VitestRunPlan): Promise<void> {
+  // 只按创建时记录的所有权链清理；没有所有权记录的计划一律不删（保守保留残留）
+  if (!plan.ownedReportDir) return;
   try {
-    const evidenceRoot = path.join(plan.realRootDir, '.studio', 'evidence');
-    await removeSafeSubtree(evidenceRoot, plan.reportDir);
+    await removeOwnedDir(plan.ownedReportDir);
   } catch {
-    // 清理失败不抛给上层，但严格受 removeSafeSubtree 保护决不越界删除外部文件
+    // 清理失败不抛给上层：所有权链不能确认时保守保留残留文件，绝不越界删除
   }
 }
 
@@ -170,6 +146,7 @@ export type ReportParseResult =
       counts: TestCounts;
       failedNames: string[];
       executedFiles: string[];
+      execution?: ExecutionManifest;
       startTime: number;
       problems: string[];
       checks: Record<string, boolean>;
@@ -183,30 +160,84 @@ export type ReportParseResult =
  * 读取并严格校验本次运行产生的 Vitest JSON 报告。
  * `window` 是本次真实进程运行的时间窗（毫秒），用于拒绝复用旧报告。
  */
-/** 报告路径必须位于受控目录（工作树 .studio/evidence/<nonce>/），且沿途不得是符号链接。 */
+/**
+ * 报告必须位于「创建时固定的授权根」下的报告目录，且整条所有权链（工作树根 → .studio → evidence → nonce）
+ * 的 dev/ino 与真实路径都必须与创建时一致。任何一级被替换/移动/链接都会让本次报告失效。
+ */
 async function reportPathProblem(plan: VitestRunPlan, rootDir: string): Promise<string | undefined> {
+  if (!plan.ownedEvidenceRoot || !plan.ownedReportDir) return '报告目录缺少创建时固定的所有权记录，无法确认归属';
   let realRoot: string;
   try {
     realRoot = await fs.realpath(rootDir);
   } catch {
     return '被测工作树不可解析';
   }
-  try {
-    const evidenceRoot = path.join(realRoot, '.studio', 'evidence');
-    const realDir = await fs.realpath(plan.reportDir);
-    if (realDir !== path.join(evidenceRoot, plan.nonce)) return '报告目录不在受控位置（可能经过符号链接或路径逃逸）';
-    const lstat = await fs.lstat(plan.reportDir);
-    if (!lstat.isDirectory() || lstat.isSymbolicLink()) return '报告目录是符号链接';
-    try {
-      const realFile = await fs.realpath(plan.reportPath);
-      if (realFile !== path.join(realDir, 'vitest-report.json')) return '报告文件路径逃逸';
-    } catch {
-      // 文件不存在是合法状态（缺失报告），由 readVitestReport 返回 missing；这里只校验父目录受控
-    }
-  } catch (e) {
-    return `报告路径不可核实：${(e as Error).message}`;
-  }
+  if (realRoot !== plan.ownedEvidenceRoot.rootPath) return '被测工作树真实路径与创建时不一致';
+  const rootProblem = await verifyOwnedDir(plan.ownedEvidenceRoot);
+  if (rootProblem) return `报告父目录不可信任：${rootProblem.detail}`;
+  const dirProblem = await verifyOwnedDir(plan.ownedReportDir);
+  if (dirProblem) return `报告目录不可信任：${dirProblem.detail}`;
+  const expectedDir = path.join(plan.ownedEvidenceRoot.chain[plan.ownedEvidenceRoot.chain.length - 1]!.path, plan.nonce);
+  if (plan.ownedReportDir.chain[plan.ownedReportDir.chain.length - 1]!.path !== expectedDir) return '报告目录不在受控位置（可能经过符号链接或路径逃逸）';
   return undefined;
+}
+
+const CASE_SAMPLE_LIMIT = 2000;
+
+/**
+ * 从报告构建「实际执行清单」（R3-03）。
+ * 关键点：perFile 用例计数与 casesDigest 都覆盖**全部**用例（cases 字段只是给界面/记录的样本），
+ * 因此不能用“测试文件数”或“测试总数”冒充执行范围一致。
+ */
+function buildExecutionManifest(testResults: RawTestResult[], realRoot: string): ExecutionManifest {
+  const files: string[] = [];
+  const perFile = new Map<string, ExecutionFileCounts>();
+  const cases: ExecutionCaseResult[] = [];
+  const canonical: string[] = [];
+  for (const tr of testResults) {
+    const name = typeof tr.name === 'string' ? tr.name : '';
+    if (!name) continue;
+    let rel: string;
+    try {
+      rel = path.relative(realRoot, name).split(path.sep).join('/');
+    } catch {
+      rel = name;
+    }
+    if (rel.startsWith('..')) rel = name;
+    files.push(rel);
+    const counts = perFile.get(rel) ?? { file: rel, total: 0, passed: 0, failed: 0, skipped: 0, todo: 0 };
+    const assertions = Array.isArray(tr.assertionResults) ? (tr.assertionResults as RawAssertion[]) : [];
+    for (const a of assertions) {
+      const st = a.status;
+      const status: ExecutionCaseResult['status'] = st === 'passed' ? 'passed'
+        : st === 'failed' ? 'failed'
+          : st === 'pending' || st === 'skipped' ? 'skipped'
+            : st === 'todo' ? 'todo'
+              : 'other';
+      const caseName = (typeof a.fullName === 'string' ? a.fullName : typeof a.title === 'string' ? a.title : '').slice(0, 300) || '（未命名用例）';
+      counts.total += 1;
+      if (status === 'passed') counts.passed += 1;
+      else if (status === 'failed') counts.failed += 1;
+      else if (status === 'skipped') counts.skipped += 1;
+      else if (status === 'todo') counts.todo += 1;
+      canonical.push(JSON.stringify([rel, caseName, status]));
+      if (cases.length < CASE_SAMPLE_LIMIT) cases.push({ file: rel, name: caseName, status });
+    }
+    perFile.set(rel, counts);
+  }
+  canonical.sort();
+  const casesDigest = sha256Text(canonical.join('\n'));
+  const perFileList = [...perFile.values()].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+  const sortedFiles = [...files].sort();
+  const counts: TestCounts = {
+    total: perFileList.reduce((n, f) => n + f.total, 0),
+    passed: perFileList.reduce((n, f) => n + f.passed, 0),
+    failed: perFileList.reduce((n, f) => n + f.failed, 0),
+    skipped: perFileList.reduce((n, f) => n + f.skipped, 0),
+    todo: perFileList.reduce((n, f) => n + f.todo, 0),
+  };
+  const fingerprint = sha256Text(JSON.stringify({ files: sortedFiles, perFile: perFileList, casesDigest, counts }));
+  return { schemaVersion: 1, files: sortedFiles, perFile: perFileList, casesDigest, cases, casesTruncated: canonical.length > cases.length, counts, fingerprint };
 }
 
 export async function readVitestReport(
@@ -216,40 +247,23 @@ export async function readVitestReport(
 ): Promise<ReportParseResult> {
   const pathProblem = await reportPathProblem(plan, rootDir);
   if (pathProblem) return { status: 'invalid', detail: pathProblem };
+  if (!plan.ownedReportDir) return { status: 'invalid', detail: '报告目录缺少所有权记录' };
 
-  // 原子性打开报告文件描述符，并在文件描述符上执行 fstat，防御 TOCTOU / 符号链接替换竞态
-  let fh: import('node:fs/promises').FileHandle;
+  // 通过受控目录打开：O_NOFOLLOW + fd 身份 + 真实路径 + 读取后再复核父目录身份（R3-01）
+  let read: Awaited<ReturnType<typeof readOwnedFile>>;
   try {
-    fh = await fs.open(plan.reportPath, 'r');
-  } catch (err: any) {
-    if (err.code === 'ENOENT') return { status: 'missing' };
-    return { status: 'invalid', detail: `无法打开报告文件: ${err.message}` };
-  }
-
-  let stat: import('node:fs').Stats;
-  let buf: Buffer;
-  try {
-    // 确保真实文件路径依然与计划路径完全一致
-    const realFile = await fs.realpath(plan.reportPath);
-    const realDir = await fs.realpath(plan.reportDir);
-    if (realFile !== path.join(realDir, 'vitest-report.json')) {
-      return { status: 'invalid', detail: '报告文件路径发生替换或逃逸' };
-    }
-
-    stat = await fh.stat();
-    if (stat.isSymbolicLink()) return { status: 'invalid', detail: '报告路径是符号链接' };
-    if (!stat.isFile()) return { status: 'invalid', detail: '报告路径不是普通文件' };
-    if (stat.nlink > 1) return { status: 'invalid', detail: '报告文件存在硬链接（可能被复用或预置）' };
-    if (stat.size <= 0 || stat.size > MAX_REPORT_BYTES) return { status: 'invalid', detail: `报告大小异常：${stat.size}` };
-    // 报告必须产生于本次运行窗口内（运行前目录已被清空）
-    if (stat.mtimeMs < window.startMs - 2000) return { status: 'reused', detail: `报告修改时间早于本次运行（${new Date(stat.mtimeMs).toISOString()}）` };
-
-    buf = await fh.readFile();
+    read = await readOwnedFile(plan.ownedReportDir, 'vitest-report.json', { maxBytes: MAX_REPORT_BYTES });
   } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return { status: 'missing' };
     return { status: 'invalid', detail: `无法读取报告：${(e as Error).message}` };
-  } finally {
-    await fh.close().catch(() => undefined);
   }
+  const stat = read.stat;
+  const mtimeMs = Number(stat.mtimeMs);
+  if (mtimeMs < window.startMs - 2000) {
+    return { status: 'reused', detail: `报告修改时间早于本次运行（${new Date(mtimeMs).toISOString()}）` };
+  }
+  const buf = read.buf;
   const sha = createHash('sha256').update(buf).digest('hex');
   const bytes = buf.length;
   let raw: RawVitestReport;
@@ -323,29 +337,20 @@ export async function readVitestReport(
   } catch {
     realRoot = rootDir;
   }
-  for (const tr of raw.testResults as RawTestResult[]) {
-    const name = typeof tr.name === 'string' ? tr.name : '';
-    if (!name) continue;
-    let rel: string;
-    try {
-      rel = path.relative(realRoot, name).split(path.sep).join('/');
-    } catch {
-      rel = name;
-    }
-    executedFiles.push(rel.startsWith('..') ? name : rel);
-  }
+  const execution = buildExecutionManifest(raw.testResults as RawTestResult[], realRoot);
+  executedFiles.push(...execution.files);
   const checks: Record<string, boolean> = {
     regularFile: stat.isFile(),
     notSymlink: !stat.isSymbolicLink(),
-    noHardlink: stat.nlink <= 1,
-    sizeOk: stat.size > 0 && stat.size <= MAX_REPORT_BYTES,
-    mtimeInWindow: stat.mtimeMs >= window.startMs - 2000,
+    noHardlink: stat.nlink <= 1n,
+    sizeOk: stat.size > 0n && stat.size <= BigInt(MAX_REPORT_BYTES),
+    mtimeInWindow: Number(stat.mtimeMs) >= window.startMs - 2000,
     startTimeInWindow: startTime >= window.startMs - 5000 && startTime <= window.endMs + 5000,
     countsConsistent: !countsInconsistent,
     successConsistent: raw.success === (counts.failed === 0),
     testResultsArray: Array.isArray(raw.testResults),
   };
-  return { status: 'ok', sha256: sha, bytes, counts, failedNames: failedNames.slice(0, 50), executedFiles, startTime, problems, checks };
+  return { status: 'ok', sha256: sha, bytes, counts, failedNames: failedNames.slice(0, 50), executedFiles, execution, startTime, problems, checks };
 }
 
 /** 生成报告证据对象（写入任务记录）。 */
@@ -366,6 +371,7 @@ export function buildReportEvidence(opts: {
   return {
     format: 'vitest-json',
     executedFiles: parse.executedFiles,
+    ...(parse.execution ? { execution: parse.execution } : {}),
     pathHash: sha256Text(path.basename(opts.plan.reportDir)).slice(0, 16),
     sha256: parse.sha256,
     bytes: parse.bytes,

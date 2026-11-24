@@ -1,0 +1,14 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r3-probes/p4-git-integrity.probe.ts (6 tests) 6624ms
+   ✓ R3-04 探针 B：超过 500 个路径的真实仓库 (1)
+     ✓ 全量分批比较必须发现第 600 个路径之后的漂移，不能只比对前 500 个 780ms
+   ✓ R3-04 探针 C：特殊文件名走真实保存链路（不得误判漂移） (1)
+     ✓ 任务改动包含 `[abc].txt` 时，保存成功且内容完整 4812ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  20:25:45
+   Duration  6.95s (tests 98%, import 1%, transform 1%)
+

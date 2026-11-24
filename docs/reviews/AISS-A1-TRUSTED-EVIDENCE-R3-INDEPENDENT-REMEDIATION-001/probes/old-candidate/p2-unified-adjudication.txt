@@ -1,0 +1,84 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3-old
+
+ ❯ tests/r3-probes/p2-unified-adjudication.probe.ts (6 tests | 4 failed) 3867ms
+   ❯ R3-02 探针 A：真实退出状态与 verdict 矛盾 (1)
+     × 证据自述 passed 但真实进程退出码非 0 → 不得判为 verified 3021ms
+   ❯ R3-02 探针 B：trust 不符合可信等级 (1)
+     × trust=weak 的证据即使 verdict=passed 也不得判为 verified 112ms
+   ✓ R3-02 探针 C：证据完整性不成立 (1)
+     ✓ 报告完整性校验失败时，即使计数全部通过也不得判为 verified 88ms
+   ✓ R3-02 探针 D：范围变化与真实失败同时存在 (1)
+     ✓ 真实失败优先于范围待确认 → failed（不得降级成可确认放行的 unverified） 101ms
+   ❯ R3-02 探针 E：证据失效与失败事实同时存在 (1)
+     × 重启深度复核判定失效时，已有的真实失败事实仍然优先 → failed 66ms
+   ❯ R3-02 探针 F：runProjectChecks 必须消费统一裁决（不得只认 status 字符串） (1)
+     × 没有身份上下文、因而不存在任何宿主证据的构建“成功”不得算作 checked 478ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r3-probes/p2-unified-adjudication.probe.ts > R3-02 探针 A：真实退出状态与 verdict 矛盾 > 证据自述 passed 但真实进程退出码非 0 → 不得判为 verified
+AssertionError: expected 'verified' not to be 'verified' // Object.is equality
+ ❯ tests/r3-probes/p2-unified-adjudication.probe.ts:108:34
+    106|     const adj = adjudicateTaskEvidence(t);
+    107|     expect(adj.test).toBeTruthy();
+    108|     expect(adj.test!.status).not.toBe('verified');
+       |                                  ^
+    109|     expect(adj.hasFailed).toBe(true);
+    110|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/r3-probes/p2-unified-adjudication.probe.ts > R3-02 探针 B：trust 不符合可信等级 > trust=weak 的证据即使 verdict=passed 也不得判为 verified
+AssertionError: expected 'verified' not to be 'verified' // Object.is equality
+ ❯ tests/r3-probes/p2-unified-adjudication.probe.ts:121:34
+    119|     });
+    120|     const adj = adjudicateTaskEvidence(t);
+    121|     expect(adj.test!.status).not.toBe('verified');
+       |                                  ^
+    122|     expect(adj.test!.status).not.toBe('failed');
+    123|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/r3-probes/p2-unified-adjudication.probe.ts > R3-02 探针 E：证据失效与失败事实同时存在 > 重启深度复核判定失效时，已有的真实失败事实仍然优先 → failed
+AssertionError: expected 'invalidated' to be 'failed' // Object.is equality
+
+Expected: "failed"
+Received: "invalidated"
+
+ ❯ tests/r3-probes/p2-unified-adjudication.probe.ts:162:30
+    160|     });
+    161|     const adj = adjudicateTaskEvidence(t);
+    162|     expect(adj.test!.status).toBe('failed');
+       |                              ^
+    163|     expect(adj.hasFailed).toBe(true);
+    164|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/r3-probes/p2-unified-adjudication.probe.ts > R3-02 探针 F：runProjectChecks 必须消费统一裁决（不得只认 status 字符串） > 没有身份上下文、因而不存在任何宿主证据的构建“成功”不得算作 checked
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/r3-probes/p2-unified-adjudication.probe.ts:176:29
+    174|     const outcome = await runProjectChecks(repo, testSandboxRunner(), …
+    175|     expect(outcome.results.map((r) => r.status)).toEqual(['passed']);
+    176|     expect(outcome.checked).toBe(false);
+       |                             ^
+    177|     expect(outcome.kind).not.toBe('ran');
+    178|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed (6)
+   Start at  20:24:13
+   Duration  4.32s (tests 93%, transform 4%, import 2%)
+

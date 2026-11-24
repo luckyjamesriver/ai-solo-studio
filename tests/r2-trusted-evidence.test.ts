@@ -21,7 +21,7 @@ describe('AISS-A1-R2 专项反向验证 (R2 Negative & Regression Probes)', () =
       await fs.symlink(victim, path.join(worktree, '.studio', 'evidence'));
 
       // 验证 prepareVitestRun 严厉拦截
-      await expect(prepareVitestRun(worktree, 'vitest run')).rejects.toThrow(/包含符号链接/);
+      await expect(prepareVitestRun(worktree, 'vitest run')).rejects.toThrow(/符号链接/);
 
       // 验证外部哨兵目录及文件完好无损（0 污染、0 新增、0 逃逸）
       const victimEntries = await fs.readdir(victim);
@@ -31,7 +31,7 @@ describe('AISS-A1-R2 专项反向验证 (R2 Negative & Regression Probes)', () =
       await fs.rm(tmp, { recursive: true, force: true });
     });
 
-    it('当试图清理指向非受控外部的 plan.reportDir 时，removeSafeSubtree 拒绝删除外部文件', async () => {
+    it('没有创建时所有权记录的计划不得删除任何外部文件（R3-01 后由 owned-dir 统一约束）', async () => {
       const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'r2-01-clean-'));
       const victim = path.join(tmp, 'victim');
       await fs.mkdir(victim);

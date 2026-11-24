@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { git } from '../git/git.js';
 import { pathIdentityHash } from './model.js';
-import type { ConfigFileFingerprint, DetectedTestRunner, ScopeAssessment, ScopeDelta, TestInventory, TestInventoryFile } from './model.js';
+import type { ConfigFileFingerprint, DetectedTestRunner, ExecutionManifest, ScopeAssessment, ScopeDelta, TestInventory, TestInventoryFile } from './model.js';
 
 /**
  * 测试范围清单与完整性指纹（AISS-A1）。
@@ -411,6 +411,8 @@ export function assessScopeChange(opts: {
   currentScriptsDigest?: string | undefined;
   /** 报告里实际执行到的测试文件（相对工作树根）；用于防止只跑一部分测试仍取得可信 PASS */
   executedFiles?: string[] | undefined;
+  /** R3-03：报告里实际执行到的用例身份与执行状态清单（同一文件内的减少/动态跳过/过滤变化） */
+  execution?: ExecutionManifest | undefined;
 }): ScopeAssessment {
   const base = opts.baseline;
   const cur = opts.current;
@@ -507,6 +509,41 @@ export function assessScopeChange(opts: {
     if (missing.length) review.push(`报告只执行了 ${executedSet.size}/${expected.length} 个测试文件，缺少：${missing.slice(0, 5).join('、')}${missing.length > 5 ? ' …' : ''}`);
   }
 
+  // R3-03：同一测试文件内部的用例减少 / 动态跳过 / 过滤变化。文件数与测试总数都不足以证明执行范围一致。
+  if (opts.execution) {
+    const perFile = new Map(opts.execution.perFile.map((f) => [f.file, f]));
+    const dynamicallySkipped: { file: string; skipped: number; staticSkipMarkers: number }[] = [];
+    let expectedCases = 0;
+    let executedCases = 0;
+    let skippedCases = 0;
+    for (const f of cur.files) {
+      // 静态可执行用例：测试块 - 静态 skip/todo 标记（保守下界）
+      const runnable = Math.max(0, f.testBlocks - f.skipMarkers - f.todoMarkers);
+      const real = perFile.get(f.path);
+      expectedCases += runnable;
+      if (!real) {
+        if (runnable > 0) review.push(`静态清单里有 ${runnable} 条可执行用例，但报告没有该文件的执行记录：${f.path}`);
+        continue;
+      }
+      executedCases += real.total;
+      skippedCases += real.skipped;
+      if (real.total < runnable) {
+        review.push(`用例执行减少：${f.path}（静态应有 ${runnable} 条可执行用例，实际执行 ${real.total} 条）`);
+      }
+      if (real.skipped > f.skipMarkers) {
+        dynamicallySkipped.push({ file: f.path, skipped: real.skipped, staticSkipMarkers: f.skipMarkers });
+        review.push(`运行期动态跳过用例：${f.path}（跳过 ${real.skipped} 条，静态 skip 标记只有 ${f.skipMarkers} 条）`);
+      }
+    }
+    executedScope = {
+      ...(executedScope ?? { expectedFiles: cur.files.length, executedFiles: opts.execution.files.length, missing: [] }),
+      expectedCases,
+      executedCases,
+      skippedCases,
+      ...(dynamicallySkipped.length ? { dynamicallySkipped } : {}),
+    };
+  }
+
   if (testFilesModified.length) review.push(`已有测试文件内容发生变化（静态分析无法证明语义未削弱）：${testFilesModified.slice(0, 5).join('、')}${testFilesModified.length > 5 ? ' …' : ''}`);
   if (supportFilesChanged.length) review.push(`测试辅助文件/夹具发生变化：${supportFilesChanged.slice(0, 5).join('、')}${supportFilesChanged.length > 5 ? ' …' : ''}`);
   if (configChanged.length) review.push(`测试配置被修改：${configChanged.join('、')}`);
@@ -542,11 +579,23 @@ export function assessScopeChange(opts: {
   return { kind: stronger ? 'assessed_stronger' : 'assessed_unchanged', baselineAvailable: true, reasons, delta, method };
 }
 
+/** 实际执行清单指纹（来自报告；没有清单时返回 undefined）。 */
+export function executionFingerprintOf(execution: ExecutionManifest | undefined): string | undefined {
+  return execution?.fingerprint;
+}
+
+/** 静态范围指纹 + 实际执行清单指纹的组合值（用于“当前范围”的单一比较键）。 */
+export function combinedScopeFingerprint(staticFingerprint: string, executionFingerprint?: string | undefined): string {
+  return sha256Text(`${staticFingerprint}|${executionFingerprint ?? '-'}`).slice(0, 32);
+}
+
 export interface ScopeFingerprintOptions {
   scriptsDigest?: string;
   packageLockDigest?: string;
   executedFiles?: string[];
   executionCounts?: { passed: number; failed: number; skipped: number; total: number };
+  /** R3-03：实际执行清单（真实用例身份 + 状态）；提供时优先用它计算执行部分 */
+  execution?: ExecutionManifest;
 }
 
 export function scopeFingerprint(
@@ -558,6 +607,7 @@ export function scopeFingerprint(
   const cfg = [...configs].sort((a, b) => (a.path < b.path ? -1 : 1)).map((c) => `${c.path}:${c.sha256}`).join(',');
   const executed = extra?.executedFiles ? [...extra.executedFiles].sort().join(',') : '-';
   const counts = extra?.executionCounts ? `${extra.executionCounts.total}:${extra.executionCounts.passed}:${extra.executionCounts.failed}:${extra.executionCounts.skipped}` : '-';
+  const cases = extra?.execution?.fingerprint ?? '-';
   const parts = [
     inv.digest,
     cfg,
@@ -566,6 +616,7 @@ export function scopeFingerprint(
     extra?.packageLockDigest ?? '-',
     executed,
     counts,
+    cases,
   ];
   return sha256Text(parts.join('|')).slice(0, 32);
 }

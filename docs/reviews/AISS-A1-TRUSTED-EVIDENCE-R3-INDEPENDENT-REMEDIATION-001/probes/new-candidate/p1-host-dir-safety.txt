@@ -1,0 +1,10 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r3-probes/p1-host-dir-safety.probe.ts (4 tests) 30ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  20:25:33
+   Duration  250ms (transform 36%, tests 35%, import 25%, worker 3%)
+

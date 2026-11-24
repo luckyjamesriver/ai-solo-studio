@@ -1,25 +1,28 @@
 import { pathIdentityHash, type HostCheckEvidence, type CheckUnknownReason, type ConfigFingerprint } from './model.js';
-import type { StoredCheckProof, Task } from '../task/model.js';
+import type { SaveRecord, StoredCheckProof, Task } from '../task/model.js';
 import type { CheckResult } from '../checks/scripts.js';
 
 /**
- * 统一可信证据裁决入口（R1-03 / R1-05）。
+ * 统一可信证据裁决入口（R1-03 / R1-05 / R3-02）。
  *
- * 所有展示与门禁都必须经过这里，禁止各模块自行解释 `passed`：
+ * 所有展示与门禁都必须经过这里，禁止各模块自行解释 `passed` 或 `status` 字符串：
  *  - 验收卡（card.ts）
  *  - 检查依据页（proof.ts）
  *  - 保存门禁（save-rules.ts + TaskRunner.doSave/previewSave）
- *  - 历史轮次（view.ts / history）
+ *  - 试合并一致性（runner.trialEvidenceInconsistency）
+ *  - 历史轮次与已保存记录（view.ts / history.ts / task-view.ts）
  *  - ChatGPT 反馈包（task-view.ts -> chatgptFeedback）
  *
- * 裁决顺序（失败优先、身份优先）：
+ * 裁决顺序（失败优先、归属优先、证据完整优先）：
  *  1. 没有宿主证据（旧记录）→ 历史未核实（绝不因旧卡片写着 verified 就通过）；
- *  2. 证据类型 / 任务 / 轮次 / 验收版本 / 被测内容 / 项目根 / 工作树身份不一致 → 证据失效；
- *  3. 深度复核（重启后配置漂移）→ 证据失效；
- *  4. 证据自标失效 → 失效；
+ *  2. 证据不属于本任务 / 本轮次 / 本检查项 → 失效（失败事实不能跨任务借用）；
+ *  3. **真实失败事实优先**：verdict=failed、真实退出码非 0 / 未正常结束、报告内用例失败。
+ *     即使同时存在范围变化、证据失效、深度复核问题，也必须判 failed，不得降级为待确认；
+ *  4. 其余身份不一致 / 深度复核失效 / 自标失效 → 证据失效；
  *  5. 测试范围被削弱/变化且没有匹配的用户确认 → unverified（阻断自动通过）；
- *  6. 真实失败 / 未执行 / 测试结构性证据不足 → 对应状态；
- *  7. 只有全部通过才是 verified。
+ *  6. 未执行 / 无结构化证据 → 对应状态；
+ *  7. verdict=passed 仍须逐项核对：trust 必须是 trusted、报告完整性、实际执行、计数与通过数；
+ *  8. 只有以上全部成立才是 verified。
  */
 
 export type AdjudicatedStatus = 'verified' | 'failed' | 'unverified' | 'not_checked' | 'invalidated';
@@ -38,6 +41,8 @@ export interface CheckAdjudication {
 
 export interface ScopeReviewBinding {
   scopeFingerprint: string;
+  /** R3-03：用户确认时绑定的实际执行清单指纹（文件 + 用例身份 + 执行状态） */
+  executionFingerprint?: string;
   contentFingerprint: string;
   acceptanceVersion: string;
   confirmedAt?: string | undefined;
@@ -68,21 +73,60 @@ function hashPath(p: string): string {
   return pathIdentityHash(p);
 }
 
+/** 配置指纹的稳定键（覆盖有效配置、脚本、锁文件、运行器入口与可验证依赖）。 */
 export function configKey(cfg: ConfigFingerprint): string {
-  // 与 model.ts 的 configFingerprintKey 保持一致（此处避免循环依赖维护一份等价实现）
   const files = [...cfg.testConfigFiles].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).map((c) => `${c.path}:${c.sha256}`).join(',');
-  return [cfg.scriptsDigest ?? '-', cfg.packageLockDigest ?? '-', cfg.runnerPackage ? `${cfg.runnerPackage.name}@${cfg.runnerPackage.version}:${cfg.runnerPackage.packageJsonSha256}` : '-', cfg.testInventoryDigest ?? '-', String(cfg.testFileCount ?? 0), String(cfg.testBlockCount ?? 0), String(cfg.assertionCount ?? 0), String(cfg.skipMarkerCount ?? 0), String(cfg.onlyMarkerCount ?? 0), files].join('|');
+  const deps = [...(cfg.deps ?? [])].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).map((d) => `${d.name}@${d.version}:${d.packageJsonSha256}`).join(',');
+  return [
+    cfg.scriptsDigest ?? '-',
+    cfg.packageLockDigest ?? '-',
+    cfg.runnerPackage ? `${cfg.runnerPackage.name}@${cfg.runnerPackage.version}:${cfg.runnerPackage.packageJsonSha256}` : '-',
+    cfg.runnerEntry ? `${cfg.runnerEntry.pathHash}:${cfg.runnerEntry.sha256}` : '-',
+    deps || '-',
+    cfg.testInventoryDigest ?? '-',
+    String(cfg.testFileCount ?? 0),
+    String(cfg.testBlockCount ?? 0),
+    String(cfg.assertionCount ?? 0),
+    String(cfg.skipMarkerCount ?? 0),
+    String(cfg.onlyMarkerCount ?? 0),
+    files,
+  ].join('|');
 }
 
-function identityProblem(ev: HostCheckEvidence, ctx: EvidenceIdentityContextForAdjudication): string | undefined {
-  if (ctx.kind && ev.kind !== ctx.kind) return '证据类型与检查项不符，已失效。';
+/** 归属问题（任务 / 轮次 / 检查项）：这些不成立时，证据里的“失败”也不能算到本任务头上。 */
+function attributionProblem(ev: HostCheckEvidence, ctx: EvidenceIdentityContextForAdjudication, name: 'build' | 'test'): string | undefined {
+  if (ev.kind !== name) return '证据类型与检查项不符，已失效。';
   if (ev.identity.taskId !== ctx.taskId) return '证据属于另一个任务，已失效。';
   if (ev.identity.round !== ctx.round) return '证据属于另一轮次，已失效。';
+  return undefined;
+}
+
+/** 其余身份问题（验收版本 / 被测内容 / 项目 / 副本）。 */
+function identityProblem(ev: HostCheckEvidence, ctx: EvidenceIdentityContextForAdjudication): string | undefined {
   if (ctx.historical) return undefined;
   if ((ev.identity.acceptanceRev ?? 0) !== (ctx.acceptanceRev ?? 0)) return '验收版本已经变化，旧证据已失效。';
   if (ctx.acceptedTree && ev.identity.testedTree !== ctx.acceptedTree) return '被测内容与验收冻结内容不一致，证据已失效。';
   if (ctx.projectRoot && ev.identity.projectRootHash !== hashPath(ctx.projectRoot)) return '证据来自另一个项目，已失效。';
   if (ctx.worktreePath && ev.identity.worktreePathHash !== hashPath(ctx.worktreePath)) return '证据来自另一个任务副本，已失效。';
+  return undefined;
+}
+
+/**
+ * 真实失败事实：只看宿主记录的事实本身，不看 verdict 自述。
+ * 真实退出状态与 verdict 矛盾时，以真实退出状态为准（失败优先）。
+ */
+export function failureFactDetail(ev: HostCheckEvidence, name: 'build' | 'test'): string | undefined {
+  const failedText = name === 'build' ? '构建没有通过' : '自动测试没有通过';
+  if (ev.verdict === 'failed') return failedText;
+  if (ev.run.exitKind !== 'exited') {
+    return name === 'build' ? '构建进程没有正常结束' : '自动测试进程没有正常结束';
+  }
+  if (ev.run.exitCode === null) return `${name === 'build' ? '构建' : '自动测试'}进程没有返回真实退出码，不能算通过`;
+  if (ev.run.exitCode !== 0) {
+    return `${name === 'build' ? '构建' : '自动测试'}真实进程退出码 ${ev.run.exitCode}（与“通过”的结论矛盾）`;
+  }
+  const counts = ev.report?.counts;
+  if (counts && counts.failed > 0) return `自动测试报告里有 ${counts.failed} 项真实失败`;
   return undefined;
 }
 
@@ -95,30 +139,29 @@ function countsOf(ev: HostCheckEvidence | undefined): { passed: number; failed: 
 export function adjudicateEvidence(ev: HostCheckEvidence | undefined, name: 'build' | 'test', ctx: EvidenceIdentityContextForAdjudication): CheckAdjudication {
   const base = { name, counts: name === 'test' ? countsOf(ev) : undefined, ...(ev ? { evidenceId: ev.identity.evidenceId } : {}) };
   const unverified = (reason: CheckUnknownReason, detail: string): CheckAdjudication => ({ ...base, status: 'unverified', reason, detail });
+  const invalidated = (detail: string): CheckAdjudication => ({ ...base, status: 'invalidated', reason: 'evidence_invalidated', detail });
+  const failed = (detail: string): CheckAdjudication => ({ ...base, status: 'failed', detail });
 
   if (!ev) {
     return unverified('legacy_unverified', '历史记录未核实：没有可核验的宿主证据，不能算通过，也不能把旧结论当作可信 PASS。');
   }
-  const problem = identityProblem(ev, { ...ctx, kind: name });
-  if (problem) return { ...base, status: 'invalidated', reason: 'evidence_invalidated', detail: problem };
-  if (ctx.deepInvalidReason) {
-    return { ...base, status: 'invalidated', reason: 'evidence_invalidated', detail: `检查证据已失效：${ctx.deepInvalidReason}` };
-  }
+  // 1) 归属：不属于本任务/轮次/检查项的证据，其“失败”也不能借用
+  const attr = attributionProblem(ev, ctx, name);
+  if (attr) return invalidated(attr);
+
+  // 2) 失败事实优先（含真实退出状态与 verdict 矛盾、退出码缺失、报告内真实失败）
+  const failure = failureFactDetail(ev, name);
+  if (failure) return failed(failure);
+
+  // 3) 其余身份 / 深度复核 / 自标失效
+  const problem = identityProblem(ev, ctx);
+  if (problem) return invalidated(problem);
+  if (ctx.deepInvalidReason) return invalidated(`检查证据已失效：${ctx.deepInvalidReason}`);
   if (ev.valid === false) {
-    return { ...base, status: 'invalidated', reason: (ev.invalidReason as CheckUnknownReason | undefined) ?? 'evidence_invalidated', detail: `证据在生成时已被标记为失效${ev.invalidReason ? `（${ev.invalidReason}）` : ''}。` };
+    return invalidated(`证据在生成时已被标记为失效${ev.invalidReason ? `（${ev.invalidReason}）` : ''}。`);
   }
 
-  // R2-02：失败优先不变量 —— 无论范围是削弱还是待核对，真实失败（verdict === 'failed' 或报告内用例失败）绝对优先判定，
-  // 严禁将真实失败降级为未核实或范围待确认！
-  if (ev.verdict === 'failed') {
-    return { ...base, status: 'failed', detail: name === 'build' ? '构建没有通过' : '自动测试没有通过' };
-  }
-  const report = ev.report;
-  if (report && report.counts && report.counts.failed > 0) {
-    return { ...base, status: 'failed', detail: '自动测试没有通过' };
-  }
-
-  // 用户确认的范围绑定：只有三个指纹全部与当前证据一致时才接受
+  // 4) 测试范围被削弱 / 变化：没有匹配的用户确认就阻断
   const scopeNeedsReview = name === 'test' && (ev.scope.kind === 'assessed_weakened' || ev.scope.kind === 'assessed_needs_review');
   let scopeConfirmed = false;
   if (scopeNeedsReview) {
@@ -126,6 +169,7 @@ export function adjudicateEvidence(ev: HostCheckEvidence | undefined, name: 'bui
     const matches = !!review
       && !!review.confirmedAt
       && review.scopeFingerprint === (ev.scope.fingerprint ?? configKey(ev.config))
+      && (review.executionFingerprint ?? '') === (ev.scope.executionFingerprint ?? '')
       && review.contentFingerprint === ev.identity.testedTree
       && review.acceptanceVersion === (ctx.acceptanceVersion ?? '');
     if (!matches) {
@@ -139,32 +183,46 @@ export function adjudicateEvidence(ev: HostCheckEvidence | undefined, name: 'bui
     return unverified(ev.reason ?? 'no_structured_evidence', '命令执行了，但没有取得可信的结构化测试证据，不能算通过。');
   }
 
-  // verdict === 'passed'：仍需逐项核对结构性证据
+  // 5) verdict === 'passed'：仍须逐项核对结构性证据，尤其是 trust 等级
+  if (ev.trust !== 'trusted') {
+    return unverified('no_structured_evidence', '证据可信等级不足（只有命令级观察，没有可信的结构化证据），不能算通过。');
+  }
   if (name === 'build') {
     const ok = ev.run.exitKind === 'exited' && ev.run.exitCode === 0;
     return ok ? { ...base, status: 'verified', detail: '构建通过（真实进程退出码 0）。' } : unverified('no_structured_evidence', '构建没有可信的进程证据，不能算通过。');
   }
+  const report = ev.report;
   if (!report) return unverified('report_missing', '没有结构化测试报告，不能算通过。');
   if (!report.integrity.ok) return unverified('report_inconsistent', '结构化测试报告的完整性校验未通过，不能算通过。');
   const c = report.counts;
   if (!report.executedFiles || report.executedFiles.length === 0) return unverified('tests_not_executed', '报告没有记录任何实际执行的测试文件，不能算通过。');
   if (c.total === 0) return unverified('tests_not_executed', '报告显示没有执行任何测试用例，不能算通过。');
-  if (c.failed > 0) return { ...base, status: 'failed', detail: '自动测试没有通过' };
+  if (c.failed > 0) return failed('自动测试没有通过');
   if (c.passed === 0) return unverified('all_tests_skipped', '没有真实执行通过的测试用例，不能算通过。');
   return { ...base, status: 'verified', detail: `自动测试通过（${c.passed} 项通过 / ${c.failed} 项失败 / ${c.skipped} 项跳过）。`, ...(scopeConfirmed ? { scopeConfirmed: true } : {}) };
 }
 
-/** 从已存储的检查凭证裁决（证据详情页 / 历史 / 保存门禁共用）。 */
+/**
+ * 从已存储的检查凭证裁决（证据详情页 / 历史 / 保存门禁共用）。
+ * 记录里的 `status` 本身也是事实：失败就是失败；记录为未核实时，即使证据自称通过也不能升级为 verified。
+ */
 export function adjudicateStoredProof(p: StoredCheckProof, ctx: Omit<EvidenceIdentityContextForAdjudication, 'kind'>): CheckAdjudication {
   if (p.status === 'not_available') {
     return { name: p.name, status: 'not_checked', reason: (p.evidence?.reason as CheckUnknownReason | undefined) ?? 'no_script', detail: p.unavailableReason ?? '未检查。' };
   }
+  if (p.status === 'failed') {
+    // 记录下来的真实失败事实：即使证据字段矛盾，也不得改写成通过
+    return { name: p.name, status: 'failed', detail: p.name === 'build' ? '构建没有通过（历史记录）' : '自动测试没有通过（历史记录）' };
+  }
   if (!p.evidence) {
     // 旧记录没有宿主证据：即使卡片写着 passed 也只是历史结论，不得变成可信 PASS
-    if (p.status === 'failed') return { name: p.name, status: 'failed', detail: p.name === 'build' ? '构建没有通过（历史记录）' : '自动测试没有通过（历史记录）' };
     return { name: p.name, status: 'unverified', reason: 'legacy_unverified', detail: '历史记录未核实：旧记录没有结构化宿主证据，不能算通过。' };
   }
-  return adjudicateEvidence(p.evidence, p.name, { ...ctx, kind: p.name });
+  const adj = adjudicateEvidence(p.evidence, p.name, { ...ctx, kind: p.name });
+  if (p.status === 'unverified' && adj.status === 'verified') {
+    return { name: p.name, status: 'unverified', reason: 'no_structured_evidence', detail: '记录状态与证据内容矛盾（记录为未核实），不能升级为可信通过。' };
+  }
+  return adj;
 }
 
 /** 从刚运行完的检查结果裁决（runner → 验收卡）。 */
@@ -172,8 +230,11 @@ export function adjudicateCheckResult(c: CheckResult, ctx: EvidenceIdentityConte
   if (c.status === 'not_available') {
     return { name: c.name, status: 'not_checked', reason: c.unknownReason, detail: c.reason };
   }
+  if (c.status === 'failed') {
+    return { name: c.name, status: 'failed', detail: c.name === 'build' ? '构建没有通过' : '自动测试没有通过' };
+  }
   if (c.evidence) return adjudicateEvidence(c.evidence, c.name, { ...ctx, kind: c.name });
-  if (c.status === 'failed') return { name: c.name, status: 'failed', detail: c.name === 'build' ? '构建没有通过' : '自动测试没有通过' };
+  // 没有宿主证据的“成功”不得算通过：生产路径不得只凭 status 字符串
   return { name: c.name, status: 'unverified', reason: c.status === 'unverified' ? c.unknownReason : 'no_structured_evidence', detail: '没有可核验的宿主证据，不能算通过。' };
 }
 
@@ -218,4 +279,37 @@ export function adjudicateRoundChecks(
 ): CheckAdjudication[] {
   const ctx: Omit<EvidenceIdentityContextForAdjudication, 'kind'> = { taskId: opts.taskId, round: opts.round, historical: true, ...(opts.acceptedTree ? { acceptedTree: opts.acceptedTree } : {}) };
   return (checks ?? []).map((p) => adjudicateStoredProof(p, ctx));
+}
+
+export type SavedChecksStatus = 'verified' | 'failed' | 'unverified' | 'not_checked' | 'historical_unverified';
+
+/**
+ * 已保存记录的检查结论（历史展示 / 任务列表 / 验收页共用）。
+ * - 没有 checked → 未检查；
+ * - checked 且有 trialChecks → 必须按统一裁决全部 verified 才算“检查通过”；
+ * - checked 但没有结构化试检查证据（旧记录）→ 只能显示“历史记录未核实”，不得虚构历史通过。
+ */
+export function adjudicateSaveRecord(
+  rec: Pick<SaveRecord, 'checked' | 'evidenceIds' | 'trialChecks'> | undefined,
+  ctx: { taskId: string; round: number; acceptedTree?: string | undefined },
+): { status: SavedChecksStatus; checks: CheckAdjudication[] } {
+  if (!rec || rec.checked !== true) return { status: 'not_checked', checks: [] };
+  const checks = (rec.trialChecks ?? []).map((p) =>
+    adjudicateStoredProof(p, { taskId: ctx.taskId, round: ctx.round, historical: true, ...(ctx.acceptedTree ? { acceptedTree: ctx.acceptedTree } : {}) }),
+  );
+  if (checks.length === 0) return { status: 'historical_unverified', checks };
+  if (checks.some((c) => c.status === 'failed')) return { status: 'failed', checks };
+  if (checks.every((c) => c.status === 'verified')) return { status: 'verified', checks };
+  return { status: 'unverified', checks };
+}
+
+/**
+ * 保存记录的检查结论文案（统一裁决）。任何“检查通过”都必须来自统一的证据裁决，
+ * 生产展示路径不得只凭 `checked` 或 `status` 字符串。
+ */
+export function saveChecksTextFor(t: Pick<Task, 'id' | 'currentRound' | 'acceptedTree' | 'saveRecord'>): '检查通过' | '未检查' | '检查通过（历史记录未核实）' {
+  const r = adjudicateSaveRecord(t.saveRecord, { taskId: t.id, round: t.currentRound ?? 1, ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}) });
+  if (r.status === 'not_checked') return '未检查';
+  if (r.status === 'verified') return '检查通过';
+  return '检查通过（历史记录未核实）';
 }

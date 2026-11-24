@@ -1,0 +1,14 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r3-probes/p2-unified-adjudication.probe.ts (6 tests) 3292ms
+   ✓ R3-02 探针 A：真实退出状态与 verdict 矛盾 (1)
+     ✓ 证据自述 passed 但真实进程退出码非 0 → 不得判为 verified 2561ms
+   ✓ R3-02 探针 F：runProjectChecks 必须消费统一裁决（不得只认 status 字符串） (1)
+     ✓ 没有身份上下文、因而不存在任何宿主证据的构建“成功”不得算作 checked 486ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  20:25:33
+   Duration  3.73s (tests 92%, transform 4%, import 3%)
+

@@ -675,6 +675,12 @@ describe('阶段 1 补丁 · 未检查时必须由用户确认', () => {
       'package.json': JSON.stringify({ scripts: { build: 'node -e "process.exit(0)"', test: 'node -e "process.exit(0)"' } }),
     });
     const digest = await scriptsDigest(withScripts);
+    // R3-02：runProjectChecks 的分类由统一证据裁决得出，因此“通过”必须有宿主证据（需要身份上下文）。
+    const ident = async (dir: string) => {
+      const head = (await G.git(dir, ['rev-parse', 'HEAD'])).trim();
+      const tree = (await G.git(dir, ['rev-parse', 'HEAD^{tree}'])).trim();
+      return { projectRoot: dir, taskId: 'save-safety', round: 1, acceptanceRev: 1, testedTree: tree, baselineRev: head };
+    };
 
     // 沙箱不可用：无 runner 与 runner 返回 unavailable
     const noRunner = await runProjectChecks(withScripts, undefined, { authorizedDigest: digest });
@@ -689,7 +695,7 @@ describe('阶段 1 补丁 · 未检查时必须由用户确认', () => {
     expect(reauthRes.reasonText).toContain('这次合并改动了项目的检查方式，所以没法自动检查。');
 
     // 非 Vitest 测试脚本：命令退出 0 但拿不到可信测试证据 → unverified（不是 ran，更不是通过）
-    const unverifiedRes = await runProjectChecks(withScripts, testSandboxRunner(), { authorizedDigest: digest });
+    const unverifiedRes = await runProjectChecks(withScripts, testSandboxRunner(), { authorizedDigest: digest, identity: await ident(withScripts) });
     expect(unverifiedRes).toMatchObject({ kind: 'unverified', unavailableReason: 'evidence_unverified', checked: false, summary: { passed: 1, failed: 0 } });
     expect(unverifiedRes.checkedAt).toBeTruthy();
     expect(unverifiedRes.unverified.map((c) => c.name)).toEqual(['test']);
@@ -702,14 +708,14 @@ describe('阶段 1 补丁 · 未检查时必须由用户确认', () => {
     });
     await useRealVitest(okRepo);
     const okDigest = await scriptsDigest(okRepo);
-    const ranOk = await runProjectChecks(okRepo, testSandboxRunner(), { authorizedDigest: okDigest });
+    const ranOk = await runProjectChecks(okRepo, testSandboxRunner(), { authorizedDigest: okDigest, identity: await ident(okRepo) });
     expect(ranOk).toMatchObject({ kind: 'ran', checked: true, summary: { passed: 2, failed: 0 } });
     expect(ranOk.checkedAt).toBeTruthy();
     expect(ranOk.unverified).toEqual([]);
 
     const failRepo = await makeRepo({ 'package.json': JSON.stringify({ scripts: { test: 'node -e "process.exit(1)"' } }) });
     const failDigest = await scriptsDigest(failRepo);
-    const ranFail = await runProjectChecks(failRepo, testSandboxRunner(), { authorizedDigest: failDigest });
+    const ranFail = await runProjectChecks(failRepo, testSandboxRunner(), { authorizedDigest: failDigest, identity: await ident(failRepo) });
     expect(ranFail).toMatchObject({ kind: 'ran', checked: false, summary: { passed: 0, failed: 1 } });
     expect(ranFail.failed.map((c) => c.name)).toEqual(['test']);
   });

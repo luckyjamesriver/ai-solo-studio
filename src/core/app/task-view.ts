@@ -10,7 +10,7 @@ import { extractIncomplete } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
 import { evidenceStatusText } from '../acceptance/card.js';
-import { saveChecksText } from '../task/model.js';
+import { saveChecksTextFor } from '../evidence/adjudicate.js';
 import { adjudicateTaskEvidence } from '../evidence/adjudicate.js';
 import { MESSAGES } from '../task/messages.js';
 import {
@@ -534,7 +534,7 @@ export function buildTaskView(
     ...(executorNotice ? { executorNotice } : {}),
     round: task.currentRound ?? (task.rounds?.length ? Math.max(...task.rounds.map((r) => r.round)) : 1),
     handoff,
-    saveCheckText: task.saveRecord ? saveChecksText(task.saveRecord) : null,
+    saveCheckText: task.saveRecord ? saveChecksTextFor(task) : null,
     planUnreviewed: !!task.planUnreviewed,
     layer: classifyTaskState(task, { isLiveRunning: opts.running, ...(opts.discussion ? { discussion: opts.discussion } : {}) }),
     createdAt: task.createdAt,

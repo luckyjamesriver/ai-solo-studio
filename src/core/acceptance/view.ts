@@ -10,7 +10,6 @@ import { canFire } from '../task/state.js';
 import { MESSAGES, uncheckedReasonText } from '../task/messages.js';
 import type { UnavailableReason, UncheckedKind } from '../checks/scripts.js';
 import { saveBlockerCodes, type BlockerCode } from '../task/save-rules.js';
-import { saveChecksText } from '../task/model.js';
 import type { OpFail } from '../task/runner.js';
 import { summarizeCapabilities } from '../app/permission-text.js';
 import { STATE_TEXT } from '../app/task-view.js';
@@ -18,7 +17,7 @@ import type { DeniedOperation, ExitOutcome } from '../executor/types.js';
 import type { FileChange } from '../git/git.js';
 import type { AcceptanceCard } from './card.js';
 import { extractIncomplete, type IncompleteReport } from './incomplete.js';
-import { adjudicateRoundChecks, adjudicateTaskEvidence, type CheckAdjudication } from './verdict.js';
+import { adjudicateRoundChecks, adjudicateTaskEvidence, saveChecksTextFor, type CheckAdjudication } from './verdict.js';
 import { buildRoundProof, buildTaskProof, buildTaskProofFromParts, type ProofChangeEntry, type ProofDeniedEntry, type ProofTab, type SingleCheckProof, type TaskProofView, type TestCaseProof } from './proof.js';
 import type { ChangePreview } from './snippets.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from './texts.js';
@@ -992,7 +991,7 @@ export function toUserView(t: Task, ctx: ViewContext = { busy: false }): UserAcc
     saveRecord: t.saveRecord
       ? {
           checked: t.saveRecord.checked === true,
-          checksText: saveChecksText(t.saveRecord),
+          checksText: saveChecksTextFor(t),
           ...(t.saveRecord.checked !== true && t.saveRecord.uncheckedKind ? { uncheckedKind: t.saveRecord.uncheckedKind } : {}),
           ...(t.saveRecord.checked !== true && t.saveRecord.uncheckedConfirmedAt ? { uncheckedConfirmedAt: t.saveRecord.uncheckedConfirmedAt } : {}),
           passedCount: t.saveRecord.checksSummary?.passed ?? 0,

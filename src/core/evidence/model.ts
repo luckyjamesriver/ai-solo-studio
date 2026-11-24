@@ -121,10 +121,46 @@ export interface TestCounts {
   todo: number;
 }
 
+/** 单条测试用例的真实执行结果（身份 + 状态）。 */
+export interface ExecutionCaseResult {
+  file: string;
+  name: string;
+  status: 'passed' | 'failed' | 'skipped' | 'todo' | 'other';
+}
+
+/** 每个测试文件的用例执行统计（与静态测试块数对账用）。 */
+export interface ExecutionFileCounts {
+  file: string;
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  todo: number;
+}
+
+/**
+ * 实际执行清单（R3-03）：文件、用例身份、执行状态与计数。
+ * 静态范围指纹看不见「同一文件内用例减少/动态跳过/过滤变化」，必须由这份清单补足。
+ */
+export interface ExecutionManifest {
+  schemaVersion: 1;
+  files: string[];
+  perFile: ExecutionFileCounts[];
+  /** 对**全部**用例（文件 + 名称 + 状态）计算的摘要；cases 可能只是截断后的样本 */
+  casesDigest: string;
+  cases: ExecutionCaseResult[];
+  casesTruncated: boolean;
+  counts: TestCounts;
+  /** 实际执行清单指纹（文件 + 每文件统计 + 用例身份与状态摘要 + 计数） */
+  fingerprint: string;
+}
+
 export interface TestReportEvidence {
   format: 'vitest-json';
   /** 报告里实际执行到的测试文件（相对被测工作树根） */
   executedFiles: string[];
+  /** R3-03：实际执行到的用例身份与执行状态清单（可选，只为旧记录兼容） */
+  execution?: ExecutionManifest;
   /** 报告路径哈希（不保存绝对路径） */
   pathHash: string;
   sha256: string;
@@ -158,8 +194,18 @@ export interface ScopeDelta {
   runnerChanged: boolean;
   lockfileChanged: boolean;
   scriptsChanged: boolean;
-  /** 实际执行的文件范围 vs 预期范围（防止只跑部分测试仍取得可信 PASS） */
-  executedScope?: { expectedFiles: number; executedFiles: number; missing: string[] };
+  /** 实际执行的文件/用例范围 vs 静态预期范围（防止只跑部分测试或动态跳过仍取得可信 PASS） */
+  executedScope?: {
+    expectedFiles: number;
+    executedFiles: number;
+    missing: string[];
+    /** 静态可执行用例数 vs 本次真实执行用例数 */
+    expectedCases?: number;
+    executedCases?: number;
+    skippedCases?: number;
+    /** 运行期被动态跳过（静态没有 skip 标记）的用例，按文件聚合 */
+    dynamicallySkipped?: { file: string; skipped: number; staticSkipMarkers: number }[];
+  };
 }
 
 /** 相对「任务基线的测试范围」的评估。 */
@@ -172,8 +218,10 @@ export interface ScopeAssessment {
   delta?: ScopeDelta;
   /** 评估方法说明：保守静态核对 + 显式人工复核；不声称能证明测试语义绝对未被削弱。 */
   method?: 'conservative-static' | 'none';
-  /** 本次评估时的测试范围指纹（测试清单 + 配置 + 运行器），用于绑定用户确认与保存前试合并校验 */
+  /** 本次评估时的**静态**范围指纹（测试清单 + 配置 + 运行器入口/依赖），用于绑定用户确认 */
   fingerprint?: string;
+  /** 本次评估时的**实际执行清单**指纹（文件 + 用例身份 + 执行状态）；静态范围相同也可能不同 */
+  executionFingerprint?: string;
 }
 
 export interface HostCheckEvidence {
@@ -242,10 +290,17 @@ export function configFingerprintKey(cfg: ConfigFingerprint): string {
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
     .map((c) => `${c.path}:${c.sha256}`)
     .join(',');
+  // R3-03：静态范围必须覆盖运行器入口与实际依赖，否则“换掉运行器入口/依赖”不会改变指纹
+  const deps = [...(cfg.deps ?? [])]
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map((d) => `${d.name}@${d.version}:${d.packageJsonSha256}`)
+    .join(',');
   return [
     cfg.scriptsDigest ?? '-',
     cfg.packageLockDigest ?? '-',
     cfg.runnerPackage ? `${cfg.runnerPackage.name}@${cfg.runnerPackage.version}:${cfg.runnerPackage.packageJsonSha256}` : '-',
+    cfg.runnerEntry ? `${cfg.runnerEntry.pathHash}:${cfg.runnerEntry.sha256}` : '-',
+    deps || '-',
     cfg.testInventoryDigest ?? '-',
     String(cfg.testFileCount ?? 0),
     String(cfg.testBlockCount ?? 0),

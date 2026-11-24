@@ -678,8 +678,9 @@ describe('安全基线（防回归）', () => {
     });
 
     it('持久化文件原语（persistence/files）只能被这几个模块引用（清单只许减少）', () => {
-      // AISS-A1：evidence/vitest.ts 只通过 persistence/files 的 makeDir/removeTree 创建与清理自己的单次运行临时报告目录（不放宽清单边界）
-      const ALLOWED = ['src/core/checks/scripts.ts', 'src/core/evidence/vitest.ts', 'src/core/git/git.ts', 'src/core/thinking/claude-cli.ts', 'src/core/thinking/codex.ts', 'src/core/thinking/flow/store.ts'];
+      // AISS-A1-R3：evidence/vitest.ts 不再使用旧的 removeSafeSubtree（它重新信任可被替换的父路径），
+      // 改为 persistence/owned-dir.ts 的「创建时所有权 + 身份/真实路径复核」；清单只减少、不放宽。
+      const ALLOWED = ['src/core/checks/scripts.ts', 'src/core/git/git.ts', 'src/core/thinking/claude-cli.ts', 'src/core/thinking/codex.ts', 'src/core/thinking/flow/store.ts'];
       const users = sources.filter(([f, s]) => !inPersistence(f) && importsOf(stripComments(s)).some((i) => PERSIST_FILES.test(i))).map(([f]) => rel(f));
       expect(users.sort()).toEqual(ALLOWED);
       expect('../../persistence/files.js').toMatch(PERSIST_FILES);

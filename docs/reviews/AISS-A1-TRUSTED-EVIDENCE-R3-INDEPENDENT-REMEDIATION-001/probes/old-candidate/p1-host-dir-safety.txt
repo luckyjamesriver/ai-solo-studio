@@ -1,0 +1,66 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3-old
+
+ ❯ tests/r3-probes/p1-host-dir-safety.probe.ts (4 tests | 3 failed) 70ms
+   ❯ R3-01 探针 A：.studio 父目录被替换为指向外部目录的符号链接 (1)
+     × 清理不得删除外部目录里的任何文件（外部父子关系自洽也不可信） 22ms
+   ❯ R3-01 探针 B：目录身份相同但路径已离开授权根（移动后符号链接指回） (1)
+     × 即使 dev/ino 与创建时一致，只要真实路径离开授权根就拒绝清理 12ms
+   ❯ R3-01 探针 C：.studio/evidence 被替换为外部符号链接（R2 场景回归） (1)
+     × 清理不得删除外部 evidence 目录内容 19ms
+   ✓ R3-01 探针 D：报告文件被换成指向外部文件的符号链接 / 硬链接 (1)
+     ✓ 读取必须拒绝符号链接报告，且清理只删链接本身、不触碰外部文件内容 16ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/r3-probes/p1-host-dir-safety.probe.ts > R3-01 探针 A：.studio 父目录被替换为指向外部目录的符号链接 > 清理不得删除外部目录里的任何文件（外部父子关系自洽也不可信）
+AssertionError: promise rejected "Error: ENOENT: no such file or directory,… { …(4) }" instead of resolving
+ ❯ tests/r3-probes/p1-host-dir-safety.probe.ts:61:53
+     59|
+     60|     await assertSentinel(outside);
+     61|     await expect(fs.readFile(externalReport, 'utf8')).resolves.toBe('O…
+       |                                                     ^
+     62|     // 外部目录本身也必须还在
+     63|     await expect(fs.stat(outside.dir)).resolves.toBeTruthy();
+
+Caused by: Error: ENOENT: no such file or directory, open '/private/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r3p1-outside-i3uOJ1/evidence/1a94e1ab68f195c759b0bbd580013794/EXTERNAL_REPORT.txt'
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errno: -2, code: 'ENOENT', syscall: 'open', path: '/private/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r3p1-outside-i3uOJ1/evidence/1a94e1ab68f195c759b0bbd580013794/EXTERNAL_REPORT.txt' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/r3-probes/p1-host-dir-safety.probe.ts > R3-01 探针 B：目录身份相同但路径已离开授权根（移动后符号链接指回） > 即使 dev/ino 与创建时一致，只要真实路径离开授权根就拒绝清理
+AssertionError: promise rejected "Error: ENOENT: no such file or directory,… { …(4) }" instead of resolving
+ ❯ tests/r3-probes/p1-host-dir-safety.probe.ts:84:53
+     82|     await assertSentinel(outside);
+     83|     // 被移出授权根的原始报告内容不得被删除
+     84|     await expect(fs.readFile(internalReport, 'utf8')).resolves.toBe('I…
+       |                                                     ^
+     85|   });
+     86| });
+
+Caused by: Error: ENOENT: no such file or directory, open '/private/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r3p1-move-root-sHkzjb/.studio/evidence/09985b916ee81c54ef5a0f7fc3007138/INTERNAL_REPORT.txt'
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errno: -2, code: 'ENOENT', syscall: 'open', path: '/private/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r3p1-move-root-sHkzjb/.studio/evidence/09985b916ee81c54ef5a0f7fc3007138/INTERNAL_REPORT.txt' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/r3-probes/p1-host-dir-safety.probe.ts > R3-01 探针 C：.studio/evidence 被替换为外部符号链接（R2 场景回归） > 清理不得删除外部 evidence 目录内容
+AssertionError: promise rejected "Error: ENOENT: no such file or directory,… { …(4) }" instead of resolving
+ ❯ tests/r3-probes/p1-host-dir-safety.probe.ts:102:76
+    100|     await cleanupVitestRun(plan);
+    101|     await assertSentinel(outside);
+    102|     await expect(fs.readFile(path.join(externalReportDir, 'A.txt'), 'u…
+       |                                                                            ^
+    103|   });
+    104| });
+
+Caused by: Error: ENOENT: no such file or directory, open '/private/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r3p1-ev-outside-QXsWl5/713aeb57194eb0279a185ac9d373eaa3/A.txt'
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errno: -2, code: 'ENOENT', syscall: 'open', path: '/private/var/folders/xg/8k9gjv_s5p5_6416l9khtfp00000gn/T/r3p1-ev-outside-QXsWl5/713aeb57194eb0279a185ac9d373eaa3/A.txt' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 1 passed (4)
+   Start at  20:24:12
+   Duration  299ms (tests 62%, transform 17%, import 16%, worker 5%)
+

@@ -85,7 +85,9 @@ export interface GitOptions {
 }
 
 export async function git(cwd: string, args: string[], opts: GitOptions = {}): Promise<string> {
-  const r = await run('git', [...SAFE_GIT_CONFIG, ...decorate(args)], {
+  // R3-04：宿主传入的路径一律按**字面路径**解释。默认 pathspec 会把 `*`/`?` 当通配、
+  // 把根目录下以 `:` 开头的文件名当 magic —— 前者会把别的文件算进来（假阳性），后者会静默漏检（假阴性）。
+  const r = await run('git', ['--literal-pathspecs', ...SAFE_GIT_CONFIG, ...decorate(args)], {
     cwd,
     env: hostGitEnv(opts.env),
     timeoutMs: 60_000,

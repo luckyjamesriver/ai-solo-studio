@@ -1,7 +1,8 @@
 import type { CommitPoint } from '../git/git.js';
 import type { OpFail } from '../task/runner.js';
 import { MESSAGES } from '../task/messages.js';
-import { saveChecksText, type Task } from '../task/model.js';
+import type { Task } from '../task/model.js';
+import { saveChecksTextFor } from './verdict.js';
 import { scrubAiText } from './texts.js';
 import { mapFailure } from './view.js';
 
@@ -61,7 +62,7 @@ function formatExecutor(t: Task): string {
 function checksStatusText(t: Task): string {
   const rec = t.saveRecord;
   if (!rec) return '未检查（检查没能运行）';
-  const text = saveChecksText(rec);
+  const text = saveChecksTextFor(t);
   if (text === '检查通过') return '检查通过';
   if (text === '检查通过（历史记录未核实）') return text;
   if (rec.uncheckedKind === 'none') return '未检查（没有检查脚本）';
