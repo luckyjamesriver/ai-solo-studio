@@ -66,6 +66,7 @@ A0 审计材料已整理为**只含文档/证据**的独立审计交付分支并
 - **分支**：`audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery`
 - **远程 HEAD（已验证）**：`a54fefbd152464a93ca3782faa130dd2582cdcf9`
 - **内容**：审计报告、原型 8 文件差异及未跟踪源码、隔离集成补丁、反向审计探针、原始测试日志及退出码、677/94/9 三项测试的源码身份、文件指纹与审计环境清单、安全扫描记录、OPEN 登记。
+- **本次复核**：`gh api …/branches/audit/…-delivery` 返回 `a54fefbd152464a93ca3782faa130dd2582cdcf9`（`protected: false`），匿名 raw 可读；与 A1 产品分支完全隔离。
 - **隔离性**：相对 `e69ca85` 仅 `docs/reviews/**` 有新增文件；`src`/`tests`/`e2e`/`scripts`/`spikes`/`.github` 与根配置文件树哈希完全一致；未对 `rebuild` 推送、未开 PR。
 - **A0 未完成项**：以 OPEN 登记（未伪造通过），例如 12 个真实服务集成测试按设计跳过、Electron E2E 未在 A0 执行、审计报告中“58 文件全部通过”表述不精确（677 通过 / 38 跳过）等。A0 的 OPEN 不阻塞 A1。
 
@@ -282,12 +283,12 @@ A0 审计材料已整理为**只含文档/证据**的独立审计交付分支并
 | 可信证据专项反向测试 | `npx vitest run tests/a1-trusted-evidence.test.ts tests/a1-evidence-chain.test.ts` | **34 passed / 0 failed（exit 0）** |
 | 构建 | `npm run build` | **通过**（core tsc + renderer vite build） |
 | Electron 原生 E2E | `npx vitest run -c vitest.e2e.config.ts` | **56 passed / 0 failed（exit 0）**，含真实独立 Seatbelt 沙箱 + 真实 Vitest 场景；日志 `/Users/jamesho/a1-evidence/logs/e2e-run2.log` |
-| 真实项目工作树执行 | `/Users/jamesho/a1-evidence/real-project-verify.mjs` | __REAL_PROJECT__ |
+| 真实项目工作树执行 | `/Users/jamesho/a1-evidence/real-project-verify.mjs` | **通过**：临时 clone 本仓库提交 `503179f` → 验收真实运行 `npm run build`（passed）+ `npm test`（结构化报告 749 项 / 711 通过 / 0 失败 / 38 跳过，integrity ok，range `assessed_unchanged`）→ 卡片 `build/test = verified` → 真实保存 `checked=true`，`mergeCommit=1b0c93c…`；日志 `logs/real-project-verify.log` |
 | 旧任务记录兼容 | `tests/a1-evidence-chain.test.ts`「历史任务与历史轮次」+ 既有 persistence/legacy 测试 | **通过** |
 | 保存前试检查 | `tests/a1-evidence-chain.test.ts` 保存三条 + `tests/save-safety.test.ts` | **通过** |
 | 原工作区 8 文件保护 | SHA-256 / HEAD / status / diff 哈希 | **8/8 一致，未修改** |
-| 独立产品 PR | `feat/aiss-a1-trusted-evidence-001` → `rebuild` | __PR__ |
-| CI（exact HEAD，Ubuntu + macOS） | GitHub Actions `CI` workflow | __CI__ |
+| 独立产品 PR | `feat/aiss-a1-trusted-evidence-001` → `rebuild` | **PR #7**：https://github.com/luckyjamesriver/ai-solo-studio/pull/7 |
+| CI（exact HEAD，Ubuntu + macOS） | GitHub Actions `CI` workflow（PR #7） | **全绿**：代码提交 `503179f8b1079b998352c0aac76d5469535592d7` 的运行 [45325957236](https://github.com/luckyjamesriver/ai-solo-studio/actions/runs/45325957236) —— Ubuntu job：typecheck + `npm test` **749 项 / 709 passed / 40 skipped / 0 failed**（Linux 按设计跳过 2 个 macOS 专属用例）+ `npm run build`；macOS job：**749 项 / 711 passed / 38 skipped / 0 failed** + Electron E2E **56 passed**。本报告的最终更新提交为 docs-only，其 exact-HEAD CI 结果见 [PR checks](https://github.com/luckyjamesriver/ai-solo-studio/pull/7/checks) |
 
 修复前后对照证据：
 
