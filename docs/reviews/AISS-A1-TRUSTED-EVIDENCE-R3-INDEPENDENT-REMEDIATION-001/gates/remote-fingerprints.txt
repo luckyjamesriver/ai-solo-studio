@@ -1,0 +1,51 @@
+# 远程证据逐文件读取与指纹核验
+repo: luckyjamesriver/ai-solo-studio
+ref: 13edb62cb4d2546c1430f70aa5f520ca3424cdc6
+at: 2026-11-24T12:31:22Z
+
+MATCH  SHA256                                                           PATH
+------------------------------------------------------------------------------------------------------------------------------
+OK     e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/gates/build-core.txt
+OK     3665eafa066e91c0514e91febffd6a50b67968188a42f83b387f4fca240b76b0 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/gates/build-renderer.txt
+OK     1378648c41c414a483f9f7137647490c9211999f9b30a4a9ca7451291ed314d3 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/gates/electron-e2e.txt
+OK     12fbe265f4f0b19eb28e91b976cd7c5be11781a148dd697de60c99d227b13ae6 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/gates/full-suite.txt
+OK     42ace58ad585fcf5b3ad4695634fa7825d0a5eeaffe33105ba086effb554d2d7 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/gates/seatbelt-25-sample.txt
+OK     19eaf43821a7660ec323a87c8457bf74823beb296c39f5e01aa8a683aa50f061 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/gates/typecheck.txt
+OK     4f31050fe63df453580ffe9f751d03af175ddb29d8e73e84c9a8ec0aaa23b116 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/new-candidate/p1-host-dir-safety.txt
+OK     27db42b05ef633e38d5371ecadd2e83ca6f5482df9200baf9ff20cb37833437a docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/new-candidate/p2-unified-adjudication.txt
+OK     4774c5f11e7c8fa8df4fa033c71521dcc45c068a46342bc67b35dbfc819598f6 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/new-candidate/p3-execution-scope.txt
+OK     c12694c0403a24a181e6a4396a4462d1cf495865a5e24109b2f752ee6413a82e docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/new-candidate/p4-git-integrity.txt
+OK     1b9c964e99008ef18d695bd7789f0e11420877dcf079149cb359b56405fee7fb docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/new-candidate/p5-persistence-recovery.txt
+OK     42a1a420e228aa619843cafe6d505e977f649ee947b915939b9b04f25fcddac8 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/old-candidate/p1-host-dir-safety.txt
+OK     f35985288f5ee5ec6a5b337869d0c22ba09d16cf9995e1dd328fdcfccea1f331 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/old-candidate/p2-unified-adjudication.txt
+OK     e67355959ed3f9768fe4ab1b98850ab25020d51ffc65290618f2b15d631c6475 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/old-candidate/p3-execution-scope.txt
+OK     6353117e25a062780477cf7a51b064ba92042ea00fc025b67df6d7927fc9ffc8 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/old-candidate/p4-git-integrity.txt
+OK     a08451e21945273f5aa068c4dd60c3e76d774e1b24e688489e7bc89db704fc52 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/old-candidate/p5-persistence-recovery.txt
+OK     0cce331ae9a046e351e30c487c547cbb6a595a1e783cadc23b0640a2f5752405 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/probes/r3-p5-child.mjs
+OK     6ad920af8492e386c271e6b258ccae0f840bf80ae860329c602af1ca9b56d6a7 docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R3-INDEPENDENT-REMEDIATION-001/workspace-protection-before.txt
+OK     257c9d2255e1067143ae415919ca99b55d39acf8d652d698ba60e3d85eaacbf9 src/core/acceptance/history.ts
+OK     a23360930dea4957ec21fdff70b95927bebf521a58f0467e6bfa04b2e7d90a5e src/core/acceptance/verdict.ts
+OK     cf818ec144b9789a1105c17a2424a57be9062d4748e5399b429a526aa39fb8ba src/core/acceptance/view.ts
+OK     34055ac0190c060b5b5406b6c4a87ce35782d1452c8c57efcf6d9bddc5c4ad5b src/core/app/task-state-view.ts
+OK     6cf387099713709ba7db814ddc2e19c250617d5ccaa8963938813953b67f7723 src/core/app/task-view.ts
+OK     924d9a89a96df771ab0735803a05517c05511433bb913b0a5c6c2c153cef3778 src/core/checks/scripts.ts
+OK     5f0a20e20aa61c6828e7c60ddbdf91f5a5a624a7c1f8ff573048756bcf56d021 src/core/evidence/adjudicate.ts
+OK     7afe11c08356c0b264962703fefdc3f0dd3ece1974d736f60e8bbc5a2576afb6 src/core/evidence/inventory.ts
+OK     6b567292d785964d3edb30aced0aa2e2edfe5a90dbf85dc5ba0bd9a7ef8e7700 src/core/evidence/model.ts
+OK     ae9e12dbf2d6125c297dc2a1b07094f45af28908ffda16b5d08ad482c7cbda10 src/core/evidence/vitest.ts
+OK     fd75cd73b6107abc708ace1febdd3c5b47d12456c37c03e959dd9217359556a6 src/core/git/git.ts
+OK     11f8c999ccb9ad1c4942b173330951bd6421e5c4a1d70c9e63e6058a8b61dd64 src/core/persistence/files.ts
+OK     3753bc1bebd9dae330d1151c10ebd78d9c6c1994c7487ae39933aacadbc8f4ce src/core/persistence/owned-dir.ts
+OK     e5d9bc94a1c3fd6c9969f33e64b27320c0640084d50adb6ad5e23985b0c9ddfa src/core/task/model.ts
+OK     90e48658ba6239faf4e42ebcadc3117872e8b2a31b5f14929b324ad4b527b1a7 src/core/task/runner.ts
+OK     d4136bc43e76fab281cab42677ce2bf24220c271557282271f32e89f00bd27ff tests/r2-trusted-evidence.test.ts
+OK     d1fd695f47fd8791f7ab26d9cdff7fd09c99b056327975a46177c3361885f45e tests/r3-probes/p1-host-dir-safety.probe.ts
+OK     64d31fcf87381cd0f1b33e2304694081696ec5d17c4f0533e860d0548c1b4c2d tests/r3-probes/p2-unified-adjudication.probe.ts
+OK     bd26add543f1fcb09cc4f53a32657097b3abf4cfafc2b74bcd68d8cc74a8fa0c tests/r3-probes/p3-execution-scope.probe.ts
+OK     49d9388f693f3ac061ea1fd3b38237c2d6996e0badd646c5a163e2f55baa3950 tests/r3-probes/p4-git-integrity.probe.ts
+OK     f7242dea1c88f3e2e085385fb6833db513226df3a23aad6382c553603e038631 tests/r3-probes/p5-persistence-recovery.probe.ts
+OK     5e37d8cf7a2da1fe86a256ff8b7ba6cd7d4174d8b7b1c3fd774cddddadb223a8 tests/r3-trusted-evidence.test.ts
+OK     936d8ced2baddb0efb024b44f019a6e09d319afad2c9f8772f18aac37ec491e1 tests/save-safety.test.ts
+OK     1385a211752f0528126673e2b8323a39dc3548cb08e4a818149a5dbc2e1cd22f tests/security.test.ts
+OK     a22f62aa726455eaf3f4f32c359517f4203a5dbcc8d850ef6a96e493d4d5e37c vitest.probes.config.ts
+mismatch=0
