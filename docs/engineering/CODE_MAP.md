@@ -1,8 +1,8 @@
 # AI Solo Studio — 核心代码地图 (CODE_MAP)
 
-**版本：** v1.8 (AISS-A1-TRUSTED-EVIDENCE-R1-001 独立复核修订，2026-11-24)  
-**基线分支：** `origin/rebuild` (`e69ca8511a17acfc4427954af13ef6d364ffb553` = 本阶段基线)  
-**真实性原则：** 100% 经由真实源码导出与调用实现核对；Preload API 明确展示完整入参（包括 `projectId`）；严格区分 `runCheck()` 与 `runProjectChecks()`；未合入主线的在研原型不画入当前主线架构。
+**版本：** v1.9 (AISS-A1 Merged Closeout，2026-11-25)  
+**基线分支：** `origin/rebuild`（产品合入 SHA `1c65aedd808b14207d8b6db6ef0d68ee3b065194` = PR #7 MERGE_SHA；动态主干 HEAD 随文档推进，见 `CURRENT_BASELINE.md`）  
+**真实性原则：** 100% 经由真实源码导出与调用实现核对；Preload API 明确展示完整入参（包括 `projectId`）；严格区分 `runCheck()` 与 `runProjectChecks()`；未合入主线的在研原型不画入当前主线架构；已合入的 A1 能力全部附真实门禁与反向探针证据。  
 
 ---
 
@@ -67,14 +67,14 @@
 | **伴侣交互视图** | `src/renderer/ChatGPTView.tsx` | `ChatGPTView` | 伴侣视界状态监控、加载错误与阻断通知、显式项目选择器、方案预览与确认门禁（预览/确认弹层为组件内内联 JSX，**未导出独立组件**）、提交防重锁。 |
 | **应用编排中枢** | `src/core/app/task-controller.ts` | `TaskController` (`create`, `savePlan`, `start`, `saveTask`, `discardTask`) | 主进程 IPC 与核心业务的桥梁，负责请求参数检验、视图装配与高阶业务编排。 |
 | **状态机核心** | `src/core/task/state.ts` | `next`, `canFire`, `TaskState`, `TaskEvent` | 纯函数严格状态机。状态转换必须通过 `next(state, event)` 触发，非法迁移抛出 `InvalidTransition`。 |
-| **任务调度引擎** | `src/core/task/runner.ts` | `TaskRunner` (`create`, `setPlan`, `approve`, `start`, `save`, `discard`) | 调度执行体生命周期，驱动安全保存四步安全流程与隔离清理。 |
+| **任务调度引擎** | `src/core/task/runner.ts` | `TaskRunner` (`create`, `setPlan`, `approve`, `start`, `save`, `discard`, `confirmScopeChange`) | 调度执行体生命周期，驱动安全保存四步安全流程与隔离清理；保存写入前先完成完整试检查证据集合裁决（真实失败/身份失效硬阻断），写入后强制核对 `mergeCommit === trialCommit`；用户确认范围后的重跑必须取得经统一裁决 `verified` 的新证据。 |
 | **安全进程运行** | `src/core/proc/run.ts` | `run`, `runProcess`, `isSuccess` | 底层调用 `node:child_process.spawn`，强制参数数组传参且 `{ shell: false }`，提供优雅停止（SIGINT -> SIGTERM -> SIGKILL）升级。 |
 | **Git 隔离工作区** | `src/core/git/git.ts` | `createWorktree`, `createTrialWorktree`, `removeTrialWorktree`, `removeWorktree`, `diffSummary`, `mergeTask` | 任务必须在独立 worktree 沙箱中施工；处理分支检出、试合并与代码差异捕获。 |
 | **受控持久化存储** | `src/core/persistence/store.ts` | `RecordStore` (`load`, `commit`, `list`) | 依据 ADR 0005，全系统唯一文件写入者。CAS 乐观锁校验、`.studio/events.jsonl` 事件日志追加、启动对账重建。 |
 | **卷兼容性探针** | `src/core/persistence/volume.ts` | `localApfsProbe`, `requireLocalVolume` | 依据 ADR 0005 第 12 条校验数据目录是否为本地 APFS 磁盘，防止网络卷导致锁失效。 |
 | **自动化检查（可信证据采集）** | `src/core/checks/scripts.ts` | `detectScripts`, `runCheck`, `runProjectChecks`, `collectApprovedScopeBaseline`, `currentScopeFingerprint` | 静态解析并沙箱执行目标项目中的检查脚本。`build` 以真实进程退出码为证据；`test` 只有取得结构化测试证据才算 `passed`，否则 `failed` / `unverified` / `not_available`。`buildEvidence` 逐项调用 `runCheck`，试合并阶段调用聚合的 `runProjectChecks`。 |
 | **统一宿主证据模型** | `src/core/evidence/model.ts`<br>`src/core/evidence/inventory.ts`<br>`src/core/evidence/vitest.ts`<br>`src/core/evidence/validate.ts` | `HostCheckEvidence`, `assessScopeChange`, `readVitestReport`, `evidenceIdentityProblem` | 证据身份（项目/任务/轮次/验收版本/被测 tree/项目根/任务副本）、运行身份、脚本/配置/运行器入口与依赖/测试清单指纹、Vitest JSON 报告完整性（逐项记录是否实际校验）、保守测试范围评估（逐文件下降、内容/辅助文件变化、实际执行范围）. |
-| **统一证据裁决** | `src/core/evidence/adjudicate.ts` | `adjudicateEvidence`, `adjudicateStoredProof`, `adjudicateCheckResult`, `adjudicateTaskEvidence`, `adjudicateRoundChecks` | 唯一可信裁决入口：类型/任务/轮次/验收版本/内容/项目/副本身份 → 深度失效 → 范围确认 → 失败/未执行/结构性证据 → 通过。验收卡、证据页、保存门禁、历史轮次、ChatGPT 反馈包事实全部消费此入口，禁止各自解释 `passed`。 |
+| **统一证据裁决** | `src/core/evidence/adjudicate.ts` | `adjudicateEvidence`, `adjudicateStoredProof`, `adjudicateCheckResult`, `adjudicateTaskEvidence`, `adjudicateRoundChecks`, `adjudicateTrialEvidenceSet`, `adjudicateSaveRecord` | 唯一可信裁决入口：类型/任务/轮次/验收版本/内容/项目/副本身份 → 深度失效 → 范围确认 → 失败/未执行/结构性证据 → 通过。`adjudicateTrialEvidenceSet` 额外核对试合并提交/tree、项目/副本哈希、应执行检查集合与实际证据集合、evidenceId 一一对应、每条证据统一裁决；正常保存、持久化与启动恢复共用同一口径。验收卡、证据页、保存门禁、历史轮次、ChatGPT 反馈包事实全部消费此入口，禁止各自解释 `passed`。 |
 | **双轨验收卡与证据** | `src/core/acceptance/card.ts`<br>`src/core/acceptance/view.ts`<br>`src/core/acceptance/proof.ts`<br>`src/core/acceptance/proof-status.ts` | `buildCard`, `toUserView`, `buildTaskProof`, `checkInvalidations` | 聚合真实进程事实、Git 真实修改、宿主证据与人工确认项，判定 `readyToSave` 门禁。条目状态区分 `verified` / `failed` / `not_checked` / `unverified`（缺乏有效证据）/ `invalidated`（证据失效）/ `user_confirmed`；证据不足或失效时绝不显示为通过，旧记录不补造测试数量。 |
 | **环境体检** | `src/core/env/health.ts`<br>`src/core/env/host-env.ts` | `runHealthCheck` | 检测系统运行环境、磁盘空间、Node/Git 依赖与安全隔离状态。 |
 
@@ -102,11 +102,16 @@ TaskRunner.buildEvidence(task)
 recheck(task)            → acceptanceRev+1、清空全部确认、重新采集证据（旧证据/旧未检查确认失效）
 save(task) 试合并         → runProjectChecks(同一证据语义) + 检查前后 tree 比对
                           → 原验收证据与试检查结果不一致 → acceptance_inconsistent 阻断
+                          → 写入主项目之前：adjudicateTrialEvidenceSet（trialCommit/tree、项目/副本、集合完整性、
+                            evidenceId、逐条裁决）→ 失败/身份失效硬阻断；checked 但集合未 verified 也阻断
+                          → git merge --ff-only 后：mergeCommit === trialCommit 强制核对 + 任务内容漂移核对
 启动核对 reconcileTasks   → revalidateStoredEvidence：身份/脚本/配置/运行器漂移 → evidenceInvalid（证据失效）
                            （只记录事实，不改写历史轮次）
 ```
 
-用户显式动作：`TaskController.confirmScopeChange(id, version)`（preload `confirmScopeChange` → IPC `acceptance:confirm-scope-change`）→ 校验内容指纹+范围指纹+验收版本 → 清空旧验收决定 → 按当前范围重新生成证据并绑定确认；保存/试合并消费该确认（未确认或已失效 → 硬阻断），保存成功后清理。自动反馈闭环不得调用。
+保存门禁的硬阻断边界（源码核实，2026-11-25）：`confirmUnchecked` 只放行「未检查」本身，绝不放行真实失败、身份失效、试检查证据集合不一致或其他既定硬阻断；合法的未检查保存仍走原有用户明确确认。
+
+用户显式动作：`TaskController.confirmScopeChange(id, version)`（preload `confirmScopeChange` → IPC `acceptance:confirm-scope-change`）→ 校验内容指纹+范围指纹+验收版本 → 清空旧验收决定 → 按当前范围重新生成证据 → **重跑证据必须通过统一裁决且为 `verified`**（报告完整性/stdout 交叉核对/身份/失败优先）→ 才写入 `confirmedAt` 并绑定确认；否则保持待确认并继续阻断保存。保存/试合并消费该确认（未确认或已失效 → 硬阻断），保存成功后清理。自动反馈闭环不得调用。
 
 检查运行环境：标准模式 Seatbelt 配置档额外允许「向自己的子进程发信号」（Vitest 结束 worker 需要），仍禁止向外进程发信号；检查进程 `TMPDIR` 位于副本 `.studio/tmp`，并设置 `GIT_CEILING_DIRECTORIES=<副本>/.studio`（不扩大沙箱写权限的前提下避免测试进程把临时目录误认为项目仓库）；运行前在副本内创建空的 `node_modules/`，让 Vite/Vitest 的配置临时文件写入副本而不是主项目依赖目录。
 
@@ -198,6 +203,12 @@ Renderer (用户核对视觉与改动，确认各项验收标准后点击保存)
                                 │                 在试合并结果上复跑检查，若失败则拒绝保存并清理临时副本；
                                 │                 若无检查脚本，需经 confirmUnchecked 显式确认后方可继续。
                                 │
+                                ├──► 【Step 3.5：写入前完整证据集合裁决 (Pre-Write Evidence Set Gate)】
+                                │     └── adjudicateTrialEvidenceSet({ trialCommit, trialCommitTree, expectedChecks,
+                                │           evidenceIds, checks, projectRootHash, trialWorktreePathHash }):
+                                │           身份/集合不一致或真实失败 → 硬阻断（confirmUnchecked 不能绕过）；
+                                │           checked 但集合未 verified → 阻断；合法未检查保存按用户确认放行。
+                                │
                                 ├──► 【Step 4：主项目最终快速合并与安全收尾 (Fast-Forward Merge)】
                                 │     ├── 再次核验主项目未被并发篡改 (currentHead === preHead)；
                                 │     ├── G.git(repo, ['merge', '--ff-only', trialCommit]) 瞬间推进主线；
@@ -249,6 +260,8 @@ Renderer (TaskPage 任务完成或需向 ChatGPT 复核时)
 | **数据并发与崩溃恢复** | `tests/adr-0005-scenarios.test.ts`<br>`tests/persistence.test.ts` | • CAS 乐观并发冲突拦截与日志告警<br>• 进程强制终止后，启动依据 `events.jsonl` 对账重建<br>• 过期 `runId` 迟到写入强制丢弃 |
 | **状态机严格流转** | `tests/state.test.ts` | • 非法状态跃迁抛出 `InvalidTransition`<br>• `exec_succeeded` 绝不能直接跃迁至 `saved` |
 | **双轨验收与保存门禁** | `tests/acceptance.test.ts`<br>`tests/save-safety.test.ts` | • 退出码非 0 或检查失败时强制 `readyToSave = false`<br>• 用户未勾选验收标准时严格锁定保存按钮 |
+| **A1 可信证据链（单测/集成）** | `tests/a1-evidence-chain.test.ts`<br>`tests/a1-trusted-evidence.test.ts`<br>`tests/r1-trusted-evidence.test.ts`<br>`tests/r2-trusted-evidence.test.ts`<br>`tests/r3-trusted-evidence.test.ts`<br>`tests/r4-trusted-evidence.test.ts` | • 可信测试通过语义（真实 Vitest JSON + stdout 交叉核对）<br>• 失败优先、身份/版本/tree/项目/副本身份核对<br>• 试检查证据绑定 trialCommit 及其 tree；保存前集合裁决<br>• 范围削弱需用户确认；确认后重跑必须取得有效新证据<br>• 未检查保存只放行未检查，不能绕过硬阻断<br>• 持久化/启动恢复/历史展示复用同一裁决 |
+| **A1 真实反向探针（独立 CI 门禁）** | `tests/r3-probes/*.probe.ts`（20）<br>`tests/r4-probes/*.probe.ts`（20）<br>`tests/closeout-probes/*.probe.ts`（5） | • 45 项真实 Git / 真实 Vitest / 真实 RecordStore / 真实 SIGKILL 反向探针<br>• 由 `vitest.probes.config.ts` 收集，`.github/workflows/ci.yml` 的 `probes` job 在 Ubuntu + macOS 运行<br>• 旧候选同一组新探针 4 failed / 1 passed；新候选 45/45 passed |
 | **环境与启动冒烟** | `scripts/smoke.mjs` | • Electron 无头启动，DevTools 安全策略零报错 |
 
 ---

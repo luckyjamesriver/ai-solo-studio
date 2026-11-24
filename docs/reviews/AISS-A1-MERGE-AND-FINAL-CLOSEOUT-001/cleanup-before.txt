@@ -1,0 +1,38 @@
+# A1 收尾资源盘点（清理前）
+# 时间：2026-11-24T19:34:38Z
+
+## Git worktrees（总数 11）
+/Users/jamesho/AI-CoWork-old-archive             8b74d15 [main]
+/Users/jamesho/ai-solo-studio-a0-delivery        a54fefb [audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001-delivery]
+/Users/jamesho/ai-solo-studio-a1                 9d1533f [feat/aiss-a1-trusted-evidence-001]
+/Users/jamesho/ai-solo-studio-a1-r3              1c65aed [docs/aiss-a1-merge-baseline-sync]
+/Users/jamesho/ai-solo-studio-audit              a8561a9 [audit/AISS-AUTONOMOUS-FEEDBACK-AUDIT-001]
+/Users/jamesho/ai-solo-studio-ci-fix             0a61318 [fix/ci-recovery-p0]
+/Users/jamesho/ai-solo-studio-codemap            e7614b8 [feat/codemap-baseline-update]
+/Users/jamesho/ai-solo-studio-novice-docs        9d5dc23 [docs/novice-website-mode]
+/Users/jamesho/ai-solo-studio-p0-integrity       be7c969 [fix/p0-integrity-001]
+/Users/jamesho/ai-solo-studio-rebuild            8dfcfc1 [rebuild]
+/Users/jamesho/ai-solo-studio-reporting-standard 255e635 [docs/agent-reporting-standard]
+
+## 相关目录占用
+112M	/Users/jamesho/ai-solo-studio-a1-r3
+500M	/Users/jamesho/ai-solo-studio-a1
+328K	/tmp/a1-full3.json
+328K	/tmp/a1-full4.json
+328K	/tmp/a1-full5.json
+328K	/tmp/a1-full6.json
+328K	/tmp/a1-full7.json
+176M	/tmp/a1-baseline
+
+## a1-r3 内部可重建产物
+  0B	/Users/jamesho/ai-solo-studio-a1-r3/node_modules
+1.3M	/Users/jamesho/ai-solo-studio-a1-r3/dist-electron
+4.8M	/Users/jamesho/ai-solo-studio-a1-r3/dist-renderer
+ 69M	/Users/jamesho/ai-solo-studio-a1-r3/.code-review-graph
+
+## 进程（无本任务遗留 Electron/Vitest）
+79079 /bin/zsh -c IFS= builtin read -r -d '' __cursor_command <&5 2>/dev/null || { builtin printf '%s\n' 'The command did not run: a shell startup file ($BASH_ENV or .zshenv) closed or replaced file descriptor 5, which carries the command. Run it again; this shell now passes commands as arguments.' >&2; builtin exit 126; }; exec 5<&-; builtin set -- "$__cursor_command"; builtin unset __cursor_command; builtin export PATH="/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"; snap=$(command cat <&3); builtin unsetopt aliases 2>/dev/null; builtin unalias -m '*' 2>/dev/null || true; #!/usr/bin/env zsh
+
+# Usage:
+#   source dump_zsh_state.zsh
+#   dump_zsh_state

@@ -1,0 +1,12 @@
+INFO: FTS index delta: 0 entries removed, 1 indexed
+Incremental: 1 files updated, 1 nodes, 0 edges (postprocess=full)
+Analyzed 20 changed file(s):
+  - 0 changed function(s)/class(es)
+  - 0 affected flow(s)
+  - 0 test gap(s)
+  - Overall risk score: 0.00
+┌─────────────────────── Token Savings ────────────────────────┐
+│ Full context would be:     29,077 tokens                     │
+│ Graph context used:           137 tokens                     │
+│ Saved:                     28,940 tokens (~100%)             │
+└──────────────────────────────────────────────────────────────┘
