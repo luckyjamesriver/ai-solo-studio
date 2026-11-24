@@ -203,7 +203,7 @@ R1-03 组 + 探针 D：
 
 ### 7.3 验证
 
-`docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R1-001/repro/real-project-sandbox-verify.mjs`：把本仓库完整副本（真实 `npm run build` + 真实 `npm test` 749 项）交给**产品自带的独立 Seatbelt 沙箱运行器**执行验收与试检查，然后真实保存并撤销，断言：
+`docs/reviews/AISS-A1-TRUSTED-EVIDENCE-R1-001/repro/real-project-sandbox-verify.mjs`：使用自包含真实样本项目（含 TypeScript 构建与 25 项独立单元测试）交给**产品自带的独立 Seatbelt 沙箱运行器**执行验收与试检查，然后真实保存并撤销，断言：
 
 - `evidence.run.env === 'sandbox'` 且 `sandboxKind === 'seatbelt'`（**不是宿主运行器**）；
 - 结构化报告真实通过数量、完整性/交叉核对通过；

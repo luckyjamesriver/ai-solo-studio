@@ -1015,8 +1015,14 @@ export class TaskRunner extends EventEmitter {
       if (!t.acceptedTree || currentTree !== t.acceptedTree || t.scopeReview.contentFingerprint !== currentTree) {
         throw new Error('你查看之后任务内容又发生了变化，旧的确认已失效，请重新检查后再确认。');
       }
-      const currentFp = await currentScopeFingerprint(t.worktree.path);
-      if (currentFp !== t.scopeReview.scopeFingerprint) throw new Error('测试范围在你查看之后又发生了变化，请重新检查后再确认。');
+      const testProof = (t.currentChecks ?? []).find((c) => c.name === 'test');
+      const executedFiles = testProof?.evidence?.report?.executedFiles;
+      const executionCounts = testProof?.evidence?.report?.counts;
+      const currentFp = await currentScopeFingerprint(t.worktree.path, executedFiles, executionCounts);
+      if (currentFp !== t.scopeReview.scopeFingerprint) {
+        console.error('DEBUG FP MISMATCH: currentFp=', currentFp, 'scopeReview.scopeFingerprint=', t.scopeReview.scopeFingerprint);
+        throw new Error('测试范围在你查看之后又发生了变化，请重新检查后再确认。');
+      }
       const reasons = [...t.scopeReview.reasons];
       // 2) 重新确认前清空旧的验收决定（确认针对的是新的范围/内容，旧确认不能沿用）
       t.criteria.forEach((c) => {
@@ -1782,9 +1788,11 @@ export class TaskRunner extends EventEmitter {
       this.emitSaveProgress(t.id, saveSteps, false);
 
       // b. 在临时 worktree 里运行项目的自动检查（复用 checks/scripts.ts 的识别结果）
-      let checkOutcomeRef: { results: { name: 'build' | 'test'; evidence?: { identity: { evidenceId: string } } }[] } | undefined;
+      let checkOutcomeRef: ProjectChecksOutcome | undefined;
       let checksSummary = { passed: 0, failed: 0 };
       let checkedAt: string | undefined;
+      let checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
+      let ranTime = new Date().toISOString();
       try {
         const trialTreeBefore = await G.computeTree(repo, trialPath);
         const checkOutcome = await this.runTrialChecks(t, trialPath, trialTreeBefore);
@@ -1802,8 +1810,8 @@ export class TaskRunner extends EventEmitter {
         checked = checkOutcome.checked;
         checksSummary = checkOutcome.summary;
         checkedAt = checkOutcome.checkedAt;
-        const checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
-        const ranTime = checkedAt ?? new Date().toISOString();
+        checkEnv = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
+        ranTime = checkedAt ?? new Date().toISOString();
         const trialSummary = summarizeTrialChecks(checkOutcome.results, { repoPath: repo, worktreePath: trialPath });
         // 保存前试合并结果必须与原验收证据一致；不一致则阻断保存并要求重新验收
         if (checkOutcome.failed.length > 0) {
@@ -1911,10 +1919,14 @@ export class TaskRunner extends EventEmitter {
         this.emitSaveProgress(t.id, saveSteps, false);
 
         this.opStep(t, '试检查', true, checked ? `passed=${checksSummary.passed}` : `unchecked_confirmed:${uncheckedKind}`);
+        const opTrialProofs = checkOutcomeRef ? toStoredCheckProofs(checkOutcomeRef.results, checkEnv, ranTime) : undefined;
+        const opTrialEvIds = this.collectEvidenceIds(checkOutcomeRef);
         await this.opPhase(t, 'trial_checked', {
           checked,
           checksSummary,
           ...(checkedAt ? { checkedAt } : {}),
+          ...(opTrialProofs?.length ? { trialChecks: opTrialProofs } : {}),
+          ...(opTrialEvIds.build || opTrialEvIds.test ? { trialEvidenceIds: opTrialEvIds } : {}),
           ...(!checked && uncheckedKind
             ? {
                 uncheckedKind,
@@ -2010,6 +2022,28 @@ export class TaskRunner extends EventEmitter {
       const drift = await this.verifySavedTaskContent(repo, t, mergeCommit);
       if (drift.length) {
         await cleanupTrial();
+        // R2-04：恢复前必须核验当前分支、HEAD、工作区状态，确保恢复安全
+        const curHead = await G.headSha(repo).catch(() => '');
+        const curBranch = await G.currentBranch(repo).catch(() => '');
+        const dirty = await G.dirtyFiles(repo).catch(() => ['?']);
+        const canSafelyRestore = curHead === mergeCommit && curBranch === binding.branch && dirty.length === 0;
+
+        if (!canSafelyRestore) {
+          // 发现外部有其他合法提交或状态不明确，转入人工接管，严禁强行覆盖
+          t.manualReview = {
+            reason: `保存后核对发现任务内容漂移，且主项目在尝试自动恢复前状态已发生变动（HEAD=${curHead}，分支=${curBranch}，修改文件数=${dirty.length}），为保护主项目数据已暂停自动恢复。`,
+            at: new Date().toISOString(),
+            files: drift,
+          };
+          this.opStep(t, '保存后核对任务内容漂移且恢复受阻', false, `无法安全恢复: ${drift.join(',')}`);
+          saveSteps[3] = { ...saveSteps[3]!, status: 'failed', detail: '保存后核对发现改动漂移，且主项目状态变动，需人工处理' };
+          this.emitSaveProgress(t.id, saveSteps, true);
+          recordSnapshot('abnormal', { files: drift });
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'abnormal', detail: MESSAGES.abnormal, files: drift };
+        }
+
         await G.restoreTo(repo, preHead, `studio: 保存后核对失败，已恢复「${t.plan?.goal ?? t.request}」`);
         delete t.uncheckedConfirm;
         delete t.trialChecks;
@@ -2031,6 +2065,7 @@ export class TaskRunner extends EventEmitter {
 
       const execName = t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex');
       const executorText = t.model ? `${execName} · ${t.model}` : execName;
+      const trialProofsToPersist = checkOutcomeRef ? toStoredCheckProofs(checkOutcomeRef.results, checkEnv, ranTime) : undefined;
       t.saveRecord = {
         preMergeHead: preHead,
         taskCommit,
@@ -2051,6 +2086,7 @@ export class TaskRunner extends EventEmitter {
         executorText,
         trialCommit,
         ...(trialEvidenceIds.build || trialEvidenceIds.test ? { evidenceIds: trialEvidenceIds } : {}),
+        ...(trialProofsToPersist?.length ? { trialChecks: trialProofsToPersist } : {}),
       };
       this.opStep(t, '合并到项目', true, mergeCommit);
       await this.opPhase(t, 'merged', { mergeCommit }); // 合并完成立刻落盘，之后即使中断也能据此核对
@@ -2069,8 +2105,8 @@ export class TaskRunner extends EventEmitter {
 
   /** 保存的收尾：清理副本与分支，再迁移到 saved / saved_cleanup_pending。保存与启动核对共用。 */
   /**
-   * 保存后核对：任务改动过的路径在合并结果里必须与冻结的验收内容（acceptedTree）完全一致。
-   * 只核对任务改动过的路径，避免把「主项目在验收期间的其他合法改动」误判为漂移。
+   * 保存后核对：任务改动过的全部路径在合并结果里必须与冻结的验收内容（acceptedTree）完全逐字节一致。
+   * R2-04 取消前 500 个路径抽样限制，采用全量分批比较（每批 200 个），严格使用字面路径语义。
    */
   private async verifySavedTaskContent(repo: string, t: Task, mergeCommit: string): Promise<string[]> {
     if (!t.acceptedTree || !t.worktree) return [];
@@ -2078,12 +2114,20 @@ export class TaskRunner extends EventEmitter {
     const taskTree = await G.treeOf(repo, taskCommit);
     if (taskTree !== t.acceptedTree) return ['accepted_tree_mismatch'];
     const taskPaths = await G.diffTreePaths(repo, t.worktree.baseSha, t.acceptedTree);
-    // 只比较任务改动过的路径（限制数量，避免超长命令行）
-    const sample = taskPaths.filter((p) => !p.includes('\0')).slice(0, 500);
-    if (!sample.length) return [];
+    if (!taskPaths.length) return [];
     const mergedTree = await G.treeOf(repo, mergeCommit);
-    const changed = await G.diffTreePaths(repo, t.acceptedTree, mergedTree, sample);
-    return changed.slice(0, 20);
+
+    const changedPaths: string[] = [];
+    const BATCH_SIZE = 200;
+    for (let i = 0; i < taskPaths.length; i += BATCH_SIZE) {
+      const batch = taskPaths.slice(i, i + BATCH_SIZE);
+      const changed = await G.diffTreePaths(repo, t.acceptedTree, mergedTree, batch);
+      if (changed.length) {
+        changedPaths.push(...changed);
+        if (changedPaths.length >= 20) break;
+      }
+    }
+    return changedPaths.slice(0, 20);
   }
 
   /** 收集本次试检查的结构化证据 id（用于保存记录区分“当时有证据”与“历史未核实”）。 */
@@ -2484,6 +2528,8 @@ export class TaskRunner extends EventEmitter {
               ? `${t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex')} · ${t.model}`
               : (t.executorName ?? (t.executorId === 'fake' ? '模拟执行体（测试用）' : 'Codex')),
             ...(op.trialCommit ? { trialCommit: op.trialCommit } : {}),
+            ...(op.trialEvidenceIds ? { evidenceIds: op.trialEvidenceIds } : {}),
+            ...(op.trialChecks?.length ? { trialChecks: op.trialChecks } : {}),
           };
           delete t.uncheckedConfirm;
           this.opStep(t, '启动核对：合并已在分支上', true, f.merged);

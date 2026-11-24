@@ -409,12 +409,8 @@ describe('R1-05 证据恢复与完整性', () => {
     dirs.push(outside);
     await fs.mkdir(path.join(dir, '.studio'), { recursive: true });
     await fs.symlink(outside, path.join(dir, '.studio', 'evidence'), 'dir');
-    const plan = await prepareVitestRun(dir, 'vitest run');
-    // 把真实报告放到逃逸目标里，仍必须被拒绝
-    await fs.writeFile(path.join(outside, path.basename(plan.reportDir), 'vitest-report.json').replace(/\/[^/]+$/, '/x'), 'x').catch(() => undefined);
-    const parsed = await readVitestReport(plan, { startMs: Date.now() - 1000, endMs: Date.now() }, dir);
-    expect(['invalid', 'missing']).toContain(parsed.status);
-    if (parsed.status === 'invalid') expect(parsed.detail).toMatch(/符号链接|受控位置|路径/);
+    // R2-01: prepareVitestRun 在创建目录前即拦截符号链接逃逸
+    await expect(prepareVitestRun(dir, 'vitest run')).rejects.toThrow(/符号链接/);
   });
 
   it('ANSI 颜色输出也能完成 stdout 交叉核对', () => {

@@ -57,6 +57,10 @@ export interface OpLog {
   trialWorktreePath?: string;
   /** 试合并产生的提交 */
   trialCommit?: string;
+  /** 试检查凭证与完整性数据（用于恢复时重构 SaveRecord） */
+  trialChecks?: StoredCheckProof[];
+  /** 试检查产生的结构化证据 id */
+  trialEvidenceIds?: { build?: string; test?: string };
   /** 试检查是否运行并全部通过 */
   checked?: boolean;
   /** 未检查保存时的分类：none（无检查脚本）/ unavailable（有脚本但未能运行） */
@@ -156,6 +160,8 @@ export interface SaveRecord {
   trialCommit?: string;
   /** 保存时真实试检查产生的结构化证据 id（用于区分“当时有证据”与“历史记录未核实”） */
   evidenceIds?: { build?: string; test?: string };
+  /** 保存时真实试检查凭证与完整性数据完整持久化（R2-04 证据持久化闭环） */
+  trialChecks?: StoredCheckProof[];
 }
 
 /** 保存记录的检查结论文案：没有结构化证据的历史记录不得显示成可信「检查通过」。 */

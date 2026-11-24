@@ -108,6 +108,16 @@ export function adjudicateEvidence(ev: HostCheckEvidence | undefined, name: 'bui
     return { ...base, status: 'invalidated', reason: (ev.invalidReason as CheckUnknownReason | undefined) ?? 'evidence_invalidated', detail: `证据在生成时已被标记为失效${ev.invalidReason ? `（${ev.invalidReason}）` : ''}。` };
   }
 
+  // R2-02：失败优先不变量 —— 无论范围是削弱还是待核对，真实失败（verdict === 'failed' 或报告内用例失败）绝对优先判定，
+  // 严禁将真实失败降级为未核实或范围待确认！
+  if (ev.verdict === 'failed') {
+    return { ...base, status: 'failed', detail: name === 'build' ? '构建没有通过' : '自动测试没有通过' };
+  }
+  const report = ev.report;
+  if (report && report.counts && report.counts.failed > 0) {
+    return { ...base, status: 'failed', detail: '自动测试没有通过' };
+  }
+
   // 用户确认的范围绑定：只有三个指纹全部与当前证据一致时才接受
   const scopeNeedsReview = name === 'test' && (ev.scope.kind === 'assessed_weakened' || ev.scope.kind === 'assessed_needs_review');
   let scopeConfirmed = false;
@@ -124,9 +134,6 @@ export function adjudicateEvidence(ev: HostCheckEvidence | undefined, name: 'bui
     scopeConfirmed = true;
   }
 
-  if (ev.verdict === 'failed') {
-    return { ...base, status: 'failed', detail: name === 'build' ? '构建没有通过' : '自动测试没有通过' };
-  }
   if (ev.verdict === 'not_available') return { ...base, status: 'not_checked', reason: ev.reason, detail: '没有执行这项自动检查。' };
   if (ev.verdict === 'unverified') {
     return unverified(ev.reason ?? 'no_structured_evidence', '命令执行了，但没有取得可信的结构化测试证据，不能算通过。');
@@ -137,7 +144,6 @@ export function adjudicateEvidence(ev: HostCheckEvidence | undefined, name: 'bui
     const ok = ev.run.exitKind === 'exited' && ev.run.exitCode === 0;
     return ok ? { ...base, status: 'verified', detail: '构建通过（真实进程退出码 0）。' } : unverified('no_structured_evidence', '构建没有可信的进程证据，不能算通过。');
   }
-  const report = ev.report;
   if (!report) return unverified('report_missing', '没有结构化测试报告，不能算通过。');
   if (!report.integrity.ok) return unverified('report_inconsistent', '结构化测试报告的完整性校验未通过，不能算通过。');
   const c = report.counts;
@@ -201,7 +207,7 @@ export function adjudicateTaskEvidence(t: Pick<Task, 'id' | 'currentRound' | 'ac
   const test = items.find((i) => i.name === 'test');
   const hasInvalidated = items.some((i) => i.status === 'invalidated');
   const hasFailed = items.some((i) => i.status === 'failed');
-  const needsScopeConfirm = items.some((i) => i.name === 'test' && i.reason === 'test_scope_weakened') || (!!t.scopeReview && !t.scopeReview.confirmedAt);
+  const needsScopeConfirm = items.some((i) => i.name === 'test' && (i.reason === 'test_scope_weakened' || i.reason === 'test_scope_changed')) || (!!t.scopeReview && !t.scopeReview.confirmedAt);
   return { items, ...(build ? { build } : {}), ...(test ? { test } : {}), hasInvalidated, hasFailed, needsScopeConfirm };
 }
 

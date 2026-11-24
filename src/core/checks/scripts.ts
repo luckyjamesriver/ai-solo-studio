@@ -10,6 +10,8 @@ import { uncheckedReasonText } from '../task/messages.js';
 import {
   EVIDENCE_SCHEMA,
   COLLECTOR_VERSION,
+  configFingerprintKey,
+  pathIdentityHash,
   type CheckUnknownReason,
   type CheckVerdict,
   type ConfigFingerprint,
@@ -31,8 +33,7 @@ import {
   scopeFingerprint,
   sha256Text,
 } from '../evidence/inventory.js';
-import { pathIdentityHash } from '../evidence/model.js';
-import { buildReportEvidence, cleanupVitestRun, parseStdoutSummary, prepareVitestRun, readVitestReport } from '../evidence/vitest.js';
+import { buildReportEvidence, cleanupVitestRun, parseStdoutSummary, prepareVitestRun, readVitestReport, assertSafeControlledDir } from '../evidence/vitest.js';
 
 /**
  * 项目脚本检查（build / test）。B3：脚本不再由宿主直接运行，而是通过执行体提供的「沙箱命令运行器」
@@ -263,24 +264,52 @@ async function currentRunnerIdentity(dir: string): Promise<{ name: string; versi
   return runner ? { name: runner.name, version: runner.version, packageJsonSha256: runner.packageJsonSha256 } : undefined;
 }
 
-async function assessTestScope(dir: string, opts: RunCheckOptions, fp: Fingerprints, executedFiles?: string[]): Promise<ScopeAssessment> {
+async function assessTestScope(
+  dir: string,
+  opts: RunCheckOptions,
+  fp: Fingerprints,
+  executedFiles?: string[],
+  executionCounts?: { passed: number; failed: number; skipped: number; total: number },
+): Promise<ScopeAssessment> {
   const current = fp.currentInventory ?? (await scanTestInventory(dir));
   const runnerNow = await currentRunnerIdentity(dir);
-  const fingerprint = scopeFingerprint(current, fp.config.testConfigFiles, runnerNow ? { version: runnerNow.version, packageJsonSha256: runnerNow.packageJsonSha256 } : undefined);
+  const fingerprint = configFingerprintKey(fp.config);
+
+  // 必须核对实际执行范围与预期清单是否覆盖完全（严防仅因静态配置一致就掩盖动态运行削弱）
+  const expectedFiles = current.files.map((f) => f.path).sort();
+  const executedSet = new Set(executedFiles ?? []);
+  const missingExecuted = expectedFiles.filter((p) => !executedSet.has(p));
+  const hasExecutedShortage = executedFiles !== undefined && missingExecuted.length > 0;
+
   if (opts.acceptCurrentScope) {
+    if (hasExecutedShortage) {
+      return {
+        kind: 'assessed_needs_review',
+        baselineAvailable: true,
+        reasons: [`用户已批准静态范围，但本次实际只执行了 ${executedSet.size}/${expectedFiles.length} 个测试文件，缺少：${missingExecuted.slice(0, 5).join('、')}`],
+        baselineSource: '用户重新确认',
+        method: 'conservative-static',
+        fingerprint,
+      };
+    }
     return { kind: 'assessed_unchanged', baselineAvailable: true, reasons: ['你已明确确认按当前测试范围验收。'], baselineSource: '用户重新确认', method: 'none', fingerprint };
   }
+
   // 保存前试合并：若用户已确认过某个范围，就核对「当前范围是否仍等于已确认的范围」，
-  // 而不是无条件回到原始基线，也不是无条件跳过范围校验。
+  // 同时严查实际执行范围是否与已确认范围一致（不得因静态指纹一致而跳过实际执行范围核查）。
   const expected = opts.identity?.expectedScopeFingerprint;
   if (expected) {
-    if (expected === fingerprint) {
-      return { kind: 'assessed_unchanged', baselineAvailable: true, reasons: ['与用户已确认的测试范围一致。'], baselineSource: '用户已确认的范围', method: 'none', fingerprint };
+    if (expected === fingerprint && !hasExecutedShortage) {
+      return { kind: 'assessed_unchanged', baselineAvailable: true, reasons: ['与用户已确认的测试范围及实际执行一致。'], baselineSource: '用户已确认的范围', method: 'none', fingerprint };
     }
     return {
       kind: 'assessed_needs_review',
       baselineAvailable: true,
-      reasons: ['当前测试范围/配置与用户已确认的范围不一致，必须重新检查并重新确认。'],
+      reasons: [
+        expected !== fingerprint
+          ? '当前测试范围/配置与用户已确认的范围不一致，必须重新检查并重新确认。'
+          : `实际执行范围减少（缺少：${missingExecuted.slice(0, 5).join('、')}），必须重新检查。`,
+      ],
       method: 'conservative-static',
       fingerprint,
     };
@@ -402,7 +431,8 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
   const fp = await collectFingerprints(dir, opts, name === 'test');
   const testRunner = name === 'test' && scripts.test ? await detectTestRunner(dir, scripts.test) : undefined;
 
-  await makeDir(path.join(dir, '.studio', 'tmp'));
+  // 严格核查并安全创建 .studio/tmp，防范符号链接外部逃逸
+  await assertSafeControlledDir(dir, path.join('.studio', 'tmp'));
   // R1：Vite/Vitest 在加载 TS 配置时会把临时文件写到它找到的「最近的 node_modules/.vite-temp」。
   // 任务副本通常没有自己的 node_modules（依赖从主项目向上解析），于是它会尝试写主项目的 node_modules，
   // 在标准模式沙箱里被拒绝（EPERM），导致真实 Vite 项目的检查无法运行。
@@ -493,7 +523,8 @@ export async function runCheck(dir: string, name: CheckName, runner: SandboxComm
   await cleanupVitestRun(plan);
   const stdoutSummary = parseStdoutSummary(r.stdout);
   const executedFilesForScope = reportParse.status === 'ok' ? reportParse.executedFiles : undefined;
-  const scope = await assessTestScope(dir, opts, fp, executedFilesForScope);
+  const executionCounts = reportParse.status === 'ok' ? reportParse.counts : undefined;
+  const scope = await assessTestScope(dir, opts, fp, executedFilesForScope, executionCounts);
 
   const unverified = (unknownReason: CheckUnknownReason, reason: string, extra: Partial<HostCheckEvidence> = {}): CheckResult => {
     const evidence = evidenceFor('unverified', unknownReason, 'weak', { scope, ...extra });
@@ -672,12 +703,9 @@ export function testCountsFromEvidence(c: CheckResult): { passed: number; failed
 }
 
 /** 测试范围指纹（供「重新确认验收范围」绑定当前范围）。 */
-export async function currentScopeFingerprint(dir: string): Promise<string> {
-  const scripts = await detectScripts(dir);
-  const inv = await scanTestInventory(dir);
-  const configs = await readConfigFingerprints(dir);
-  const runner = scripts.test ? await detectTestRunner(dir, scripts.test) : undefined;
-  return scopeFingerprint(inv, configs, runner ? { version: runner.version, packageJsonSha256: runner.packageJsonSha256 } : undefined);
+export async function currentScopeFingerprint(dir: string, executedFiles?: string[], executionCounts?: { passed: number; failed: number; skipped: number; total: number }): Promise<string> {
+  const fp = await collectFingerprints(dir, {}, true);
+  return configFingerprintKey(fp.config);
 }
 
 /**

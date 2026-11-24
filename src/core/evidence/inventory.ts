@@ -542,7 +542,30 @@ export function assessScopeChange(opts: {
   return { kind: stronger ? 'assessed_stronger' : 'assessed_unchanged', baselineAvailable: true, reasons, delta, method };
 }
 
-export function scopeFingerprint(inv: TestInventory, configs: ConfigFileFingerprint[], runner?: { version: string; packageJsonSha256: string }): string {
+export interface ScopeFingerprintOptions {
+  scriptsDigest?: string;
+  packageLockDigest?: string;
+  executedFiles?: string[];
+  executionCounts?: { passed: number; failed: number; skipped: number; total: number };
+}
+
+export function scopeFingerprint(
+  inv: TestInventory,
+  configs: ConfigFileFingerprint[],
+  runner?: { version: string; packageJsonSha256: string },
+  extra?: ScopeFingerprintOptions,
+): string {
   const cfg = [...configs].sort((a, b) => (a.path < b.path ? -1 : 1)).map((c) => `${c.path}:${c.sha256}`).join(',');
-  return sha256Text(`${inv.digest}|${cfg}|${runner ? `${runner.version}:${runner.packageJsonSha256}` : 'none'}`).slice(0, 32);
+  const executed = extra?.executedFiles ? [...extra.executedFiles].sort().join(',') : '-';
+  const counts = extra?.executionCounts ? `${extra.executionCounts.total}:${extra.executionCounts.passed}:${extra.executionCounts.failed}:${extra.executionCounts.skipped}` : '-';
+  const parts = [
+    inv.digest,
+    cfg,
+    runner ? `${runner.version}:${runner.packageJsonSha256}` : 'none',
+    extra?.scriptsDigest ?? '-',
+    extra?.packageLockDigest ?? '-',
+    executed,
+    counts,
+  ];
+  return sha256Text(parts.join('|')).slice(0, 32);
 }

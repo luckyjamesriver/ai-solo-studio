@@ -380,12 +380,6 @@ export function mapFailure(f: OpFail): { message: string; files?: string[] } {
       return withFiles('检查证据已失效（内容、验收版本、项目/副本身份或检查配置发生了变化），请重新检查后再保存。');
     case 'evidence_scope_unconfirmed':
       return withFiles('测试范围发生了无法静态证明安全的变化，请先核对并明确重新确认后再保存。');
-    case 'acceptance_inconsistent':
-      return withFiles('合并后的检查结果与原验收证据不一致，本次没有保存。请重新检查后再保存。');
-    case 'evidence_invalid':
-      return withFiles('检查证据已失效（内容、验收版本、项目/副本身份或检查配置发生了变化），请重新检查后再保存。');
-    case 'evidence_scope_unconfirmed':
-      return withFiles('测试范围发生了无法静态证明安全的变化，请先核对并明确重新确认后再保存。');
     case 'checks_failed': {
       const names = (f.failedChecks ?? []).map((k) => CHECK_NAME[k]).filter(Boolean);
       return withFiles(names.length ? `合并后自动检查未通过（${names.join('、')}），本次没有保存，你的项目保持原样。` : MESSAGES.checksFailed);

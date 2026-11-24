@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { makeDir, removeTree } from '../persistence/files.js';
+import { makeDir, removeSafeSubtree, removeTree } from '../persistence/files.js';
 import type { TestCounts, TestReportEvidence } from './model.js';
 
 /**
@@ -27,25 +27,89 @@ export interface VitestRunPlan {
   argv: string[];
   /** 报告目录与会话随机标识（不保存到任务记录，只用于本次运行） */
   nonce: string;
+  /** 创建时核实的工作树真实根目录（用于清理前重新核实身份，防止符号链接逃逸与目录身份变化） */
+  realRootDir: string;
 }
 
-function evidenceRoot(dir: string): string {
-  return path.join(dir, '.studio', 'evidence');
+/**
+ * 校验并确保工作树受控父目录存在且绝对非符号链接（针对 R2-01：严防符号链接逃逸与非预期目录）。
+ * 返回受控的 .studio/evidence 真实路径。
+ */
+export async function assertSafeControlledDir(dir: string, subPath: string): Promise<{ realRoot: string; controlledPath: string }> {
+  let realRoot: string;
+  try {
+    realRoot = await fs.realpath(dir);
+  } catch (e) {
+    throw new Error(`被测工作树不可解析或不存在: ${(e as Error).message}`);
+  }
+  const rootStat = await fs.lstat(realRoot);
+  if (!rootStat.isDirectory()) {
+    throw new Error(`工作树根路径不是普通目录: ${realRoot}`);
+  }
+
+  // 严格逐级校验与安全创建，沿途（.studio 及子路径）严禁为符号链接
+  const parts = subPath.split(path.sep).filter(Boolean);
+  let cur = realRoot;
+  for (const part of parts) {
+    cur = path.join(cur, part);
+    try {
+      const lst = await fs.lstat(cur);
+      if (lst.isSymbolicLink()) {
+        throw new Error(`受控目录沿途包含符号链接，拒绝使用: ${cur}`);
+      }
+      if (!lst.isDirectory()) {
+        throw new Error(`受控路径不是目录: ${cur}`);
+      }
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        await makeDir(cur);
+        const postLst = await fs.lstat(cur);
+        if (postLst.isSymbolicLink() || !postLst.isDirectory()) {
+          throw new Error(`创建受控目录后校验失败: ${cur}`);
+        }
+      } else {
+        throw err;
+      }
+    }
+    const realCur = await fs.realpath(cur);
+    if (realCur !== cur) {
+      throw new Error(`受控目录发生真实路径漂移或包含链接: ${cur} !== ${realCur}`);
+    }
+  }
+
+  return { realRoot, controlledPath: cur };
 }
 
 /** 生成宿主专用的报告路径，并确保运行前不存在任何旧文件。 */
 export async function prepareVitestRun(dir: string, script: string): Promise<VitestRunPlan> {
+  const { realRoot, controlledPath: evidenceRootPath } = await assertSafeControlledDir(dir, path.join('.studio', 'evidence'));
   const nonce = randomBytes(16).toString('hex');
-  const reportDir = path.join(evidenceRoot(dir), nonce);
-  await removeTree(reportDir);
+  const reportDir = path.join(evidenceRootPath, nonce);
+
+  // 若预存 nonce 目录则先清理
+  try {
+    await removeSafeSubtree(evidenceRootPath, reportDir);
+  } catch (err: any) {
+    if (err.code !== 'ENOENT') throw err;
+  }
   await makeDir(reportDir);
+  const lstat = await fs.lstat(reportDir);
+  if (lstat.isSymbolicLink() || !lstat.isDirectory()) {
+    throw new Error(`新建报告目录不安全: ${reportDir}`);
+  }
+
   const reportPath = path.join(reportDir, 'vitest-report.json');
   const argv = ['npm', 'run', 'test', '--silent', '--', '--reporter=default', '--reporter=json', `--outputFile.json=${reportPath}`];
-  return { reportPath, reportDir, argv, nonce };
+  return { reportPath, reportDir, argv, nonce, realRootDir: realRoot };
 }
 
 export async function cleanupVitestRun(plan: VitestRunPlan): Promise<void> {
-  await removeTree(plan.reportDir).catch(() => undefined);
+  try {
+    const evidenceRoot = path.join(plan.realRootDir, '.studio', 'evidence');
+    await removeSafeSubtree(evidenceRoot, plan.reportDir);
+  } catch {
+    // 清理失败不抛给上层，但严格受 removeSafeSubtree 保护决不越界删除外部文件
+  }
 }
 
 export function sha256Text(text: string): string {
@@ -152,24 +216,39 @@ export async function readVitestReport(
 ): Promise<ReportParseResult> {
   const pathProblem = await reportPathProblem(plan, rootDir);
   if (pathProblem) return { status: 'invalid', detail: pathProblem };
-  let stat: import('node:fs').Stats;
-  try {
-    stat = await fs.lstat(plan.reportPath);
-  } catch {
-    return { status: 'missing' };
-  }
-  if (stat.isSymbolicLink()) return { status: 'invalid', detail: '报告路径是符号链接' };
-  if (!stat.isFile()) return { status: 'invalid', detail: '报告路径不是普通文件' };
-  if (stat.nlink > 1) return { status: 'invalid', detail: '报告文件存在硬链接（可能被复用或预置）' };
-  if (stat.size <= 0 || stat.size > MAX_REPORT_BYTES) return { status: 'invalid', detail: `报告大小异常：${stat.size}` };
-  // 报告必须产生于本次运行窗口内（运行前目录已被清空）
-  if (stat.mtimeMs < window.startMs - 2000) return { status: 'reused', detail: `报告修改时间早于本次运行（${new Date(stat.mtimeMs).toISOString()}）` };
 
+  // 原子性打开报告文件描述符，并在文件描述符上执行 fstat，防御 TOCTOU / 符号链接替换竞态
+  let fh: import('node:fs/promises').FileHandle;
+  try {
+    fh = await fs.open(plan.reportPath, 'r');
+  } catch (err: any) {
+    if (err.code === 'ENOENT') return { status: 'missing' };
+    return { status: 'invalid', detail: `无法打开报告文件: ${err.message}` };
+  }
+
+  let stat: import('node:fs').Stats;
   let buf: Buffer;
   try {
-    buf = await fs.readFile(plan.reportPath);
+    // 确保真实文件路径依然与计划路径完全一致
+    const realFile = await fs.realpath(plan.reportPath);
+    const realDir = await fs.realpath(plan.reportDir);
+    if (realFile !== path.join(realDir, 'vitest-report.json')) {
+      return { status: 'invalid', detail: '报告文件路径发生替换或逃逸' };
+    }
+
+    stat = await fh.stat();
+    if (stat.isSymbolicLink()) return { status: 'invalid', detail: '报告路径是符号链接' };
+    if (!stat.isFile()) return { status: 'invalid', detail: '报告路径不是普通文件' };
+    if (stat.nlink > 1) return { status: 'invalid', detail: '报告文件存在硬链接（可能被复用或预置）' };
+    if (stat.size <= 0 || stat.size > MAX_REPORT_BYTES) return { status: 'invalid', detail: `报告大小异常：${stat.size}` };
+    // 报告必须产生于本次运行窗口内（运行前目录已被清空）
+    if (stat.mtimeMs < window.startMs - 2000) return { status: 'reused', detail: `报告修改时间早于本次运行（${new Date(stat.mtimeMs).toISOString()}）` };
+
+    buf = await fh.readFile();
   } catch (e) {
     return { status: 'invalid', detail: `无法读取报告：${(e as Error).message}` };
+  } finally {
+    await fh.close().catch(() => undefined);
   }
   const sha = createHash('sha256').update(buf).digest('hex');
   const bytes = buf.length;
