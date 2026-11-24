@@ -1,0 +1,4 @@
+
+> ai-solo-studio@0.3.0-rebuild build:core
+> tsc -p tsconfig.build.json
+

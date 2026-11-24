@@ -1,0 +1,4 @@
+
+> ai-solo-studio@0.3.0-rebuild typecheck
+> tsc -p tsconfig.json --noEmit
+

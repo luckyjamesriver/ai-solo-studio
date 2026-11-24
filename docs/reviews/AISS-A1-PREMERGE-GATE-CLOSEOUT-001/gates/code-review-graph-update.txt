@@ -1,0 +1,14 @@
+Incremental: 0 files updated, 0 nodes, 0 edges (postprocess=full)
+Analyzed 9 changed file(s):
+  - 33 changed function(s)/class(es)
+  - 9 affected flow(s)
+  - 3 test gap(s) (2 with no tested caller found, 1 reached only through a caller)
+  - Overall risk score: 0.35
+  - Untested: TaskRunner, confirmScopeChange
+  - Reached only through a caller: doSave
+┌──────────────────────── Token Savings ────────────────────────┐
+│ Full context would be:     48,220 tokens                      │
+│ Graph context used:        48,220 tokens                      │
+│ Saved:                          0 tokens (~0%)                │
+│ Breakdown: Functions 3.8k · Flows 107k · Tests 298 · Risk 946 │
+└───────────────────────────────────────────────────────────────┘

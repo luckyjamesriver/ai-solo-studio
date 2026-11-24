@@ -1,0 +1,88 @@
+
+ RUN  v5.0.5 /Users/jamesho/ai-solo-studio-a1-r3
+
+ ✓ tests/r3-probes/p1-host-dir-safety.probe.ts (4 tests) 131ms
+ ✓ tests/r4-probes/p6-host-exclusive.probe.ts (4 tests) 1448ms
+   ✓ R4-01 探针 D：最终清理（任务副本）不得沿被替换的路径删除外部文件 (1)
+     ✓ 任务副本目录被替换成指向外部合法仓库的符号链接 → 拒绝清理，外部文件保留 1328ms
+ ✓ tests/r4-probes/p13-failure-first.probe.ts (1 test) 1452ms
+   ✓ LAST-DELTA 探针 P13：not_available 外围状态不得掩盖真实失败 (1)
+     ✓ 真实未执行 → not_checked；真实启动失败/非零退出 + 外围 not_available → failed 1451ms
+ ✓ tests/r3-probes/p2-unified-adjudication.probe.ts (6 tests) 6148ms
+   ✓ R3-02 探针 A：真实退出状态与 verdict 矛盾 (1)
+     ✓ 证据自述 passed 但真实进程退出码非 0 → 不得判为 verified 4895ms
+   ✓ R3-02 探针 F：runProjectChecks 必须消费统一裁决（不得只认 status 字符串） (1)
+     ✓ 没有身份上下文、因而不存在任何宿主证据的构建“成功”不得算作 checked 792ms
+ ✓ tests/r4-probes/p15-confirm-missing-evidence.probe.ts (1 test) 6190ms
+   ✓ LAST-DELTA 探针 P15：确认后重新执行没有有效新证据 → 必须保持待确认 (1)
+     ✓ 重新执行时沙箱不可用（not_available、无执行清单）→ 不得 confirmedAt 6189ms
+ ✓ tests/r4-probes/p8-confirm-binding.probe.ts (1 test) 6857ms
+   ✓ R4-03 探针：用户确认后重新执行时执行清单发生变化，不得自动登记为已授权 (1)
+     ✓ 确认前查看的是 2 条用例，重新执行只剩 1 条 → 必须重新待确认 6856ms
+ ✓ tests/closeout-probes/p17-unchecked-identity-bypass.probe.ts (1 test) 8013ms
+   ✓ CLOSEOUT-01 修订一：未检查确认只放行“未检查”，不得绕过身份失效 (1)
+     ✓ confirmUnchecked 保存期间副本身份失效 → 仍不得改写主项目 8012ms
+ ✓ tests/r4-probes/p14-case-name-tail.probe.ts (1 test) 8236ms
+   ✓ LAST-DELTA 探针 P14：前 300 字符相同、尾部不同的参数化用例必须区分 (1)
+     ✓ 同数量、同文件、静态不变，但执行用例尾部不同 → 不得可信保存 8229ms
+ ✓ tests/closeout-probes/p16-save-set-gate.probe.ts (1 test) 8902ms
+   ✓ CLOSEOUT-01 修订一：集合裁决必须在写入主项目之前（正常保存入口） (1)
+     ✓ 试检查后副本身份失效 → 未经任何未检查确认，不得改写主项目 HEAD/tree/工作区 8900ms
+ ✓ tests/r3-probes/p3-execution-scope.probe.ts (2 tests) 11087ms
+   ✓ R3-03 探针 A：同一测试文件内用例被动态跳过（文件与配置不变） (1)
+     ✓ 完整运行 vs 动态少执行一条：可信结论与范围指纹都必须不同 3365ms
+   ✓ R3-03 探针 B：验收完整运行 → 保存试检查时部分用例动态跳过 → 必须阻断可信保存 (1)
+     ✓ 保存不得在“试检查覆盖率下降”的情况下记录为检查通过 7720ms
+ ✓ tests/r4-probes/p11-evidence-set.probe.ts (1 test) 11268ms
+   ✓ LAST-DELTA 探针 P11：保存证据集合缺项/重复/错配/身份错配都不得可信通过 (1)
+     ✓ 正常保存记录带完整绑定与应执行集合；四类破坏均降级 11266ms
+ ✓ tests/r3-probes/p4-git-integrity.probe.ts (6 tests) 15131ms
+   ✓ R3-04 探针 A：特殊文件名必须按字面路径比较 (4)
+     ✓ `star*.txt` 不得把 `starX.txt` 也算成它（通配假阳性） 957ms
+     ✓ `q?.txt` 不得把 `qX.txt` 也算成它（单字符通配假阳性） 976ms
+     ✓ 仓库根目录以冒号开头的文件名不得被当作 pathspec magic 而静默漏检 786ms
+     ✓ 空格、引号、前导连字符、非 ASCII 文件名都按字面路径处理 751ms
+   ✓ R3-04 探针 B：超过 500 个路径的真实仓库 (1)
+     ✓ 全量分批比较必须发现第 600 个路径之后的漂移，不能只比对前 500 个 4364ms
+   ✓ R3-04 探针 C：特殊文件名走真实保存链路（不得误判漂移） (1)
+     ✓ 任务改动包含 `[abc].txt` 时，保存成功且内容完整 7295ms
+ ✓ tests/closeout-probes/p18-confirm-rerun-integrity.probe.ts (3 tests) 20080ms
+   ✓ CLOSEOUT-01 修订二：确认后重跑必须取得有效的新证据 (3)
+     ✓ 重跑执行清单相同但 stdout 摘要缺失（报告完整性失败）→ 保持待确认，不登记 confirmedAt 7683ms
+     ✓ 重跑执行清单相同但 stdout 摘要与报告不一致（报告完整性失败）→ 保持待确认，不登记 confirmedAt 6539ms
+     ✓ 正向：正常有效重跑（执行清单一致且证据可信）仍然允许用户确认 5857ms
+ ✓ tests/r4-probes/p10-recovery-evidence.probe.ts (1 test) 20417ms
+   ✓ R4-04 探针 E：中断恢复时缺失试检查证据 → 不得 checked=true (1)
+     ✓ 删除落盘的 op.trialChecks（保留 op.checked=true）后恢复 → saveRecord.checked 不得为 true 20415ms
+ ✓ tests/r4-probes/p7-execution-binding.probe.ts (3 tests) 21438ms
+   ✓ R4-02 探针 A：数量相同但用例身份变化（B → C） (1)
+     ✓ 试检查执行了不同的用例集合 → 不得可信保存 8104ms
+   ✓ R4-02 探针 B：参数化用例数量变化（3 → 2） (1)
+     ✓ 同一文件内参数化用例减少 → 不得可信保存 7357ms
+   ✓ R4-02 探针 C：数量相同但一条被动态跳过 (1)
+     ✓ passed → skipped（总数不变）→ 不得可信保存 5976ms
+ ✓ tests/r4-probes/p9-evidence-binding.probe.ts (4 tests) 23485ms
+   ✓ R4-04 探针 A：试检查证据绑定本次 trialCommit 及其 tree (1)
+     ✓ trialChecks 证据身份带 trialCommit，且 testedTree === treeOf(trialCommit) 9213ms
+   ✓ R4-04 探针 B：历史展示不得用 historical 模式绕过树/版本身份 (1)
+     ✓ 已保存证据的 testedTree 与绑定不一致 → 不得显示 verified 7179ms
+   ✓ R4-04 探针 C：失败证据不得显示为“检查通过” (1)
+     ✓ trialChecks 里是真实失败 → 保存历史文案不得包含“检查通过” 6318ms
+   ✓ R4-04 探针 D：未执行检查 vs 真实启动失败 (1)
+     ✓ not_available（未启动）不得被当成真实失败；真实启动失败必须是 failed 772ms
+ ✓ tests/r4-probes/p12-recovery-set.probe.ts (3 tests) 57238ms
+   ✓ LAST-DELTA 探针 P12：SIGKILL 恢复的证据集合完整性 (3)
+     ✓ 部分证据丢失 → 不得 checked=true 20803ms
+     ✓ evidenceIds 与证据实际 ID 错配 → 不得 checked=true 18380ms
+     ✓ 副本身份错配 → 不得 checked=true 18054ms
+ ✓ tests/r3-probes/p5-persistence-recovery.probe.ts (2 tests) 62113ms
+   ✓ R3-05 探针 A：正常中断后的真实恢复（试检查证据必须来自真实链路） (1)
+     ✓ 重启恢复后 SaveRecord.trialChecks 携带真实试检查身份/被测 tree/执行结果/保存提交 34514ms
+   ✓ R3-05 探针 B：恢复分支的内容完整性（第二个父提交正确但 tree 被改过） (1)
+     ✓ 恢复不得把内容漂移的合并提交当成保存结果 27599ms
+
+ Test Files  18 passed (18)
+      Tests  45 passed (45)
+   Start at  01:30:19
+   Duration  62.65s (tests 98%, transform 1%, import 1%)
+

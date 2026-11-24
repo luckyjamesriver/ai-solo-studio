@@ -1,0 +1,12 @@
+# Graphify 真实状态（AISS-A1-PREMERGE-GATE-CLOSEOUT-001）
+
+- 工具：graphify 0.9.113（本机）。
+- 本轮在代码提交 a739d024233c 的工作树上执行：`graphify update . --no-cluster`。
+  输出摘要：`3518 nodes, 11036 edges`（AST 抽取，335 个文件；31 个文件无可提取符号）。
+  但落盘 `graphify-out/graph.json` 实测：**nodes=3518，edges=0**。
+- 未配置 LLM 提供方（提示 `set GEMINI_API_KEY or GOOGLE_API_KEY to use Gemini for semantic extraction`），
+  因此**没有生成任何语义边**；上述 11036 是抽取过程的内部计数，不是语义图边。
+- 结论：Graphify 语义索引 **NOT_VERIFIED / 未完成**；仅有 AST 符号抽取可用性。
+  不把 AST 抽取冒充语义索引。
+- `graphify-out/` 不在 Git 中；本轮检查后已删除，可由 `graphify update . --no-cluster` 重新生成。
+- MCP `graphify-shm` 固定服务另一个项目（PROJECT_SCOPE_MISMATCH），与本仓库无关。
