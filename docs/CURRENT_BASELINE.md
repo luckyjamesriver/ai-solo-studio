@@ -1,8 +1,10 @@
 # AI Solo Studio — 当前工程基线 (CURRENT_BASELINE)
 
 **更新时间：** 2026-11-24  
-**权威基线分支：** `rebuild`（最新主干 HEAD: `9aecd45` / PR #3 Merged）  
-**状态声明：** `AISS_P0_2_CHATGPT_SECURE_INTERACTION_COMPLETE`
+**权威基线分支：** `rebuild` (`origin/rebuild`)  
+**产品代码交付基线 (Product Code Merge SHA)：** `9aecd45d94f0574930f833d83633cf9ac76ae744` (PR #3 Merged)  
+**工程状态声明：** `AISS_P0_2_CHATGPT_SECURE_INTERACTION_COMPLETE`  
+**基线解耦与治理原则：** 明确解耦产品代码合入基准与动态 Git HEAD。产品代码基线以 PR #3 合入提交 `9aecd45` 为静态唯一准绳；文档修订、工程地图与基线维护提交正常推进 Git 主干 HEAD，严禁因文档自身提交产生 SHA 循环修改。
 
 ---
 
@@ -12,7 +14,7 @@
 
 | 层次划分 | 覆盖范围与分支路径 | 当前真实状态与事实边界 |
 |---|---|---|
-| **第一层：主线已合并 (Mainline Merged)** | 分支：`origin/rebuild`<br>最新 HEAD: `9aecd45` | • **M0 / M1 / M2 / M3-BASE** 基础架构稳固。<br>• **PR #1 (Merged)**: CI 最小恢复与安全边界（`1b5fe76`）。<br>• **PR #2 (Merged)**: 修复 ADR 0005 存储语义、消除 URL 逃逸、收敛单源 SOP 蓝图（`443773c`）。<br>• **PR #4 (Merged)**: 统一 7 字段代理交付回复强制标准与全局工作区规则（`442c73f` / `255e635`）。<br>• **PR #5 (Merged)**: 代码地图、基线记忆与 CRG 索引试点及失效降级规范（`441770f` / `dfa38ef`）。<br>• **PR #3 (Merged)**: ChatGPT 网页安全交互、方案受控导入门禁与审查反馈包（`9aecd45` / `f2900a8`）。<br>• 此层代码为目前正式交付代码。 |
+| **第一层：主线已合并 (Mainline Merged)** | 分支：`origin/rebuild`<br>产品代码基线: `9aecd45`<br>(动态 HEAD 随文档与工程治理推进) | • **M0 / M1 / M2 / M3-BASE** 基础架构稳固。<br>• **PR #1 (Merged)**: CI 最小恢复与安全边界（`1b5fe76`）。<br>• **PR #2 (Merged)**: 修复 ADR 0005 存储语义、消除 URL 逃逸、收敛单源 SOP 蓝图（`443773c`）。<br>• **PR #4 (Merged)**: 统一 7 字段代理交付回复强制标准与全局工作区规则（`442c73f` / `255e635`）。<br>• **PR #5 (Merged)**: 代码地图、基线记忆与 CRG 索引试点及失效降级规范（`441770f` / `dfa38ef`）。<br>• **PR #3 (Merged)**: ChatGPT 网页安全交互、方案受控导入门禁与审查反馈包（`9aecd45` / `f2900a8`）。<br>• 此层代码为目前正式交付产品基线。 |
 | **第二层：独立 PR 待审 (Open PRs Pending Review)** | • **独立分支 (未提 PR)**: `docs/novice-website-mode` | • **独立分支 (未提 PR)**: `docs/novice-website-mode`（新手建站模式 PRD 及 N0-N7 规划 R1/v0.2，本地独立分支已就绪，等待维护者裁定 5 项方案后决定是否提交 PR）。<br>• 当前无任何 OPEN PR。 |
 | **第三层：本地工作区在研未提交 (Local In-Progress / Uncommitted)** | 路径：`/Users/jamesho/ai-solo-studio-rebuild`<br>（原工作区未提交文件） | • 包含 8 个未提交修改（`e2e/shell.e2e.ts`, `src/core/app/task-controller.ts`, `src/core/thinking/index.ts`, `App.tsx`, `SettingsPage.tsx` 以及未跟踪的 `autonomous-feedback-loop.ts`, `chatgpt-devkit.ts`, `tests/autonomous-feedback-loop.test.ts`）。<br>• **特别强调**：`src/core/thinking/chatgpt-devkit.ts` 为原工作区本地未跟踪原型文件（`??`），**绝不是 PR #3 的组成部分**。<br>• **严格约束**：受 100% 隔离保护，**严禁画入当前主线架构，不能作为现有代码引用**。 |
 
@@ -64,5 +66,6 @@
 
 ## 四、 本地代码索引与辅助机制有效性声明 (Code Review Graph)
 
-- **CRG 索引状态**：`STALE_PENDING_SYNC` (主干推进至 `9aecd45`，CRG 索引待例行增量更新)
-- **失效降级策略**：开发代理立即降级为 Git / Ripgrep 原生源码检索，严禁阻塞开发，不引入任何常驻索引守护进程。
+- **CRG 索引状态**：`VALID` (已完成全量图索引更新，覆盖 218 文件，3060 节点，48324 边；`head_matches_build: true`)
+- **检索验证**：经 `query_graph_tool`（`file_summary`、`tests_for`）实测检索，`ChatGPTCompanionManager` 14 个节点与 4 项关键测试引用均能高精度秒级命中，图谱索引健康有效。
+- **失效降级策略**：若 HEAD 推进导致 `head_matches_build: false`，开发代理立即降级为 Git / Ripgrep 原生源码检索，严禁阻塞开发，不引入任何常驻索引守护进程。
