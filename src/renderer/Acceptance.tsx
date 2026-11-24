@@ -14,6 +14,7 @@ import {
   type SaveProgressStep,
   type TaskView,
   type UserAcceptanceView,
+  type ViewItemStatus,
 } from './api.js';
 import { COPY } from './copy.js';
 
@@ -37,7 +38,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-function factTag(status: 'verified' | 'not_checked' | 'failed' | 'pending_user'): { cls: string; text: string } {
+function factTag(status: ViewItemStatus): { cls: string; text: string } {
   switch (status) {
     case 'verified':
       return { cls: 'tag ok', text: '通过' };
@@ -45,6 +46,10 @@ function factTag(status: 'verified' | 'not_checked' | 'failed' | 'pending_user')
       return { cls: 'tag warn', text: '未通过' };
     case 'pending_user':
       return { cls: 'tag warn', text: '待确认' };
+    case 'unverified':
+      return { cls: 'tag warn', text: '缺乏有效证据' };
+    case 'invalidated':
+      return { cls: 'tag warn', text: '证据失效' };
     default:
       return { cls: 'tag', text: '未检查' };
   }
@@ -787,6 +792,26 @@ export function Acceptance({
                       copied={copied}
                       onAction={handleSaveOutcomeAction}
                     />
+                  )}
+
+                  {!viewingHistorical && v.scopeChange?.needed && (
+                    <div className="item" data-testid="scope-change-panel" data-status="warn">
+                      <span className="tag warn">{COPY.scopeChangeTitle}</span>
+                      <div className="grow">
+                        <div>{v.scopeChange.text}</div>
+                        <ul className="muted">
+                          {v.scopeChange.reasons.map((r) => <li key={r}>{r}</li>)}
+                        </ul>
+                        <button
+                          type="button"
+                          data-testid="scope-change-confirm"
+                          disabled={pending}
+                          onClick={() => run((s) => s.confirmScopeChange(projectId, v.taskId, v.version))}
+                        >
+                          {v.scopeChange.confirmLabel}
+                        </button>
+                      </div>
+                    </div>
                   )}
 
                   <button

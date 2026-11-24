@@ -13,6 +13,7 @@ import {
   canonicalizeSandboxPaths,
   SeatbeltSandboxRunner,
 } from '../src/core/executor/sandbox/seatbelt.js';
+import { realVitestScript } from './helpers.js';
 
 const cleanDirs: string[] = [];
 const cleanServers: http.Server[] = [];
@@ -172,14 +173,15 @@ describe('阶段 8C · 脱离 Codex 的独立沙箱检查运行器（Seatbelt �
           name: 's8c-real-proj',
           scripts: {
             build: `node -e "require('fs').writeFileSync('built.txt', 'built-ok')"`,
-            test: 'node --test sample.test.mjs',
+            // AISS-A1：测试通过必须有可信结构化证据 → 真实 Vitest 运行器（显式绝对路径，运行器身份可解析）
+            test: `${realVitestScript()} --maxWorkers=1`,
           },
         }),
         'utf8',
       );
       await fs.writeFile(
         path.join(mainRepo, 'sample.test.mjs'),
-        `import test from 'node:test';\nimport assert from 'node:assert';\ntest('adds cleanly', () => assert.equal(2 + 3, 5));\n`,
+        `import { describe, it, expect } from 'vitest';\ndescribe('sample', () => {\n  it('adds cleanly', () => { expect(2 + 3).toBe(5); });\n});\n`,
         'utf8',
       );
       execFileSync('git', ['add', '-A'], { cwd: mainRepo });
@@ -271,12 +273,18 @@ describe('阶段 8C · 脱离 Codex 的独立沙箱检查运行器（Seatbelt �
       expect(rNetOn.status).toBe('ran');
       if (rNetOn.status === 'ran') expect(rNetOn.exitCode).toBe(0);
 
-      // 7. 脱离 Codex 直接运行 runCheck('build') 与 runCheck('test')（真 npm + node --test）
+      // 7. 脱离 Codex 直接运行 runCheck('build') 与 runCheck('test')（真 npm + 真实 Vitest）
       const digest = await scriptsDigest(worktree);
-      const bRes = await runCheck(worktree, 'build', runner, { authorizedDigest: digest });
-      const tRes = await runCheck(worktree, 'test', runner, { authorizedDigest: digest });
+      const identity = { projectRoot: mainRepo, taskId: 's8c-seatbelt', round: 1, acceptanceRev: 1, testedTree: '' };
+      const bRes = await runCheck(worktree, 'build', runner, { authorizedDigest: digest, identity });
+      const tRes = await runCheck(worktree, 'test', runner, { authorizedDigest: digest, identity });
       expect(bRes.status).toBe('passed');
       expect(tRes.status).toBe('passed');
+      // 通过必须来自可信结构化报告：真实用例计数 + 证据有效
+      expect(tRes.evidence?.verdict).toBe('passed');
+      expect(tRes.evidence?.report?.counts.total).toBeGreaterThan(0);
+      expect(tRes.evidence?.report?.counts.failed).toBe(0);
+      expect(tRes.evidence?.report?.counts.passed).toBeGreaterThan(0);
       expect(await fs.readFile(path.join(worktree, 'built.txt'), 'utf8')).toBe('built-ok');
 
       // 8. 命令超时正确中止并返回 timedOut: true
@@ -304,6 +312,6 @@ describe('阶段 8C · 脱离 Codex 的独立沙箱检查运行器（Seatbelt �
       if (rExtra.status === 'ran') expect(rExtra.exitCode).toBe(0);
       expect(await fs.readFile(extraFile, 'utf8')).toBe('extra-ok');
     },
-    30_000,
+    90_000,
   );
 });

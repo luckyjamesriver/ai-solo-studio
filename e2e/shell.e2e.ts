@@ -39,6 +39,12 @@ const mk = (prefix: string) => {
   return d;
 };
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+/**
+ * AISS-A1：自动测试必须由真实测试框架产出结构化证据。
+ * E2E 测试项目不在本仓库内，所以 test 脚本写仓库自身 Vitest 的绝对路径；
+ * verbose + no-color 让宿主能解析逐项测试名并保持输出可脱敏展示。
+ */
+const vitestScript = (extra = '') => `${path.resolve(root, 'node_modules', '.bin', 'vitest')} run --reporter=verbose --no-color${extra ? ` ${extra}` : ''}`;
 function gitProject(name: string, files: Record<string, string> = { 'index.html': '<h1>hi</h1>' }): string {
   const d = path.join(mk('proj'), name);
   fs.mkdirSync(d);
@@ -690,7 +696,7 @@ describe('施工模式界面', () => {
     expect(r.fullTrustNoAck).toContain('我已了解风险');
     expect(r.badId).toContain('找不到');
     expect(r.forgedProject).toContain('找不到');
-    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeChatGPTCompanion', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'deleteProviderProfile', 'detectEnvironment', 'disableSubscriptionCli', 'discardTask', 'editReworkPermissions', 'enableSubscriptionCli', 'exportExternalTask', 'fetchProviderModels', 'getAcceptanceView', 'getAiSettings', 'getChatGPTCompanionStatus', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getProjectRoles', 'getSaveHistory', 'getTask', 'getWorkbench', 'importExternalReport', 'initProject', 'listOpenProjects', 'listProviderCatalog', 'listProviderProfiles', 'listSubscriptionClis', 'listTasks', 'modifyDiscussionRequirements', 'onSaveProgress', 'openChatGPTCompanion', 'openChatGPTInSystemBrowser', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealHandoff', 'revealProject', 'reworkConflictTask', 'reworkExternalTask', 'reworkTask', 'saveAiRoles', 'saveAndTestProvider', 'saveClaudeKey', 'saveDefaultExecutor', 'savePlan', 'saveProjectBrief', 'saveProjectExecutor', 'saveProjectRoles', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'setTaskExecutor', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoFromHistory', 'undoSave']);
+    expect(r.apis).toEqual(['acceptDisclosure', 'ackDenied', 'addExtraDir', 'adjudicateDiscussion', 'chooseProject', 'closeChatGPTCompanion', 'closeProject', 'confirmCriterion', 'confirmDiscussionRequirements', 'confirmDiscussionSend', 'confirmOverall', 'confirmScopeChange', 'continueTask', 'createTask', 'decideDiscussionApproval', 'deleteClaudeKey', 'deleteProviderProfile', 'detectEnvironment', 'disableSubscriptionCli', 'discardTask', 'editReworkPermissions', 'enableSubscriptionCli', 'exportExternalTask', 'fetchProviderModels', 'getAcceptanceView', 'getAiSettings', 'getChatGPTCompanionStatus', 'getClaudeKeyStatus', 'getDisclosure', 'getDiscussionView', 'getProjectBrief', 'getProjectRoles', 'getSaveHistory', 'getTask', 'getWorkbench', 'importExternalReport', 'initProject', 'listOpenProjects', 'listProviderCatalog', 'listProviderProfiles', 'listSubscriptionClis', 'listTasks', 'modifyDiscussionRequirements', 'onSaveProgress', 'openChatGPTCompanion', 'openChatGPTInSystemBrowser', 'openPreview', 'openRecent', 'projectStatus', 'recentProjects', 'recheck', 'rejectCriterion', 'removeExtraDir', 'resolveDiscussionFailure', 'retryCleanup', 'revealHandoff', 'revealProject', 'reworkConflictTask', 'reworkExternalTask', 'reworkTask', 'saveAiRoles', 'saveAndTestProvider', 'saveClaudeKey', 'saveDefaultExecutor', 'savePlan', 'saveProjectBrief', 'saveProjectExecutor', 'saveProjectRoles', 'saveTask', 'saveUncheckedTask', 'sendDiscussionChat', 'setTaskExecutor', 'skipDiscussion', 'skipPreview', 'startDiscussion', 'startTask', 'stopTask', 'undoFromHistory', 'undoSave']);
   });
 
   it('确定性并发控制：模拟 listTasks 延迟返回旧空列表期间创建任务不消失；模拟任务放弃后刷新正常移除', async () => {
@@ -1664,29 +1670,25 @@ describe('阶段 3：施工计划确认、施工中、停止与中断后页（04
 describe('阶段 4：验收页、检查依据、退回修改、多轮切换与读取说明（07-accept、08-evidence、09-rework）', () => {
   it('完整闭环：读取说明清单 → 验收未完成 → 检查依据脱敏 → 验收未通过 → 退回修改 → 第 2 轮轮次切换 → 验收通过并保存', async () => {
     const data = mk('data-s4');
+    // AISS-A1：自动测试必须由真实测试框架产出结构化证据，才能显示为「测试通过」。
+    // 这里用仓库自身的真实 Vitest（绝对路径，因为测试项目不在本仓库内），
+    // 第 1 轮「包含 round2 新模块」真实失败、第 2 轮真实通过；pretest 只负责输出需要脱敏的样例文本。
     const proj = gitProject('s4-review-site', {
       'package.json': JSON.stringify({
         name: 's4-review-site',
         scripts: {
           build: 'node -e "console.log(\'build ok\')"',
-          test: 'node run-tests.cjs',
+          pretest: 'node -e "console.log(\'SECRET_API_KEY=sk-proj-e2e-secret-999999\'); console.log(\'> s4-review-site@1.0.0 test\')"',
+          test: `${path.resolve(root, 'node_modules', '.bin', 'vitest')} run --reporter=verbose --no-color`,
         },
       }),
-      'run-tests.cjs': [
-        'const fs = require("node:fs");',
-        'const html = fs.readFileSync("index.html", "utf8");',
-        'console.log("> s4-review-site@1.0.0 test");',
-        'console.log("SECRET_API_KEY=sk-proj-e2e-secret-999999");',
-        'console.log("✓ 首页标题渲染正常 (4ms)");',
-        'if (html.includes("round2")) {',
-        '  console.log("✓ 包含 round2 新模块 (2ms)");',
-        '  console.log("Tests 2 passed (2)");',
-        '  process.exit(0);',
-        '} else {',
-        '  console.log("✗ 包含 round2 新模块 (2ms)");',
-        '  console.log("Tests 1 failed | 1 passed (2)");',
-        '  process.exit(1);',
-        '}',
+      'tests/s4.test.ts': [
+        "import fs from 'node:fs';",
+        "import { describe, it, expect } from 'vitest';",
+        "describe('s4 首页', () => {",
+        "  it('首页标题渲染正常', () => { expect(fs.readFileSync('index.html', 'utf8')).toContain('<h1>'); });",
+        "  it('包含 round2 新模块', () => { expect(fs.readFileSync('index.html', 'utf8')).toContain('round2'); });",
+        "});",
       ].join('\n'),
       'index.html': '<h1>initial</h1>\n',
     });
@@ -2230,19 +2232,20 @@ describe('阶段 5b：项目简介、Claude API Key 与 AI 角色配置（E2E）
 
 describe('阶段 6 · 保存过程、冲突页、保存记录与撤销闭环（UI v2.1 #10-#12）', () => {
   it('实时 4 步保存进度（#10-save-result）→ 已保存 / 检查期间项目有变化 / 写入出错已安全恢复并重试成功', async () => {
-    const checkScript = [
-      "const fs = require('node:fs');",
-      'setTimeout(() => {',
-      "  console.log('Tests  3 passed');",
-      '  process.exit(0);',
-      '}, 1200);',
-    ].join('\n');
     const proj = gitProject('stage6-progress-site', {
       'package.json': JSON.stringify({
         name: 's6-e2e-progress',
-        scripts: { build: 'node -e "process.exit(0)"', test: 'node check.cjs' },
+        scripts: { build: 'node -e "process.exit(0)"', test: vitestScript() },
       }),
-      'check.cjs': checkScript,
+      // 3 条真实测试；其中一条约 1.2 秒，保证「合并后检查运行中」的真实状态可被观察到
+      'tests/progress.test.ts': [
+        "import { describe, it, expect } from 'vitest';",
+        "describe('progress', () => {",
+        "  it('第一条真实用例', () => { expect(1 + 1).toBe(2); });",
+        "  it('第二条真实用例（较慢，用于观察进行中状态）', async () => { await new Promise((r) => setTimeout(r, 1200)); expect(true).toBe(true); });",
+        "  it('第三条真实用例', () => { expect('ok').toBe('ok'); });",
+        "});",
+      ].join('\n'),
       'index.html': '<h1>v0</h1>\n',
       'other.txt': 'v0\n',
     });
@@ -2581,8 +2584,9 @@ describe('阶段 6 · 保存过程、冲突页、保存记录与撤销闭环（U
 describe('阶段 7：外部执行交接与各轮代码保留（E2E）', () => {
   it('导出确认 → 外部执行等待页与工作台不计入待决定 → 导入不符只读 → 导入绑定含工作树实际差异并保存 → 退回修改双选择', async () => {
     const proj = gitProject('stage7-handoff-site', {
-      'package.json': JSON.stringify({ name: 's7-handoff', scripts: { test: 'node -e "process.exit(0)"' } }),
+      'package.json': JSON.stringify({ name: 's7-handoff', scripts: { test: vitestScript() } }),
       'index.html': '<h1>首页 v0</h1>\n<footer>old</footer>\n',
+      'tests/handoff.test.ts': "import { it, expect } from 'vitest';\nit('外部导入后检查真实通过', () => { expect(1).toBe(1); });\n",
     });
     const reportDir = mk('s7-reports');
     const data = mk('data-s7-handoff');
@@ -3475,12 +3479,19 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
 
     const proj = gitProject('stage8c-standalone-checks', {
       'app.mjs': 'export const add = (a, b) => a - b;\n',
-      'app.test.mjs': `import test from 'node:test';\nimport assert from 'node:assert';\nimport { add } from './app.mjs';\ntest('standalone sandbox test passes', () => assert.equal(add(3, 4), 7));\n`,
+      // AISS-A1：独立 Seatbelt 沙箱里运行真实 Vitest，才能取得结构化测试证据
+      'tests/standalone.test.ts': [
+        "import { describe, it, expect } from 'vitest';",
+        "import { add } from '../app.mjs';",
+        "describe('standalone sandbox', () => {",
+        "  it('standalone sandbox test passes', () => { expect(add(3, 4)).toBe(7); });",
+        "});",
+      ].join('\n'),
       'package.json': JSON.stringify({
         name: 'stage8c-standalone-checks',
         scripts: {
           build: 'node --check app.mjs',
-          test: 'node --test app.test.mjs',
+          test: vitestScript('--maxWorkers=1'),
         },
       }),
     });
@@ -3736,8 +3747,9 @@ describe('阶段 8C：脱离 Codex 的独立检查沙箱 E2E（macOS Seatbelt）
         'package.json': JSON.stringify({
           name: 'proj-stage9',
           type: 'module',
-          scripts: { test: 'node -e "process.exit(0)"' },
+          scripts: { test: vitestScript() },
         }, null, 2),
+        'tests/stage9.test.ts': "import { it, expect } from 'vitest';\nit('Stage 9 真实测试通过', () => { expect(1).toBe(1); });\n",
         'index.html': '<h1>Stage 9 Test</h1>\n',
       });
 

@@ -1,7 +1,7 @@
 # AI Solo Studio — 核心代码地图 (CODE_MAP)
 
-**版本：** v1.5 (P0-2 Baseline Closeout)  
-**基线分支：** `origin/rebuild` (对应产品代码基线 `9aecd45` / PR #3 Merged)  
+**版本：** v1.7 (AISS-A1-TRUSTED-EVIDENCE-001 统一宿主证据模型，2026-11-24)  
+**基线分支：** `origin/rebuild` (`e69ca8511a17acfc4427954af13ef6d364ffb553` = 本阶段基线)  
 **真实性原则：** 100% 经由真实源码导出与调用实现核对；Preload API 明确展示完整入参（包括 `projectId`）；严格区分 `runCheck()` 与 `runProjectChecks()`；未合入主线的在研原型不画入当前主线架构。
 
 ---
@@ -17,7 +17,7 @@
 │          ChatGPTView.tsx (伴侣控制、多项目选择器、方案导入门禁)          │
 │    辅助: planParser.ts (方案全要素解析与防重锁),                        │
 │          chatgptFeedback.ts (反馈包生成与脱敏核验),                    │
-│          webBridge.ts (DOM 文本安全提取与诚实降级)                      │
+│          webBridge.ts (提取辅助；无跨窗口 DOM 读取，失败诚实降级)      │
 │    通信接口: window.studio.* (经 contextBridge 暴露的白名单 API)       │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ IPC (invoke / on)
@@ -58,13 +58,13 @@
 
 | 子系统模块 | 真实源码文件路径 | 核心接口 / 类 / 真实函数 | 关键职责与调用约束 |
 |---|---|---|---|
-| **主进程外壳** | `src/main/index.ts` | `createWindow`, `ipcMain.handle` | 维护 `BrowserWindow` 安全参数（`contextIsolation: true`, `sandbox: true`）；统一注册 IPC 监听（`tasks:*`, `acceptance:*`, `chatgpt:*`），分发至对应 `projectId` 的 `TaskController` 或 `chatgptCompanion`。 |
+| **主进程外壳** | `src/main/index.ts` | `createWindow`, `ipcMain.handle` | 维护 `BrowserWindow` 安全参数（`contextIsolation: true`, `sandbox: true`, `webviewTag: false`，见 `src/main/index.ts:247`）；统一注册 IPC 监听（`tasks:*`, `acceptance:*`, `chatgpt:*`），分发至对应 `projectId` 的 `TaskController` 或 `chatgptCompanion`。 |
 | **预加载层** | `src/preload/index.cts` | `contextBridge.exposeInMainWorld` | 严格暴露 `window.studio` 白名单方法（方法签名均显式接收 `projectId` 参数，及 `openChatGPTCompanion`、`closeChatGPTCompanion` 等伴侣方法），严禁泄漏 Node 原生 `fs` 或敏感全局对象。 |
-| **ChatGPT 安全伴侣视界** | `src/main/chatgpt-companion.ts` | `ChatGPTCompanionManager`<br>`isAllowedChatGPTUrl`<br>`chatgptCompanion` | 独立 BrowserWindow、专属持久分区 `persist:ai_solo_chatgpt`、`sandbox: true`、`contextIsolation: true`、零 preload 注入；双重权限全拒绝（`setPermissionRequestHandler` / `setPermissionCheckHandler`）；弹窗拦截、服务端 302 重定向拦截、跨域 iframe 子框架导航拦截；页面加载失败感知并提供系统浏览器安全降级。 |
+| **ChatGPT 安全伴侣视界** | `src/main/chatgpt-companion.ts` | `ChatGPTCompanionManager`<br>`isAllowedChatGPTUrl`<br>`chatgptCompanion` | 独立 BrowserWindow、专属持久分区 `persist:ai_solo_chatgpt`、`sandbox: true`、`contextIsolation: true`、零 preload 注入；双重权限全拒绝（`setPermissionRequestHandler` / `setPermissionCheckHandler`）；弹窗拦截、服务端 302 重定向拦截、跨域 iframe 子框架导航拦截；页面加载失败感知并提供系统浏览器安全降级。主渲染层仅能通过 open/close/status/system-browser IPC 控制伴侣窗口，无读取其 DOM 的 IPC 通道（`src/preload/index.cts:84-87`、`src/main/index.ts:739-742`）。 |
 | **方案解析与导入门禁** | `src/renderer/planParser.ts` | `parsePlanFromText`<br>`extractCodeBlocks`<br>`serializePlanForTask` | 结构化解析方案文本；全要素无静默丢失；明确区分用户核准要求（最高优先级）与原始方案参考（背景说明）；空目标拦截；多项目环境强制显式指定目标项目，提供提交防重锁。 |
 | **反馈包脱敏与审查** | `src/renderer/chatgptFeedback.ts` | `sanitizeFeedbackText`<br>`buildChatGPTFeedbackPacket` | 组装格式化 ChatGPT 审查反馈包（含任务ID、目标、执行结果、退出码、真实变更证据、系统体检）；敏感凭证与绝对路径脱敏；文本或选项变动实时重置人工核验状态，未勾选“我已人工核验脱敏内容”禁止复制。 |
-| **DOM 文本提取桥梁** | `src/renderer/webBridge.ts` | `extractContentFromWebview`<br>`extractMarkdownCodeBlocks` | 优先捕获用户划选文本，按 ChatGPT 官方 DOM 结构提取回答与代码块；提取失败诚实返回错误与手动提示，绝不静默窃取宿主系统剪贴板。 |
-| **伴侣交互视图** | `src/renderer/ChatGPTView.tsx` | `ChatGPTView`<br>`ChatGPTPlanConfirmDialog` | 伴侣视界状态监控、加载错误与阻断通知、显式项目选择器、方案审查与提交防重锁。 |
+| **提取辅助与诚实降级（无跨窗口 DOM 访问）** | `src/renderer/webBridge.ts` | `extractContentFromWebview`<br>`extractMarkdownCodeBlocks` | `extractContentFromWebview` 仅当所选节点具备 `executeJavaScript` 时尝试提取（`webBridge.ts:25-27`）；主窗口 `webviewTag: false`（`src/main/index.ts:247`）且 `#chatgpt-webview` 只是普通 `<div>`（`ChatGPTView.tsx:453-456`），故无法读取独立伴侣窗口 DOM，恒返回诚实降级错误（`webBridge.ts:81-87`），真实交付路径为人工复制/粘贴；绝不静默读取宿主系统剪贴板。 |
+| **伴侣交互视图** | `src/renderer/ChatGPTView.tsx` | `ChatGPTView` | 伴侣视界状态监控、加载错误与阻断通知、显式项目选择器、方案预览与确认门禁（预览/确认弹层为组件内内联 JSX，**未导出独立组件**）、提交防重锁。 |
 | **应用编排中枢** | `src/core/app/task-controller.ts` | `TaskController` (`create`, `savePlan`, `start`, `saveTask`, `discardTask`) | 主进程 IPC 与核心业务的桥梁，负责请求参数检验、视图装配与高阶业务编排。 |
 | **状态机核心** | `src/core/task/state.ts` | `next`, `canFire`, `TaskState`, `TaskEvent` | 纯函数严格状态机。状态转换必须通过 `next(state, event)` 触发，非法迁移抛出 `InvalidTransition`。 |
 | **任务调度引擎** | `src/core/task/runner.ts` | `TaskRunner` (`create`, `setPlan`, `approve`, `start`, `save`, `discard`) | 调度执行体生命周期，驱动安全保存四步安全流程与隔离清理。 |
@@ -72,11 +72,39 @@
 | **Git 隔离工作区** | `src/core/git/git.ts` | `createWorktree`, `createTrialWorktree`, `removeTrialWorktree`, `removeWorktree`, `diffSummary`, `mergeTask` | 任务必须在独立 worktree 沙箱中施工；处理分支检出、试合并与代码差异捕获。 |
 | **受控持久化存储** | `src/core/persistence/store.ts` | `RecordStore` (`load`, `commit`, `list`) | 依据 ADR 0005，全系统唯一文件写入者。CAS 乐观锁校验、`.studio/events.jsonl` 事件日志追加、启动对账重建。 |
 | **卷兼容性探针** | `src/core/persistence/volume.ts` | `localApfsProbe`, `requireLocalVolume` | 依据 ADR 0005 第 12 条校验数据目录是否为本地 APFS 磁盘，防止网络卷导致锁失效。 |
-| **自动化检查** | `src/core/checks/scripts.ts` | `detectScripts`, `runCheck`, `runProjectChecks` | 静态解析并沙箱执行目标项目中的检查脚本。`buildEvidence` 逐项调用 `runCheck`，试合并阶段调用聚合的 `runProjectChecks`。 |
-| **双轨验收卡与证据** | `src/core/acceptance/card.ts`<br>`src/core/acceptance/view.ts`<br>`src/core/acceptance/proof.ts` | `buildCard`, `toUserView`, `buildTaskProof` | 聚合退出码、Git 真实修改、检查结果与人工确认项，判定 `readyToSave` 门禁。 |
+| **自动化检查（可信证据采集）** | `src/core/checks/scripts.ts` | `detectScripts`, `runCheck`, `runProjectChecks`, `collectApprovedScopeBaseline`, `currentScopeFingerprint` | 静态解析并沙箱执行目标项目中的检查脚本。`build` 以真实进程退出码为证据；`test` 只有取得结构化测试证据才算 `passed`，否则 `failed` / `unverified` / `not_available`。`buildEvidence` 逐项调用 `runCheck`，试合并阶段调用聚合的 `runProjectChecks`。 |
+| **统一宿主证据模型** | `src/core/evidence/model.ts`<br>`src/core/evidence/inventory.ts`<br>`src/core/evidence/vitest.ts`<br>`src/core/evidence/validate.ts` | `HostCheckEvidence`, `assessScopeChange`, `readVitestReport`, `evidenceIdentityProblem`, `hasTrustedTestPass` | 证据身份（项目/任务/轮次/验收版本/被测 tree）、运行身份、脚本/配置/运行器/测试清单指纹、Vitest JSON 报告完整性校验、相对任务基线的测试范围削弱评估、证据有效性与失效原因。 |
+| **双轨验收卡与证据** | `src/core/acceptance/card.ts`<br>`src/core/acceptance/view.ts`<br>`src/core/acceptance/proof.ts`<br>`src/core/acceptance/proof-status.ts` | `buildCard`, `toUserView`, `buildTaskProof`, `checkInvalidations` | 聚合真实进程事实、Git 真实修改、宿主证据与人工确认项，判定 `readyToSave` 门禁。条目状态区分 `verified` / `failed` / `not_checked` / `unverified`（缺乏有效证据）/ `invalidated`（证据失效）/ `user_confirmed`；证据不足或失效时绝不显示为通过，旧记录不补造测试数量。 |
 | **环境体检** | `src/core/env/health.ts`<br>`src/core/env/host-env.ts` | `runHealthCheck` | 检测系统运行环境、磁盘空间、Node/Git 依赖与安全隔离状态。 |
 
+> **ChatGPT 交付路径与信任边界（源码核实，2026-11-24）：** 主窗口以 `webviewTag: false` 创建（`src/main/index.ts:247`）；`#chatgpt-webview` 只是普通 `<div data-webview-enabled="false">`（`src/renderer/ChatGPTView.tsx:453-456`），不是真实 `<webview>`，因此 `extractContentFromWebview()` 无法在主渲染层执行页面脚本（`src/renderer/webBridge.ts:25-27`），只会返回诚实降级错误（`webBridge.ts:81-87`）。ChatGPT 实际运行于独立沙箱 `BrowserWindow`（`src/main/chatgpt-companion.ts:73-86`：`contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`、`webviewTag: false`、零 preload、独立分区 `persist:ai_solo_chatgpt`）；主渲染层没有任何读取其 DOM 的通道（IPC 仅 open/close/status/system-browser：`src/preload/index.cts:84-87`、`src/main/index.ts:739-742`），Electron 也不允许跨窗口读取另一 `BrowserWindow` 的 DOM。真实交付路径为人工复制/粘贴（用户主动点击「📋 从剪贴板粘贴」`ChatGPTView.tsx:491-494`、输入框 `:519-529`、`window.prompt` 兜底 `:225`）；失败时显式提示「未能在网页中捕获到回答…」并给出 `manual-fallback-hint`（`ChatGPTView.tsx:237`、`:504-515`；`webBridge.ts:86`）。`webBridge.ts` 内无任何 `navigator.clipboard` 调用，不静默窃取剪贴板；剪贴板读取只发生在用户主动点击粘贴按钮时（`ChatGPTView.tsx:131`）。
+
 ---
+
+## 二·五、AISS-A1 可信证据链路（本阶段新增）
+
+```
+TaskRunner.buildEvidence(task)
+  ├─ 计算被测内容 tree（.studio/ 与 node_modules/ 永不进入 tree）
+  ├─ 构造 EvidenceIdentityContext { projectRoot, taskId, round, acceptanceRev, testedTree, baselineRev=worktree.baseSha, approvedScope=checkAuth.scope }
+  ├─ runCheck(worktree, 'build'|'test', sandboxRunner, { authorizedDigest, identity })
+  │    ├─ build：真实进程退出码 → passed / failed
+  │    └─ test ：Vitest 且脚本可安全追加参数 → 注入 JSON 报告器
+  │         ├─ readVitestReport：随机路径 / 运行窗口 / 计数一致性 / stdout 交叉核对
+  │         ├─ assessTestScope：相对基线提交比较测试文件/测试块/断言/skip/only/配置/运行器/锁文件
+  │         └─ 结论顺序：失败 > 报告完整性 > 零测试 > 全部跳过 > 非 0 退出 > 范围削弱 > passed
+  ├─ tree 前后比对：运行期间内容变化 → 证据作废（source_changed_during_check）
+  ├─ toStoredCheckProofs：StoredCheckProof 携带 HostCheckEvidence
+  └─ buildCard：条目状态按证据语义生成；测试范围削弱记录 scopeChange（需用户显式重新确认）
+
+recheck(task)            → acceptanceRev+1、清空全部确认、重新采集证据（旧证据/旧未检查确认失效）
+save(task) 试合并         → runProjectChecks(同一证据语义) + 检查前后 tree 比对
+                          → 原验收证据与试检查结果不一致 → acceptance_inconsistent 阻断
+启动核对 reconcileTasks   → revalidateStoredEvidence：身份/脚本/配置/运行器漂移 → evidenceInvalid（证据失效）
+                           （只记录事实，不改写历史轮次）
+```
+
+用户显式动作：`TaskController.confirmScopeChange(id, version)`（preload `confirmScopeChange` → IPC `acceptance:confirm-scope-change`）→ 绑定 `acceptanceVersion` 与范围指纹，重新生成证据；自动反馈闭环不得调用。
 
 ## 三、 跨层调用与关键业务真实时序流（严格对齐源码与完整参数）
 
@@ -187,8 +215,8 @@ Renderer (ChatGPTView)
                     └──► loadURL('https://chatgpt.com') (若遇网络阻断，记录 lastLoadError 并向 UI 报告)
 
 【方案提取、门禁解析与任务创建】
-Renderer (用户点击从伴侣提取或手动粘贴方案)
-  ├──► webBridge: extractContentFromWebview() (提取网页文本；若失败提示手动输入，不偷窃剪贴板)
+Renderer (用户手动粘贴方案；「从伴侣提取」仅为兼容入口，实际恒降级为手动)
+  ├──► webBridge: extractContentFromWebview() (主窗口无真实 `<webview>`，无法读取独立伴侣窗口 DOM，恒返回诚实降级错误，随后走人工粘贴，不偷窃剪贴板)
   ├──► planParser: parsePlanFromText(rawText) (解析结构化字段；全要素保留；用户修改覆盖原始值)
   ├──► 多项目环境拦截：强制用户显式选定 targetProjectId，未选则拦截创建
   └──► 用户确认方案点击创建 (提供 isSubmitting 防重锁)
@@ -197,9 +225,9 @@ Renderer (用户点击从伴侣提取或手动粘贴方案)
 
 【任务执行后审查反馈包生成与脱敏人工核验】
 Renderer (TaskPage 任务完成或需向 ChatGPT 复核时)
-  ├──► chatgptFeedback: buildChatGPTFeedbackPacket({ task, acceptanceView, envHealth, ... })
+  ├──► chatgptFeedback: buildChatGPTFeedbackPacket(task, projectName?, options?) (真实签名见 `src/renderer/chatgptFeedback.ts:52-56`)
   │     └──► 区分宿主真实检查事实与 AI 自述；组合退出码、变动证据、系统体检
-  ├──► ChatGPTFeedbackModal (展示结构化反馈文本与脱敏选项)
+  ├──► TaskPage 内联反馈包审查模态框（`TaskPage.tsx:207` 的 `showFeedbackModal` 分支，**未导出独立组件**）
   │     ├──► sanitizeFeedbackText() (脱敏绝对路径与潜在 API Key)
   │     └──► 变动感知：用户编辑文本或切换脱敏选项时，实时重置 hasConfirmedReview = false
   └──► 复制门禁：用户必须主动勾选“我已人工核验脱敏内容”后，复制按钮方可解锁
@@ -225,6 +253,6 @@ Renderer (TaskPage 任务完成或需向 ChatGPT 复核时)
 
 以下文件存在于本地在研工作区（`/Users/jamesho/ai-solo-studio-rebuild`）或特定实验分支中，**尚未正式合并入主线 `rebuild`**，严禁误作为当前主线架构依据：
 1. `src/core/app/autonomous-feedback-loop.ts`（原工作区未提交文件 `??`，闭环反馈自愈实验原型）
-2. `src/core/thinking/chatgpt-devkit.ts`（原工作区未提交文件 `??`，本地思考协议开发包原型；**明确与 PR #3 无关**，PR #3 仅包含 Webview 安全伴侣）
+2. `src/core/thinking/chatgpt-devkit.ts`（原工作区未提交文件 `??`，本地思考协议开发包原型；**明确与 PR #3 无关**，PR #3 仅包含独立伴侣窗口（BrowserWindow）安全隔离）
 3. `tests/autonomous-feedback-loop.test.ts`（原工作区未提交文件 `??`，对应自愈测试原型）
 4. `src/renderer/novice/`（新手建站向导组件规划，待 PRD 裁定开工）

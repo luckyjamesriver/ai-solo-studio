@@ -56,11 +56,16 @@ export function uncheckedReasonText(kind: UncheckedKind, unavailableReason?: Una
   if (kind === 'none') {
     return '项目没有配置可用的自动检查脚本，合并后无法自动验证，请先预览确认后再决定是否仍然保存。';
   }
+  if (kind === 'unverified') {
+    return '自动测试执行了，但没有取得可信的结构化测试证据（例如测试没有真实执行、全部被跳过、报告不可信，或测试范围/配置被改动），因此不能算通过。请先预览确认后再决定是否仍然保存。';
+  }
   switch (unavailableReason) {
     case 'scripts_changed_reauth':
       return '这次合并改动了项目的检查方式，所以没法自动检查。';
     case 'sandbox_unavailable':
       return '当前没有可用的受限运行环境，检查未能运行，所以没法自动检查。';
+    case 'evidence_unverified':
+      return '自动测试没有取得可信的结构化测试证据，所以不能算通过。';
     default:
       return '合并后的自动检查未能运行，所以没法自动检查。';
   }

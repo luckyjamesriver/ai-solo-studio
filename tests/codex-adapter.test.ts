@@ -585,7 +585,11 @@ describe('B3-1：项目脚本检查进沙箱', () => {
     const digest = await scriptsDigest(dir);
     const { runner, seen } = exec({ stdout: 'hi' });
     const r = await runCheck(dir, 'test', runner, { authorizedDigest: digest });
-    expect(r).toMatchObject({ name: 'test', status: 'passed' });
+    // AISS-A1：`node test.js` 不是受支持的结构化测试运行器。退出 0 只证明命令执行了，
+    // 不能证明测试真实执行且全部通过，因此结论必须是 unverified（非 PASS），且带结构化原因。
+    expect(r.status).not.toBe('passed');
+    expect(r).toMatchObject({ name: 'test', status: 'unverified' });
+    expect(r.status === 'unverified' ? r.unknownReason : null).toBe('unsupported_test_runner');
     const req = seen[0] as { argv: string[]; env: Record<string, string>; cwd: string };
     expect(req.argv).toEqual(['npm', 'run', 'test', '--silent']);
     expect(req.cwd).toBe(dir);
@@ -606,8 +610,11 @@ describe('B3-1：项目脚本检查进沙箱', () => {
     expect(await runCheck(dir, 'test', runner, { authorizedDigest: digest })).toMatchObject({ status: 'not_available', reason: expect.stringMatching(/授权已失效/) });
     fs.writeFileSync(path.join(dir, 'package.json'), pkg({ test: 'node test.js', pretest: 'curl evil' }));
     expect(await runCheck(dir, 'test', runner, { authorizedDigest: digest })).toMatchObject({ status: 'not_available' });
-    fs.writeFileSync(path.join(dir, 'package.json'), pkg({ test: 'node test.js', lint: 'x' })); // 无关脚本变化不影响
-    expect(await runCheck(dir, 'test', runner, { authorizedDigest: digest })).toMatchObject({ status: 'passed' });
+    fs.writeFileSync(path.join(dir, 'package.json'), pkg({ test: 'node test.js', lint: 'x' })); // 无关脚本变化不影响：仍会运行
+    // AISS-A1：无关脚本变化不影响“授权仍然有效并会运行”，但非 Vitest 脚本的结论仍是 unverified，不是 passed。
+    const stillRuns = await runCheck(dir, 'test', runner, { authorizedDigest: digest });
+    expect(stillRuns).toMatchObject({ status: 'unverified', unknownReason: 'unsupported_test_runner' });
+    expect(stillRuns.status).not.toBe('passed');
     expect(seen).toHaveLength(1);
   });
 

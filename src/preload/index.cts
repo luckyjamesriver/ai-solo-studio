@@ -70,6 +70,7 @@ const api = {
   confirmOverall: (projectId: string, id: string, version: string) => ipcRenderer.invoke('acceptance:confirmOverall', projectId, id, version),
   ackDenied: (projectId: string, id: string, itemId: string, version: string) => ipcRenderer.invoke('acceptance:ackDenied', projectId, id, itemId, version),
   recheck: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:recheck', projectId, id),
+  confirmScopeChange: (projectId: string, id: string, version: string) => ipcRenderer.invoke('acceptance:confirm-scope-change', projectId, id, version),
   saveTask: (projectId: string, id: string, version: string) => ipcRenderer.invoke('acceptance:save', projectId, id, version),
   saveUncheckedTask: (projectId: string, id: string, version: string) => ipcRenderer.invoke('acceptance:saveUnchecked', projectId, id, version),
   discardTask: (projectId: string, id: string) => ipcRenderer.invoke('acceptance:discard', projectId, id),

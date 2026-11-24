@@ -63,6 +63,7 @@ function checksStatusText(t: Task): string {
   if (!rec) return '未检查（检查没能运行）';
   if (rec.checked === true) return '检查通过';
   if (rec.uncheckedKind === 'none') return '未检查（没有检查脚本）';
+  if (rec.uncheckedKind === 'unverified') return '未检查（没有取得可信测试证据）';
   return '未检查（检查没能运行）';
 }
 

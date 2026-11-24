@@ -43,6 +43,21 @@ function decorate(args: string[]): string[] {
   return args;
 }
 
+/** 永不进入验收内容 / 改动清单的内部目录：应用元数据与依赖目录。 */
+const NEVER_TASK_CONTENT = ['.studio', 'node_modules'] as const;
+
+/**
+ * 从索引（可指定临时索引）里剔除内部目录。
+ * 为什么需要：某些项目没有 .gitignore，测试运行器会创建 node_modules 缓存；
+ * 若不剔除，检查过程写入的缓存会被误判成「检查改动了文件」。
+ * 不触碰工作区文件，只改索引条目。
+ */
+async function stripIndexDirs(dir: string, env?: Record<string, string>): Promise<void> {
+  for (const p of NEVER_TASK_CONTENT) {
+    await git(dir, ['rm', '-r', '--cached', '--ignore-unmatch', '--quiet', '--', p], env ? { env } : {}).catch(() => undefined);
+  }
+}
+
 export interface GitOptions {
   /** 追加的环境变量（例如 GIT_INDEX_FILE 指向临时索引） */
   env?: Record<string, string>;
@@ -265,7 +280,12 @@ export async function computeTree(repo: string, worktreePath: string): Promise<s
   const env = { GIT_INDEX_FILE: idx };
   try {
     await git(worktreePath, ['read-tree', 'HEAD'], { env });
+    // .studio/ 是应用自己的元数据；node_modules/ 是依赖/工具缓存（例如 Vitest 会写 node_modules/.vite）。
+    // 两者都不是任务内容，任何情况下都不得进入验收内容 tree，否则测试缓存会被误判成“改动了文件”。
+    // 做法：先普通 add -A（被 .gitignore / info/exclude 忽略的目录会被自然跳过），
+    // 再从临时索引里强制剔除这两个目录（覆盖“项目没有 .gitignore”的情况）。
     await git(worktreePath, ['add', '-A'], { env });
+    await stripIndexDirs(worktreePath, env);
     return (await git(worktreePath, ['write-tree'], { env })).trim();
   } finally {
     await removeFile(idx);
@@ -370,8 +390,9 @@ export function parseNumstatZ(out: string): Map<string, [number | null, number |
 /** 相对基线的改动清单（包含未提交与未跟踪文件）。文件名一律按 -z（NUL 分隔）解析。 */
 export async function diffSummary(wt: Worktree): Promise<FileChange[]> {
   await git(wt.path, ['add', '-A', '--intent-to-add']).catch(() => undefined);
-  const nameStatus = await git(wt.path, ['diff', '--name-status', '-z', '-M', wt.baseSha]);
-  const numstat = await git(wt.path, ['diff', '--numstat', '-z', '-M', wt.baseSha]);
+  await stripIndexDirs(wt.path).catch(() => undefined);
+  const nameStatus = await git(wt.path, ['diff', '--name-status', '-z', '-M', wt.baseSha, '--', '.', ':(exclude).studio', ':(exclude)node_modules']);
+  const numstat = await git(wt.path, ['diff', '--numstat', '-z', '-M', wt.baseSha, '--', '.', ':(exclude).studio', ':(exclude)node_modules']);
   const counts = parseNumstatZ(numstat);
   const map: Record<string, FileChange['status']> = { A: 'added', M: 'modified', D: 'deleted', R: 'renamed' };
   return parseNameStatusZ(nameStatus).map((e) => {

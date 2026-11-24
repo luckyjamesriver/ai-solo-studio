@@ -24,7 +24,7 @@ import { buildSaveHistoryView } from '../src/core/acceptance/history.js';
 import { SUGGESTED_CLAUDE_MODELS, DEFAULT_GLOBAL_AI_ROLES } from '../src/core/app/ai-settings.js';
 import { buildTaskView } from '../src/core/app/task-view.js';
 import * as G from '../src/core/git/git.js';
-import { makeRepo, tmpDir, testSandboxRunner } from './helpers.js';
+import { makeRepo, tmpDir, testSandboxRunner, realVitestScript } from './helpers.js';
 
 const cleanDirs: string[] = [];
 
@@ -49,6 +49,28 @@ async function until<T>(fn: () => Promise<T | false | undefined>, timeoutMs = 15
     if (Date.now() - start > timeoutMs) throw new Error('等待超时');
     await new Promise((r) => setTimeout(r, 20));
   }
+}
+
+/**
+ * 验收阶段“测试检查”不可用、保存试检查时恢复的沙箱运行器（AISS-A1 一致性校验要求：
+ * 验收时没有取得可信测试证据，保存时才可能走到「试检查失败 / checks_failed」）。
+ */
+function toggledTestSandbox(): { runner: ReturnType<typeof testSandboxRunner>; enableTestChecks: () => void } {
+  const inner = testSandboxRunner();
+  let enabled = false;
+  return {
+    runner: {
+      async runCommand(req) {
+        if (!enabled && req.argv.includes('test')) {
+          return { status: 'unavailable' as const, reason: '验收阶段受限环境不可用（测试检查）' };
+        }
+        return inner.runCommand(req);
+      },
+    },
+    enableTestChecks: () => {
+      enabled = true;
+    },
+  };
 }
 
 async function setupTaskToReviewing(opts: {
@@ -100,11 +122,20 @@ describe('阶段 6 提交①：保存过程实时进度与 8 类结果视图', (
       files: {
         'package.json': JSON.stringify({
           name: 's6-progress',
+          // AISS-A1：可信测试数量只来自真实结构化报告，因此用真实 Vitest 跑 3 条真实用例
           scripts: {
             build: 'node -e "process.exit(0)"',
-            test: 'node -e "console.log(\'Tests  3 passed\'); process.exit(0)"',
+            test: realVitestScript(),
           },
         }),
+        'tests/three.test.ts': [
+          "import { describe, it, expect } from 'vitest';",
+          "describe('fixture', () => {",
+          "  it('第一条真实用例', () => { expect(1 + 1).toBe(2); });",
+          "  it('第二条真实用例', () => { expect('ok').toBe('ok'); });",
+          "  it('第三条真实用例', () => { expect([1, 2, 3].length).toBe(3); });",
+          "});",
+        ].join('\n'),
         'index.html': '<h1>v0</h1>\n',
         'other.txt': 'v0\n',
       },
@@ -150,22 +181,36 @@ describe('阶段 6 提交①：保存过程实时进度与 8 类结果视图', (
 
   it('精确生成所有 8 种保存结果的文案、标签与按钮（含 checks_failed 试检查依据、project_changed、failed_restored、manualReview、project_locked）', async () => {
     // 1) checks_failed：试检查不通过 → 不保存、保留主项目、展示失败项和退回修改主按钮并附试检查依据
+    //    AISS-A1：失败必须来自真实 Vitest 断言失败（合并后出现的 trigger.txt 让 2 条真实用例失败）；
+    //    验收阶段测试检查不可用，因此不会触发「验收已通过、合并后却失败」的一致性拦截。
+    const sandbox = toggledTestSandbox();
     const { repo, ctl, id } = await setupTaskToReviewing({
       files: {
         'package.json': JSON.stringify({
           name: 's6-fail-checks',
           scripts: {
             build: 'node -e "process.exit(0)"',
-            test: 'node -e "if (require(\'fs\').existsSync(\'trigger.txt\')) { console.log(\'× case A\\n× case B\\nTests  2 failed | 1 passed\'); process.exit(1); } process.exit(0)"',
+            test: realVitestScript(),
           },
         }),
+        'tests/failure.test.ts': [
+          "import fs from 'node:fs';",
+          "import { describe, it, expect } from 'vitest';",
+          "const fail = fs.existsSync('trigger.txt');",
+          "describe('fixture', () => {",
+          "  it('第一条真实用例', () => { expect(1 + 1).toBe(2); });",
+          "  it('合并后失败用例 A', () => { expect(fail ? 'bad' : 'ok').toBe('ok'); });",
+          "  it('合并后失败用例 B', () => { expect(fail ? 1 : 2).toBe(2); });",
+          "});",
+        ].join('\n'),
         'index.html': '<h1>v0</h1>\n',
       },
-      sandbox: true,
+      sandboxRunner: sandbox.runner,
     });
     const ready = await confirmAll(ctl, id);
+    sandbox.enableTestChecks();
     await fs.writeFile(path.join(repo, 'trigger.txt'), 'break merged test\n');
-    await G_commit(repo, 'trigger merged failure');
+    await G_commit(repo, 'trigger merged failure', 'trigger.txt');
 
     const failRes: AcceptanceActionResult = await ctl.saveTask(id, ready.version);
     expect(failRes.ok).toBe(false);
@@ -181,7 +226,7 @@ describe('阶段 6 提交①：保存过程实时进度与 8 类结果视图', (
     ]);
     expect(failRes.view.saveOutcome!.buttons[0]).toMatchObject({ action: 'rework', label: '退回修改', primary: true });
     expect(failRes.view.trialProof?.test.status).toBe('failed');
-    expect(failRes.view.trialProof?.test.failedCount).toBe(2);
+    expect(failRes.view.trialProof?.test.counts).toMatchObject({ failed: 2 });
 
     const htmlFail = renderToStaticMarkup(
       createElement(SaveResultPanel, {
@@ -438,7 +483,8 @@ describe('阶段 6 提交②：保存冲突专页与基于最新项目重做（#
     expect(saveB2.ok).toBe(true);
     expect(await fs.readFile(path.join(repo, 'shared.txt'), 'utf8')).toBe('from-task-A + from-task-B\nline2\n');
     expect(await fs.readFile(path.join(repo, 'extra.txt'), 'utf8')).toBe('from-task-B-extra\n');
-  });
+  // 两轮真实施工 + 真实 Vitest 检查 + 真实 git 冲突定位/重做；并行跑全量时给足超时（不改变断言）。
+  }, 90_000);
 
   it('找不到已保存任务记录时冲突来源显示「项目里后来的改动」；更新副本本身遇新冲突时立即中止、副本保持原样且不留冲突标记', async () => {
     const repo = await makeRepo({ 'shared.txt': 'init-s\n', 'other.txt': 'init-o\n' });
@@ -497,7 +543,9 @@ describe('阶段 6 提交②：保存冲突专页与基于最新项目重做（#
     expect(otherBefore).not.toContain('<<<<<<<');
     expect(await G.mergeInProgress(wtPath)).toBe(false);
     expect(await G.dirtyFiles(repo)).toEqual([]);
-  });
+  // 这个用例包含两轮真实施工 + 两次真实 Vitest 检查 + 真实 git 冲突/重做，串行执行约 30-60s；
+  // 并行跑全量时给足超时，避免把“机器忙”误判成失败（不改变任何断言）。
+  }, 90_000);
 });
 
 describe('阶段 6 提交③：保存记录与撤销界面（#12-history）', () => {

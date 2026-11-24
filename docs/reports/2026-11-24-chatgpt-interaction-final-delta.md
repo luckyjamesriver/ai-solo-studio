@@ -62,7 +62,7 @@
 | 补充说明与原始讨论共存 | 仅输出补充说明，原始讨论被跳过 | 两者全部在参考区保留 | `tests/chatgpt-secure-interaction.test.ts:356` |
 | 清空目标非静默回退 | 回退到原始解析目标并创建 | 抛出错误 / UI 禁用确认 | `tests/chatgpt-secure-interaction.test.ts:370` |
 | 多项目显式归属门禁 | 默认落入 projects[0] | 必须显式选择目标项目 | `src/renderer/ChatGPTView.tsx:590` |
-| 网页提取诚实降级 | 静默读取剪贴板伪造成功 | 如实展示 manual-fallback-hint | `src/renderer/webBridge.ts:80` |
+| 网页提取诚实降级 | 静默读取剪贴板伪造成功 | 如实展示 manual-fallback-hint | `src/renderer/webBridge.ts:81-87`；`src/renderer/ChatGPTView.tsx:502-515` |
 | 权限测试假阳性 | checkHandler 为空时 `: true` 伪成功 | 严禁 fallback，获取失败直接抛错 | `e2e/shell.e2e.ts:3940` |
 
 ---

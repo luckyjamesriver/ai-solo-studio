@@ -8,7 +8,7 @@ import { MESSAGES } from '../src/core/task/messages.js';
 import { TaskRunner } from '../src/core/task/runner.js';
 import type { UserAcceptanceView } from '../src/core/acceptance/view.js';
 import * as G from '../src/core/git/git.js';
-import { makeRepo, tmpDir, testSandboxRunner } from './helpers.js';
+import { makeRepo, tmpDir, testSandboxRunner, useRealVitest } from './helpers.js';
 
 /**
  * M3-B4-2 操作闭环（控制器层）：与界面使用同一批方法（getAcceptanceView / confirm* / saveTask / discardTask / undoSave / retryCleanup / recheck），
@@ -28,8 +28,10 @@ async function until<T>(f: () => Promise<T | undefined | false>, ms = 15_000): P
   }
 }
 
-async function setup(o: { script?: FakeStep[]; files?: Record<string, string>; criteria?: string[]; mode?: 'standard' | 'full_trust'; sandbox?: boolean; openPreview?: (t: { kind: 'web' | 'finder'; targetPath: string }) => Promise<void> } = {}) {
+async function setup(o: { script?: FakeStep[]; files?: Record<string, string>; criteria?: string[]; mode?: 'standard' | 'full_trust'; sandbox?: boolean; realVitest?: boolean; openPreview?: (t: { kind: 'web' | 'finder'; targetPath: string }) => Promise<void> } = {}) {
   const repo = await makeRepo(o.files ?? { 'index.html': '<h1>old</h1>\n' });
+  // 需要「自动检查通过」语义的用例：用真实 Vitest（可信结构化测试证据只来自受支持的真实运行器）
+  if (o.realVitest) await useRealVitest(repo);
   const data = await tmpDir('data-');
   const make = () => {
     const ex = new FakeExecutor(o.script ?? WRITE_TITLE, { emitPermissions: true });
@@ -275,8 +277,9 @@ describe('主项目有未保存修改、冲突', () => {
 describe('重复点击、伪造参数、异常态', () => {
   it('重复点击保存只生效一次（另一次返回 busy），主项目只有一个合并提交', async () => {
     const { repo, ctl, id } = await setup({
-      files: { 'package.json': JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }), 'index.html': '<h1>old</h1>\n' },
+      files: { 'index.html': '<h1>old</h1>\n' },
       sandbox: true,
+      realVitest: true,
     });
     const v = await confirmAll(ctl, id);
     const before = (await G.git(repo, ['rev-list', '--count', 'HEAD'])).trim();

@@ -5,7 +5,8 @@ import type { AcceptanceCard, CriterionState, GitBinding } from '../acceptance/c
 
 import type { Capabilities } from '../capabilities/model.js';
 import type { EffectivePermissions } from '../executor/modes.js';
-import type { UnavailableReason, UncheckedKind } from '../checks/scripts.js';
+import type { ApprovedScopeBaseline, UnavailableReason, UncheckedKind } from '../checks/scripts.js';
+import type { HostCheckEvidence } from '../evidence/model.js';
 
 export interface Plan {
   goal: string;
@@ -163,7 +164,11 @@ export interface AcceptedRiskRecord {
 
 export interface StoredCheckProof {
   name: 'build' | 'test';
-  status: 'passed' | 'failed' | 'not_available';
+  /**
+   * passed 只能来自可信宿主证据；unverified 表示「执行了但缺乏可信证据 / 证据失效」，
+   * 绝不等于通过，也不得显示为 PASS。
+   */
+  status: 'passed' | 'failed' | 'not_available' | 'unverified';
   ranAt?: string;
   durationMs?: number;
   env: 'sandbox' | 'local';
@@ -172,6 +177,10 @@ export interface StoredCheckProof {
   exitKind?: ExitOutcome['kind'];
   exitCode?: number | null;
   unavailableReason?: string;
+  /** 统一宿主证据（AISS-A1）：身份、被测内容、运行身份、配置指纹、结构化报告、有效性与失效原因 */
+  evidence?: HostCheckEvidence;
+  /** 没有新证据的历史任务记录：标记为历史未核实（不补造证据、不修改历史记录） */
+  legacyUnverified?: boolean;
 }
 
 export interface RoundCriterionSnapshot {
@@ -292,7 +301,16 @@ export interface Task {
   previewSkipped?: boolean;
   card?: AcceptanceCard;
   /** 批准时授权的检查脚本内容摘要（package.json 的 build/test 及 pre/post 脚本）；摘要变化则授权失效 */
-  checkAuth?: { digest: string; at: string };
+  checkAuth?: { digest: string; at: string; scope?: ApprovedScopeBaseline };
+  /**
+   * 最新一次证据生成时发现的「测试范围被削弱 / 验证基础设施被修改」。
+   * 自动通过被阻断，必须由用户明确重新确认当前范围后才能继续（记录在 scopeReconfirmed）。
+   */
+  scopeChange?: { kind: 'weakened'; reasons: string[]; fingerprint: string; acceptanceVersion: string; at: string };
+  /** 用户明确确认「已知晓测试范围与验证基础设施变化，仍按当前范围验收」；验收版本或范围变化即失效 */
+  scopeReconfirmed?: { acceptanceVersion: string; fingerprint: string; at: string };
+  /** 重启后深度复核发现保存的证据已与当前检查配置不一致（记录事实，不改写历史轮次） */
+  evidenceInvalid?: { reason: string; at: string };
   /** 方案批准后修改验收标准导致退回 planned 时的提示 */
   reapproveNotice?: string;
   /** 本任务的完全信任确认标记（门禁 requireFullTrustConfirmed 读取；每个任务单独确认） */

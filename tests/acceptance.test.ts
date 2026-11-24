@@ -6,7 +6,7 @@ const ok = { kind: 'exited' as const, code: 0 };
 
 describe('验收卡', () => {
   it('没有测试脚本时显示“未检查”，绝不显示通过', () => {
-    const c = buildCard({ exit: ok, changes, checks: [{ name: 'test', status: 'not_available', reason: '无' }], criteria: [], previewed: false });
+    const c = buildCard({ exit: ok, changes, checks: [{ name: 'test', status: 'not_available', unknownReason: 'no_script', reason: '无' }], criteria: [], previewed: false });
     expect(c.items.find((i) => i.key === 'test')?.status).toBe('not_checked');
   });
 

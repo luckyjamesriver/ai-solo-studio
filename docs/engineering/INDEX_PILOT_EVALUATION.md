@@ -6,6 +6,8 @@
 **测试工具：** `code-review-graph 2.4.0` 与 `graphify 0.9.113`  
 **状态声明：** `AISS_CODEMAP_CONTEXT_READY_FOR_INDEPENDENT_REVIEW`
 
+> **时效性说明（2026-11-24 更正）：** 本文件是 PR #2 基线 `443773c` 时代的试点评测记录（214 文件 / 2,989 节点 / 47,146 边，测试工作树 `/Users/jamesho/ai-solo-studio-codemap`），**不是当前索引状态**。当前 CRG 索引注册（`build_sha` / `source_equivalence` / `exact_head_match` 三字段，状态 `STALE_PENDING_SYNC`）以 `docs/CURRENT_BASELINE.md` §四 为唯一准绳；本文件的 `INDEX_STALE` 判定与降级原则继续有效，试点数据不得当作当前 HEAD 的索引证据。
+
 ---
 
 ## 一、 索引基础设施盘点与真实状态核查

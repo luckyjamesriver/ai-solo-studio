@@ -18,17 +18,29 @@ function CheckProofCard({ item }: { item: SingleCheckProof }) {
     .filter(Boolean)
     .join(' · ');
 
-  if (item.status === 'not_checked') {
+  if (item.status === 'not_checked' || item.status === 'unverified' || item.status === 'invalidated') {
+    const label = item.status === 'not_checked' ? '未检查' : item.status === 'invalidated' ? '证据失效' : '缺乏有效证据';
     return (
-      <section className="box" data-testid={`proof-card-${item.key}`}>
+      <section className="box" data-testid={`proof-card-${item.key}`} data-proof-status={item.status}>
         <div className="row sb">
           <h2>{item.title}</h2>
           <span className="muted" data-testid="proof-meta">{metaLine}</span>
         </div>
         <div className="item" style={{ marginTop: '8px' }}>
-          <span className="tag">未检查</span>
+          <span className="tag warn">{label}</span>
           <span className="grow" data-testid="proof-unchecked-text">{item.summaryText}</span>
         </div>
+        {item.counts && (
+          <p className="muted" data-testid="proof-untrusted-counts" style={{ marginTop: '6px' }}>
+            报告中的数量（不可作为通过依据）：{item.counts.passed} 项通过 · {item.counts.failed} 项失败
+            {item.counts.skipped > 0 ? ` · ${item.counts.skipped} 项跳过` : ''}
+          </p>
+        )}
+        {item.proofFacts && item.proofFacts.length > 0 && (
+          <ul className="muted" data-testid="proof-facts" style={{ marginTop: '6px' }}>
+            {item.proofFacts.map((f) => <li key={f}>{f}</li>)}
+          </ul>
+        )}
       </section>
     );
   }
@@ -75,12 +87,24 @@ function CheckProofCard({ item }: { item: SingleCheckProof }) {
                 </div>
               )}
             </>
-          ) : (
+          ) : item.counts ? (
             <p className="muted" data-testid="proof-count-fallback">
-              {item.passedCount} 项通过 · {item.failedCount} 项失败（脚本未输出可识别的逐项测试名称）
+              {item.counts.passed} 项通过 · {item.counts.failed} 项失败
+              {item.counts.skipped > 0 ? ` · ${item.counts.skipped} 项跳过` : ''}
+              （脚本未输出可识别的逐项测试名称；数量来自{item.countsSource === 'structured_report' ? '宿主结构化测试报告' : '测试输出中的显式数字摘要'}）
+            </p>
+          ) : (
+            <p className="muted" data-testid="proof-count-unknown">
+              测试数量未知（未取得有效测试证据）
             </p>
           )}
         </div>
+      )}
+
+      {item.proofFacts && item.proofFacts.length > 0 && (
+        <ul className="muted" data-testid="proof-facts" style={{ marginTop: '8px' }}>
+          {item.proofFacts.map((f) => <li key={f}>{f}</li>)}
+        </ul>
       )}
 
       <details style={{ marginTop: '12px' }} data-testid="proof-details">

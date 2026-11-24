@@ -25,17 +25,23 @@ import {
 import type { Decision, DeniedOperation, Executor, ExecutorRun, PermissionRequest } from '../executor/types.js';
 import { assess, canAutoApprove, type AutoApproveRule, type RiskAssessment } from '../policy/risk.js';
 import {
+  collectApprovedScopeBaseline,
   detectScripts,
   runCheck,
   runProjectChecks,
   scriptsDigest,
   type CheckName,
   type CheckResult,
+  type EvidenceIdentityContext,
   type ProjectChecksOutcome,
   type SandboxCommandRunner,
   type UnavailableReason,
   type UncheckedKind,
 } from '../checks/scripts.js';
+import type { CheckUnknownReason, HostCheckEvidence } from '../evidence/model.js';
+import { configFingerprintKey } from '../evidence/model.js';
+import { configFingerprintProblems, evidenceIdentityProblem } from '../evidence/validate.js';
+import { detectTestRunner, readConfigFingerprints, readPackageLockDigest } from '../evidence/inventory.js';
 import { buildCard, blockedCard } from '../acceptance/card.js';
 import { filterProofOutput, parseTestCases } from '../acceptance/proof.js';
 import { extractConflictSnippet, PREVIEW_LIMITS } from '../acceptance/snippets.js';
@@ -54,6 +60,7 @@ export type OpFailReason =
   | 'acceptance_invalid'
   | 'conflict'
   | 'checks_failed'
+  | 'acceptance_inconsistent'
   | 'unchecked_needs_confirm'
   | 'project_changed'
   | 'failed_restored'
@@ -314,8 +321,17 @@ export class TaskRunner extends EventEmitter {
     // 批准同时授权“将运行的脚本”：记录当前 package.json 中 build/test（含 pre/post）脚本的内容摘要；
     // 之后脚本内容变化（包括被 AI 改动）则授权失效，对应检查标“未检查”。
     const digest = await scriptsDigest(this.opts.repo);
-    if (digest) t.checkAuth = { digest, at: new Date().toISOString() };
-    else delete t.checkAuth;
+    if (digest) {
+      // 同时记录测试范围基线（批准那一刻的测试清单 / 配置 / 运行器 / 锁文件指纹），
+      // 之后执行体削弱测试范围或替换验证基础设施时，自动通过会被阻断并要求明确重新确认。
+      let scope: Awaited<ReturnType<typeof collectApprovedScopeBaseline>> | undefined;
+      try {
+        scope = await collectApprovedScopeBaseline(this.opts.repo);
+      } catch {
+        scope = undefined;
+      }
+      t.checkAuth = { digest, at: new Date().toISOString(), ...(scope ? { scope } : {}) };
+    } else delete t.checkAuth;
     delete t.reapproveNotice;
     await this.fire(t, 'approve');
     return t;
@@ -792,7 +808,7 @@ export class TaskRunner extends EventEmitter {
    * 先检测外部驱动（命中则不读取任何内容、不运行检查）→ 算 tree（冻结）→ 跑检查 → 再算 tree；
    * 检查改动了文件则检查结果作废，并把检查之后的内容作为新的验收内容（改动清单如实列出，用户看到的就是将要保存的）。
    */
-  private async buildEvidence(t: Task): Promise<void> {
+  private async buildEvidence(t: Task, opts: { acceptCurrentScope?: boolean } = {}): Promise<void> {
     const wt = t.worktree!;
     const repo = this.opts.repo;
     const start = t.gitStart ?? { mainHeadAtStart: await G.headSha(repo), worktreeHeadAtStart: await G.headSha(wt.path), worktreePath: wt.path };
@@ -801,6 +817,7 @@ export class TaskRunner extends EventEmitter {
     delete t.acceptedTree;
     delete t.checksVoid;
     delete t.uncheckedConfirm;
+    delete t.evidenceInvalid;
     t.acceptanceRev = (t.acceptanceRev ?? 0) + 1; // 每次生成验收证据（含重新检查）版本加一：旧版本的确认请求一律作废
 
     let drivers = await G.detectExternalDrivers(wt.path);
@@ -817,6 +834,16 @@ export class TaskRunner extends EventEmitter {
     const checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
     const roundNo = t.currentRound ?? 1;
     t.roundEndedAt = new Date().toISOString();
+    // 证据身份：任务 / 轮次 / 验收版本 / 被验收内容 tree / 任务基线提交（用于核对测试范围是否被削弱）
+    const identity: EvidenceIdentityContext = {
+      projectRoot: repo,
+      taskId: t.id,
+      round: roundNo,
+      acceptanceRev: t.acceptanceRev,
+      testedTree: tree1,
+      baselineRev: wt.baseSha,
+      ...(t.checkAuth?.scope ? { approvedScope: t.checkAuth.scope } : {}),
+    };
     let checks: CheckResult[] = [];
     let checkProofs: StoredCheckProof[] = [];
     if (this.opts.runChecks !== false) {
@@ -827,8 +854,11 @@ export class TaskRunner extends EventEmitter {
           ...(t.plan?.capabilities ? { capabilities: t.plan.capabilities } : {}),
           taskId: t.id,
           fullTrustRecords: this.store,
+          identity,
+          ...(checkSandbox?.kind ? { sandboxKind: checkSandbox.kind } : {}),
+          ...(opts.acceptCurrentScope ? { acceptCurrentScope: true } : {}),
         });
-        this.log(t, 'check', `${name}: ${c.status}`);
+        this.log(t, 'check', `${name}: ${c.status}${c.status === 'unverified' ? `（${c.unknownReason}）` : ''}`);
         checks.push(c);
       }
       checkProofs = toStoredCheckProofs(checks, checkEnv, new Date().toISOString());
@@ -837,16 +867,53 @@ export class TaskRunner extends EventEmitter {
     if (checks.length) {
       const tree2 = await G.computeTree(repo, wt.path);
       if (tree2 !== tree1) {
+        // 检查期间被测源码被改动：检查结果作废（证据失效），绝不当作通过
         t.checksVoid = MESSAGES.checksModified;
         this.log(t, 'check', MESSAGES.checksModified, 'host');
-        checks = checks.map((c): CheckResult => ({ name: c.name, status: 'not_available', reason: `${MESSAGES.checksModified}因此未检查。` }));
-        checkProofs = checkProofs.map((p): StoredCheckProof => ({ name: p.name, status: 'not_available', env: checkEnv, unavailableReason: `${MESSAGES.checksModified}因此未检查。` }));
+        checks = checks.map((c): CheckResult => ({
+          name: c.name,
+          status: 'unverified',
+          unknownReason: 'source_changed_during_check',
+          reason: MESSAGES.checksModified,
+          output: '',
+          durationMs: 0,
+          ...(c.evidence ? { evidence: { ...c.evidence, verdict: 'unverified', valid: false, invalidReason: 'source_changed_during_check' } } : {}),
+        }));
+        checkProofs = checkProofs.map((p): StoredCheckProof => ({
+          ...p,
+          status: 'unverified',
+          unavailableReason: MESSAGES.checksModified,
+          ...(p.evidence ? { evidence: { ...p.evidence, verdict: 'unverified', valid: false, invalidReason: 'source_changed_during_check' } } : {}),
+        }));
         changes = await G.diffSummary(wt);
         tree = tree2;
       }
     }
+    // 测试范围被削弱 / 验证基础设施被修改：记录事实，自动通过被阻断，等待用户明确重新确认
+    const testProof = checkProofs.find((p) => p.name === 'test');
+    const weakened = testProof?.evidence?.scope.kind === 'assessed_weakened';
+    if (weakened && testProof?.evidence) {
+      t.scopeChange = {
+        kind: 'weakened',
+        reasons: testProof.evidence.scope.reasons,
+        fingerprint: configFingerprintKey(testProof.evidence.config),
+        acceptanceVersion: acceptanceVersion(t),
+        at: new Date().toISOString(),
+      };
+    } else {
+      delete t.scopeChange;
+    }
     t.currentChecks = checkProofs;
     t.acceptedTree = tree;
+    if (opts.acceptCurrentScope) {
+      // 只有用户显式操作才会走到这里（acceptCurrentScope 仅由 confirmScopeChange 传入）。
+      // 绑定生成后的验收版本与当前测试范围指纹：之后任何变化都会让这次确认自动失效。
+      t.scopeReconfirmed = {
+        acceptanceVersion: acceptanceVersion(t),
+        fingerprint: testProof?.evidence ? configFingerprintKey(testProof.evidence.config) : '',
+        at: new Date().toISOString(),
+      };
+    }
     const savedRoundRef = await G.saveRoundRef(repo, {
       taskId: t.id,
       round: roundNo,
@@ -902,6 +969,26 @@ export class TaskRunner extends EventEmitter {
       delete t.trialChecks;
       t.deniedAcks = t.denied.map(() => false);
       await this.buildEvidence(t);
+      await this.persist(t);
+      return t;
+    } finally {
+      this.leave(id);
+    }
+  }
+
+  /**
+   * 用户明确确认「已知晓测试范围被削弱 / 验证基础设施被修改，仍按当前范围验收」。
+   * 只有用户主动操作才会走到这里；自动反馈闭环不得调用本方法。
+   * 确认会绑定当前验收版本与测试范围指纹，内容和验收版本变化后自动失效。
+   */
+  async confirmScopeChange(id: string): Promise<Task> {
+    if (!this.enter(id)) throw new Error(MESSAGES.busy);
+    try {
+      const t = await this.load(id);
+      if (t.state !== 'reviewing' && t.state !== 'save_failed_unmerged') throw new Error('任务不在验收阶段。');
+      if (!t.scopeChange) throw new Error('这个任务没有需要重新确认的测试范围变化。');
+      this.log(t, 'message', `你已确认：已知晓测试范围/验证基础设施变化（${t.scopeChange.reasons.join('；')}），并按当前范围验收。`, 'host');
+      await this.buildEvidence(t, { acceptCurrentScope: true });
       await this.persist(t);
       return t;
     } finally {
@@ -966,12 +1053,8 @@ export class TaskRunner extends EventEmitter {
       t.deniedAcks[update.deniedAck] = true;
     }
     const prev = t.card;
-    const auto = prev.items.filter((i) => ['build', 'test'].includes(i.key));
-    const checks: CheckResult[] = auto.map((i) =>
-      i.status === 'not_checked'
-        ? { name: i.key as 'build' | 'test', status: 'not_available', reason: i.evidence }
-        : { name: i.key as 'build' | 'test', status: i.status === 'verified' ? 'passed' : 'failed', outcome: { kind: 'exited', code: i.status === 'verified' ? 0 : 1 }, output: '', durationMs: 0 },
-    );
+    // 用存储的宿主证据重建检查结果：用户确认只改用户输入，绝不把人工确认变成「自动检查通过」
+    const checks = checkResultsFromStored(t.currentChecks);
     t.card = buildCard({
       exit: t.exit!,
       changes: prev.changes,
@@ -984,13 +1067,9 @@ export class TaskRunner extends EventEmitter {
       notes: this.cardNotes(t),
       ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}),
       ...(t.checksVoid ? { checksVoid: t.checksVoid } : {}),
+      ...(t.evidenceInvalid ? { evidenceInvalid: t.evidenceInvalid.reason } : {}),
       ...(t.gitBinding ? { git: t.gitBinding } : {}),
     });
-    // 保留原始检查的证据文字
-    for (const item of t.card.items) {
-      const old = prev.items.find((i) => i.key === item.key);
-      if (old && (item.key === 'build' || item.key === 'test')) item.evidence = old.evidence;
-    }
     this.syncCurrentRound(t);
     await this.persist(t);
     return t;
@@ -1383,7 +1462,7 @@ export class TaskRunner extends EventEmitter {
     await this.persist(t);
   }
 
-  private async runTrialChecks(t: Task, trialPath: string): Promise<ProjectChecksOutcome> {
+  private async runTrialChecks(t: Task, trialPath: string, testedTree: string): Promise<ProjectChecksOutcome> {
     if (this.opts.runChecks === false) {
       const detected = await detectScripts(trialPath);
       const hasScripts = Object.keys(detected).length > 0;
@@ -1396,6 +1475,7 @@ export class TaskRunner extends EventEmitter {
             checked: false,
             summary: { passed: 0, failed: 0 },
             failed: [],
+            unverified: [],
           }
         : {
             kind: 'none',
@@ -1404,6 +1484,7 @@ export class TaskRunner extends EventEmitter {
             checked: false,
             summary: { passed: 0, failed: 0 },
             failed: [],
+            unverified: [],
           };
     }
     return runProjectChecks(trialPath, await this.sandboxForTask(t), {
@@ -1411,6 +1492,15 @@ export class TaskRunner extends EventEmitter {
       ...(t.plan?.capabilities ? { capabilities: t.plan.capabilities } : {}),
       taskId: t.id,
       fullTrustRecords: this.store,
+      identity: {
+        projectRoot: this.opts.repo,
+        taskId: t.id,
+        round: t.currentRound ?? 1,
+        acceptanceRev: t.acceptanceRev ?? 0,
+        testedTree,
+        baselineRev: t.worktree?.baseSha ?? '',
+        ...(t.checkAuth?.scope ? { approvedScope: t.checkAuth.scope } : {}),
+      },
     });
   }
 
@@ -1614,13 +1704,25 @@ export class TaskRunner extends EventEmitter {
       let checksSummary = { passed: 0, failed: 0 };
       let checkedAt: string | undefined;
       try {
-        const checkOutcome = await this.runTrialChecks(t, trialPath);
+        const trialTreeBefore = await G.computeTree(repo, trialPath);
+        const checkOutcome = await this.runTrialChecks(t, trialPath, trialTreeBefore);
+        const trialTreeAfter = await G.computeTree(repo, trialPath);
+        if (trialTreeAfter !== trialTreeBefore) {
+          // 试检查期间内容被改动：证据作废，阻断保存并要求重新检查
+          await cleanupTrial();
+          delete t.uncheckedConfirm;
+          t.lastSave = { reason: 'failed', at: new Date().toISOString(), saveSteps };
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'acceptance_inconsistent', detail: '合并后检查期间内容发生了变化，试检查结果已作废。请重新检查后再保存。' };
+        }
         checked = checkOutcome.checked;
         checksSummary = checkOutcome.summary;
         checkedAt = checkOutcome.checkedAt;
         const checkEnv: 'sandbox' | 'local' = t.plan?.capabilities.constructionMode === 'full_trust' ? 'local' : 'sandbox';
         const ranTime = checkedAt ?? new Date().toISOString();
         const trialSummary = summarizeTrialChecks(checkOutcome.results, { repoPath: repo, worktreePath: trialPath });
+        // 保存前试合并结果必须与原验收证据一致；不一致则阻断保存并要求重新验收
         if (checkOutcome.failed.length > 0) {
           const failedNames = checkOutcome.failed.map((c) => c.name);
           delete t.uncheckedConfirm;
@@ -1647,9 +1749,22 @@ export class TaskRunner extends EventEmitter {
             totalFailedItems: trialSummary.totalFailedItems,
           };
         }
+        const inconsistent = trialEvidenceInconsistency(t, checkOutcome.results);
+        if (inconsistent) {
+          delete t.uncheckedConfirm;
+          this.opStep(t, '试检查', false, `inconsistent:${inconsistent}`);
+          await cleanupTrial();
+          saveSteps[2] = { ...saveSteps[2]!, status: 'failed', detail: '合并后检查结果与原验收证据不一致' };
+          skipRemaining(3);
+          this.emitSaveProgress(t.id, saveSteps, true);
+          recordSnapshot('failed');
+          this.endOp(t, 'interrupted');
+          await this.persist(t);
+          return { ok: false, reason: 'acceptance_inconsistent', detail: '合并后的检查结果与原验收证据不一致，本次没有保存。请重新检查后再保存。' };
+        }
         // 未检查（none 或 unavailable）：未传 confirmUnchecked 时不写入主项目，清理临时副本并返回待确认
         if (!checkOutcome.checked) {
-          const kind: UncheckedKind = checkOutcome.kind === 'none' ? 'none' : 'unavailable';
+          const kind: UncheckedKind = checkOutcome.kind === 'none' ? 'none' : checkOutcome.kind === 'unverified' ? 'unverified' : 'unavailable';
           const reasonText = checkOutcome.reasonText ?? uncheckedReasonText(kind, checkOutcome.unavailableReason);
           if (!opts.confirmUnchecked) {
             this.opStep(t, '试检查', false, `needs_confirm:${kind}${checkOutcome.unavailableReason ? `:${checkOutcome.unavailableReason}` : ''}`);
@@ -1657,7 +1772,7 @@ export class TaskRunner extends EventEmitter {
             saveSteps[2] = {
               ...saveSteps[2]!,
               status: 'skipped',
-              detail: kind === 'none' ? '未检查（项目没有配置检查脚本）' : '未检查（自动检查未能运行）',
+              detail: kind === 'none' ? '未检查（项目没有配置检查脚本）' : kind === 'unverified' ? '未检查（没有取得可信测试证据）' : '未检查（自动检查未能运行）',
             };
             skipRemaining(3);
             this.emitSaveProgress(t.id, saveSteps, true);
@@ -2076,8 +2191,83 @@ export class TaskRunner extends EventEmitter {
     t.reconciled = { at: new Date().toISOString(), note };
   }
 
+  /**
+   * 启动时的证据深度复核（AISS-A1）：应用异常重启后，核对验收记录里的宿主证据是否仍然成立。
+   * - 身份（任务/轮次/验收版本/被测内容）必须一致；
+   * - 检查脚本 / 测试配置 / 运行器 / 锁文件必须在验收之后没有被改动。
+   * 不一致时记录事实（evidenceInvalid），界面显示「证据失效」并阻断保存；不改写任何历史轮次记录。
+   */
+  private async revalidateEvidence(t: Task): Promise<boolean> {
+    if (!['reviewing', 'save_failed_unmerged'].includes(t.state)) return false;
+    const proofs = (t.currentChecks ?? []).filter((p) => p.evidence);
+    if (!proofs.length || !t.worktree) return false;
+    const identity = { taskId: t.id, round: t.currentRound ?? 1, ...(t.acceptanceRev !== undefined ? { acceptanceRev: t.acceptanceRev } : {}), ...(t.acceptedTree ? { acceptedTree: t.acceptedTree } : {}) };
+    const problems: string[] = [];
+    const dir = t.worktree.path;
+    let scripts: string | undefined;
+    let configFiles: { path: string; sha256: string }[] = [];
+    let lock: string | undefined;
+    try {
+      scripts = await scriptsDigest(dir);
+      configFiles = await readConfigFingerprints(dir);
+      lock = await readPackageLockDigest(dir);
+    } catch {
+      return false;
+    }
+    const detected = await detectScripts(dir).catch(() => ({} as Partial<Record<CheckName, string>>));
+    const runner = detected.test ? await detectTestRunner(dir, detected.test).catch(() => undefined) : undefined;
+    for (const p of proofs) {
+      const ev = p.evidence!;
+      if (evidenceIdentityProblem(ev, identity)) continue; // 身份已失效：界面按失效展示，无需深度复核
+      // 「未检查」的检查项没有真实运行，也没有完整配置指纹：深度复核只针对真实运行过的证据
+      if (ev.verdict === 'not_available' || ev.trust === 'none') continue;
+      problems.push(
+        ...configFingerprintProblems(ev, {
+          scriptsDigest: scripts,
+          configFiles,
+          ...(lock ? { packageLockDigest: lock } : {}),
+          runnerPackage: runner ? { name: runner.name, version: runner.version, packageJsonSha256: runner.packageJsonSha256 } : undefined,
+        }),
+      );
+    }
+    if (!problems.length) {
+      if (t.evidenceInvalid) {
+        delete t.evidenceInvalid;
+        return true;
+      }
+      return false;
+    }
+    const reason = `重建后复核发现检查配置已被改动（${[...new Set(problems)].join('；')}），原检查证据已失效，请重新检查。`;
+    if (t.evidenceInvalid?.reason === reason) return false;
+    t.evidenceInvalid = { reason, at: new Date().toISOString() };
+    this.log(t, 'check', reason, 'host');
+    return true;
+  }
+
+  /** 启动核对前的证据复核（每个任务一次；单个任务失败不影响其他任务）。 */
+  private async revalidateStoredEvidence(): Promise<void> {
+    let listed: { id: string }[] = [];
+    try {
+      listed = await this.store.list();
+    } catch {
+      return;
+    }
+    for (const item of listed) {
+      if (!this.enter(item.id)) continue;
+      try {
+        const t = await this.load(item.id);
+        if (await this.revalidateEvidence(t)) await this.persist(t);
+      } catch {
+        // 复核失败不影响启动；不伪造任何结论
+      } finally {
+        this.leave(item.id);
+      }
+    }
+  }
+
   /** 第二步（有写入）：按识别结果安全收尾，并清理超过 30 天的已放弃任务轮次 Git 引用。 */
   async reconcileTasks(now = new Date()): Promise<ReconcileEntry[]> {
+    await this.revalidateStoredEvidence().catch(() => undefined);
     const out: ReconcileEntry[] = [];
     for (const { taskId: id, finding: first } of await this.identifyTasks()) {
       if (!this.enter(id)) continue;
@@ -2365,20 +2555,82 @@ function initialSaveSteps(): SaveProgressStep[] {
 }
 
 function toStoredCheckProofs(checks: CheckResult[], env: 'sandbox' | 'local', ranAt: string): StoredCheckProof[] {
-  return checks.map((c): StoredCheckProof =>
-    c.status === 'not_available'
-      ? { name: c.name, status: 'not_available', env, unavailableReason: c.reason }
-      : {
-          name: c.name,
-          status: c.status,
-          ranAt,
-          durationMs: c.durationMs,
-          env,
-          rawOutput: c.output,
-          exitKind: c.outcome.kind,
-          ...(c.outcome.kind === 'exited' ? { exitCode: c.outcome.code } : {}),
-        },
-  );
+  return checks.map((c): StoredCheckProof => {
+    if (c.status === 'not_available') {
+      return { name: c.name, status: 'not_available', env, unavailableReason: c.reason, ...(c.evidence ? { evidence: c.evidence } : {}) };
+    }
+    if (c.status === 'unverified') {
+      return {
+        name: c.name,
+        status: 'unverified',
+        ranAt,
+        durationMs: c.durationMs,
+        env,
+        rawOutput: c.output,
+        unavailableReason: c.reason,
+        ...(c.outcome ? { exitKind: c.outcome.kind, ...(c.outcome.kind === 'exited' ? { exitCode: c.outcome.code } : {}) } : {}),
+        ...(c.evidence ? { evidence: c.evidence } : {}),
+      };
+    }
+    return {
+      name: c.name,
+      status: c.status,
+      ranAt,
+      durationMs: c.durationMs,
+      env,
+      rawOutput: c.output,
+      exitKind: c.outcome.kind,
+      ...(c.outcome.kind === 'exited' ? { exitCode: c.outcome.code } : {}),
+      ...(c.evidence ? { evidence: c.evidence } : {}),
+    };
+  });
+}
+
+/** 从任务记录里的宿主证据恢复检查结果（用于重新生成验收卡，不重跑进程）。 */
+function checkResultsFromStored(proofs: StoredCheckProof[] | undefined): CheckResult[] {
+  return (proofs ?? []).map((p): CheckResult => {
+    if (p.status === 'not_available') {
+      return {
+        name: p.name,
+        status: 'not_available',
+        unknownReason: (p.evidence?.invalidReason as CheckUnknownReason | undefined) ?? (p.evidence?.reason as CheckUnknownReason | undefined) ?? 'no_script',
+        reason: p.unavailableReason ?? '未检查。',
+        ...(p.evidence ? { evidence: p.evidence } : {}),
+      };
+    }
+    if (p.status === 'unverified') {
+      return {
+        name: p.name,
+        status: 'unverified',
+        unknownReason: (p.evidence?.invalidReason as CheckUnknownReason | undefined) ?? (p.evidence?.reason as CheckUnknownReason | undefined) ?? 'no_structured_evidence',
+        reason: p.unavailableReason ?? '未取得可信证据。',
+        output: p.rawOutput ?? '',
+        durationMs: p.durationMs ?? 0,
+        ...(p.evidence ? { evidence: p.evidence } : {}),
+      };
+    }
+    return {
+      name: p.name,
+      status: p.status === 'passed' ? 'passed' : 'failed',
+      outcome: { kind: 'exited', code: p.exitCode ?? (p.status === 'passed' ? 0 : 1) },
+      output: p.rawOutput ?? '',
+      durationMs: p.durationMs ?? 0,
+      ...(p.evidence ? { evidence: p.evidence } : {}),
+    };
+  });
+}
+
+/** 保存前试合并结果与原验收证据是否一致：原验收「可信通过」的项目，试检查也必须是可信通过。 */
+function trialEvidenceInconsistency(t: Task, trialResults: CheckResult[]): string | undefined {
+  const accepted = t.currentChecks ?? [];
+  for (const name of ['build', 'test'] as const) {
+    const a = accepted.find((p) => p.name === name);
+    const tr = trialResults.find((r) => r.name === name);
+    if (!a || !tr) continue;
+    if (a.status === 'passed' && tr.status !== 'passed') return `${name}:accepted_passed_trial_${tr.status}`;
+    if (a.status === 'unverified' && tr.status === 'failed') return `${name}:accepted_unverified_trial_failed`;
+  }
+  return undefined;
 }
 
 function summarizeTrialChecks(
@@ -2395,13 +2647,21 @@ function summarizeTrialChecks(
   let testFailedCount = 0;
   let hasExplicitTestCount = false;
   if (testRes && testRes.status !== 'not_available') {
-    const filtered = filterProofOutput(testRes.output, filterOpts);
-    const parsed = parseTestCases(filtered, testRes.status);
-    testPassedCount = parsed.passedCount;
-    testFailedCount = testRes.status === 'failed' ? Math.max(1, parsed.failedCount) : parsed.failedCount;
-    hasExplicitTestCount =
-      parsed.parsedNames ||
-      /\b\d+\s+(?:passed|failed|passing|failing)\b|^(?:pass|fail)\s+\d+/im.test(filtered);
+    // 数量只取真正的可信来源（结构化报告 > stdout 显式数字摘要）；取不到就是未知，绝不默认生成
+    const counts = testRes.evidence?.report?.counts;
+    if (counts) {
+      testPassedCount = counts.passed;
+      testFailedCount = Math.max(counts.failed, testRes.status === 'failed' ? 1 : 0);
+      hasExplicitTestCount = true;
+    } else {
+      const filtered = filterProofOutput('output' in testRes ? testRes.output : '', filterOpts);
+      const parsed = parseTestCases(filtered);
+      if (parsed.counts) {
+        testPassedCount = parsed.counts.passed;
+        testFailedCount = Math.max(parsed.counts.failed, testRes.status === 'failed' ? 1 : 0);
+        hasExplicitTestCount = true;
+      }
+    }
   }
   const buildFailCount = buildRes?.status === 'failed' ? 1 : 0;
   const totalFailedItems = buildFailCount + (testRes?.status === 'failed' ? testFailedCount : 0);

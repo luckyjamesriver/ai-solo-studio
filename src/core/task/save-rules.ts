@@ -13,6 +13,7 @@ export type BlockerCode =
   | 'overall_unconfirmed'
   | 'criteria_unconfirmed'
   | 'no_changes'
+  | 'evidence_invalid'
   | 'not_frozen';
 
 /**
@@ -29,6 +30,8 @@ export function saveBlockerCodes(t: Task): BlockerCode[] {
   if (!(t.exit?.kind === 'exited' && t.exit.code === 0)) out.push('exec_not_ok');
   if (card.items.find((i) => i.key === 'build')?.status === 'failed') out.push('build_failed');
   if (card.items.find((i) => i.key === 'test')?.status === 'failed') out.push('test_failed');
+  // 证据失效（身份/版本/配置变化）必须阻断保存，必须重新检查
+  if (card.items.some((i) => i.key === 'checks_evidence' || i.status === 'invalidated') || t.evidenceInvalid) out.push('evidence_invalid');
   if (t.isolationWarnings?.length) out.push('isolation');
   if (!t.denied.every((_, i) => t.deniedAcks[i] === true)) out.push('denied_unacked');
   if (t.criteria.length === 0) {
@@ -54,6 +57,7 @@ export function saveBlockers(t: Task): string[] {
       case 'overall_unconfirmed': return '请先确认“我已看过改动，结果符合我的要求”。';
       case 'criteria_unconfirmed': return '验收标准还没有逐条确认。';
       case 'no_changes': return '没有任何文件被修改。';
+      case 'evidence_invalid': return '检查证据已失效（内容、验收版本或检查配置发生了变化），请重新检查。';
       case 'not_frozen': return '验收内容还没有冻结。';
     }
   });

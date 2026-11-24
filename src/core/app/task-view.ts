@@ -9,6 +9,7 @@ import { blockedReadLocations } from '../executor/modes.js';
 import { extractIncomplete } from '../acceptance/incomplete.js';
 import { filterDiagnosticNoise } from './noise.js';
 import { deniedImpactText, deniedText, exitFailureText, notCheckedText, safeRelPath, scrubAiText } from '../acceptance/texts.js';
+import { evidenceStatusText } from '../acceptance/card.js';
 import { MESSAGES } from '../task/messages.js';
 import {
   classifyTaskState,
@@ -432,8 +433,15 @@ export function buildTaskView(
       facts.push({
         label: `检查「${CHECK_LABEL[key]}」`,
         status: item.status === 'verified' ? 'ok' : item.status === 'failed' ? 'bad' : 'unchecked',
-        // 通过/失败只给结论，不给命令原文；“未检查”的原因本身是大白话
-        detail: item.status === 'verified' ? '通过' : item.status === 'failed' ? '未通过' : notCheckedText(key, item.evidence),
+        // 通过/失败只给结论，不给命令原文；未检查 / 缺乏证据 / 证据失效的原因本身是大白话
+        detail:
+          item.status === 'verified'
+            ? '通过'
+            : item.status === 'failed'
+              ? '未通过'
+              : item.status === 'unverified' || item.status === 'invalidated'
+                ? evidenceStatusText(item.status, item.unknownReason)
+                : notCheckedText(key, item.evidence),
       });
     }
     const incompleteSignals = (task.exit.kind !== 'exited' || task.exit.code !== 0) || denied.length > 0 || !!startFailure;

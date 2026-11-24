@@ -10,7 +10,7 @@ import { mapFailure, toUserView } from '../src/core/acceptance/view.js';
 import { buildTaskView } from '../src/core/app/task-view.js';
 import { runProjectChecks, scriptsDigest, type SandboxCommandRunner } from '../src/core/checks/scripts.js';
 import * as G from '../src/core/git/git.js';
-import { makeRepo, tmpDir, testSandboxRunner } from './helpers.js';
+import { makeRepo, tmpDir, testSandboxRunner, realVitestScript, useRealVitest } from './helpers.js';
 
 vi.mock('../src/core/git/git.js', { spy: true });
 const actualG = await vi.importActual<typeof G>('../src/core/git/git.js');
@@ -31,14 +31,40 @@ const basePlan = {
 
 const WRITE_INDEX: FakeStep[] = [{ do: 'write', path: 'index.html', content: '<h1>new</h1>\n' }, { do: 'exit', code: 0 }];
 
+/**
+ * 验收阶段“测试检查”不可用、保存试检查时恢复的沙箱运行器。
+ * 用途：验收时没有取得可信测试证据（test = not_available），保存时真实运行 Vitest 并真实失败，
+ * 这样「试检查失败」的保存路径才可达（AISS-A1 的一致性校验会阻断“验收已通过、合并后却失败”的场景）。
+ */
+function toggledTestSandbox(): { runner: SandboxCommandRunner; enableTestChecks: () => void } {
+  const inner = testSandboxRunner();
+  let enabled = false;
+  return {
+    runner: {
+      async runCommand(req) {
+        if (!enabled && req.argv.includes('test')) {
+          return { status: 'unavailable' as const, reason: '验收阶段受限环境不可用（测试检查）' };
+        }
+        return inner.runCommand(req);
+      },
+    },
+    enableTestChecks: () => {
+      enabled = true;
+    },
+  };
+}
+
 async function makeConfirmedTask(opts: {
   files?: Record<string, string>;
   script?: FakeStep[];
   runChecks?: boolean;
   sandboxRunner?: SandboxCommandRunner;
   goal?: string;
+  /** 用真实 Vitest 作为自动测试运行器（需要“检查通过”语义的用例必须用它） */
+  realVitest?: boolean;
 } = {}) {
   const repo = await makeRepo(opts.files ?? { 'index.html': '<h1>old</h1>\n' });
+  if (opts.realVitest) await useRealVitest(repo);
   const runner = new TaskRunner({
     repo,
     executor: new FakeExecutor(opts.script ?? WRITE_INDEX),
@@ -92,29 +118,39 @@ describe('阶段 1 · 保存安全：先试合并、试检查，再写入主项�
     expect((await runner.store.get(id))!.state).toBe('save_failed_unmerged');
   });
 
-  it('试检查失败：合并后两份各自通过的改动在一起测试失败 → 主项目不动，返回 checks_failed 与失败项，临时 worktree 已清理', async () => {
-    const checkScript = [
-      "const fs = require('node:fs');",
-      "const a = fs.readFileSync('a.txt', 'utf8').trim();",
-      "const b = fs.readFileSync('b.txt', 'utf8').trim();",
-      "if (a === 'task' && b === 'main-new') { console.error('incompatible'); process.exit(1); }",
+  it('试检查失败：合并后才出现的改动让真实测试失败 → 主项目不动，返回 checks_failed 与失败项，临时 worktree 已清理', async () => {
+    // 真实 Vitest 夹具：合并后才出现的 trigger.txt 让第二条真实用例失败。
+    // 验收阶段测试检查不可用（没有可信测试证据），因此保存时能如实走到「试检查失败」而不与原证据冲突。
+    const fixtureTest = [
+      "import fs from 'node:fs';",
+      "import { describe, it, expect } from 'vitest';",
+      "const fail = fs.existsSync('trigger.txt');",
+      "describe('合并兼容性', () => {",
+      "  it('第一条真实用例', () => { expect(1 + 1).toBe(2); });",
+      "  it('第二条真实用例（合并后不兼容）', () => { expect(fail ? 'incompatible' : 'compatible').toBe('compatible'); });",
+      "});",
     ].join('\n');
     const files = {
-      'package.json': JSON.stringify({ scripts: { build: 'node -e "process.exit(0)"', test: 'node check.cjs' } }),
-      'check.cjs': checkScript,
+      'package.json': JSON.stringify({ scripts: { build: 'node -e "process.exit(0)"', test: realVitestScript() } }),
+      'tests/fixture.test.ts': fixtureTest,
       'a.txt': 'init\n',
       'b.txt': 'init\n',
     };
+    const sandbox = toggledTestSandbox();
     const { repo, runner, id } = await makeConfirmedTask({
       files,
       script: [{ do: 'write', path: 'a.txt', content: 'task\n' }, { do: 'exit', code: 0 }],
       runChecks: true,
-      sandboxRunner: testSandboxRunner(),
+      sandboxRunner: sandbox.runner,
     });
+    // 验收时测试检查不可用 → 卡片上 test 未检查；保存试检查时受限环境恢复
+    sandbox.enableTestChecks();
 
-    // 主项目另行修改不同文件 b.txt（Git 合并无冲突，但合并后 test 会失败）
+    // 主项目另行修改不同文件 b.txt（Git 合并无冲突），并加入只有合并后才存在的 trigger.txt
     await fs.writeFile(path.join(repo, 'b.txt'), 'main-new\n');
-    await G.git(repo, ['commit', '-am', 'update b.txt']);
+    await fs.writeFile(path.join(repo, 'trigger.txt'), 'break merged test\n');
+    await G.git(repo, ['add', 'trigger.txt']);
+    await G.git(repo, ['commit', '-am', 'update b.txt + trigger']);
 
     const headBefore = await G.headSha(repo);
     const aBefore = await fs.readFile(path.join(repo, 'a.txt'), 'utf8');
@@ -126,7 +162,7 @@ describe('阶段 1 · 保存安全：先试合并、试检查，再写入主项�
     expect(r.reason).toBe('checks_failed');
     expect(r.failedChecks).toEqual(['test']);
     expect(r.detail).toContain('测试');
-    expect(r.detail).not.toMatch(/npm run|node check/);
+    expect(r.detail).not.toMatch(/npm run|node check|vitest/);
 
     expect(await G.headSha(repo)).toBe(headBefore);
     expect(await fs.readFile(path.join(repo, 'a.txt'), 'utf8')).toBe(aBefore);
@@ -135,6 +171,8 @@ describe('阶段 1 · 保存安全：先试合并、试检查，再写入主项�
     expect(await trialsEntries(repo)).toEqual([]);
     expect((await runner.store.get(id))!.state).toBe('reviewing');
     expect((await runner.store.get(id))!.op?.steps.some((s) => s.name === '试检查' && !s.ok)).toBe(true);
+    // 试检查失败项来自真实结构化报告：1 项真实用例失败
+    expect((await runner.store.get(id))!.lastSave).toMatchObject({ reason: 'checks_failed', failedChecks: ['test'], failedCheckCounts: { test: 1 } });
 
     // 视图层映射：不透传 detail 原文，但保留失败检查项名称
     const mapped = mapFailure({ ok: false, reason: 'checks_failed', detail: 'secret /Users/x', failedChecks: ['build', 'test'] });
@@ -190,6 +228,7 @@ describe('阶段 1 · 保存安全：先试合并、试检查，再写入主项�
       },
       runChecks: true,
       sandboxRunner: mutatingRunner,
+      realVitest: true,
     });
     repoRef = repo;
 
@@ -227,6 +266,7 @@ describe('阶段 1 · 保存安全：先试合并、试检查，再写入主项�
       files: { 'package.json': JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }), 'index.html': '<h1>old</h1>\n' },
       runChecks: true,
       sandboxRunner: dirtyingRunner,
+      realVitest: true,
     });
     repoRef = repo;
 
@@ -422,6 +462,7 @@ describe('阶段 1 · 保存记录检查信息与界面文案', () => {
       files,
       runChecks: true,
       sandboxRunner: testSandboxRunner(),
+      realVitest: true,
     });
     const r = await runner.save(id);
     expect(r.ok).toBe(true);
@@ -623,11 +664,12 @@ describe('阶段 1 · 撤销：说清楚为什么不能撤销', () => {
 });
 
 describe('阶段 1 补丁 · 未检查时必须由用户确认', () => {
-  it('runProjectChecks 准确区分三种结果：none（无脚本）/ unavailable（沙箱不可用、检查脚本变化需重新授权）/ ran（全部运行）', async () => {
+  it('runProjectChecks 准确区分四种结果：none（无脚本）/ unavailable（沙箱不可用、检查脚本变化需重新授权）/ unverified（跑了但没有可信测试证据）/ ran（全部运行且都有可信通过证据）', async () => {
     const emptyRepo = await makeRepo({ 'index.html': '<h1>hi</h1>\n' });
     const noneRes = await runProjectChecks(emptyRepo, testSandboxRunner());
     expect(noneRes).toMatchObject({ kind: 'none', checked: false });
     expect(noneRes.reasonText).toContain('没有配置');
+    expect(noneRes.unverified).toEqual([]);
 
     const withScripts = await makeRepo({
       'package.json': JSON.stringify({ scripts: { build: 'node -e "process.exit(0)"', test: 'node -e "process.exit(0)"' } }),
@@ -646,15 +688,30 @@ describe('阶段 1 补丁 · 未检查时必须由用户确认', () => {
     expect(reauthRes).toMatchObject({ kind: 'unavailable', unavailableReason: 'scripts_changed_reauth', checked: false });
     expect(reauthRes.reasonText).toContain('这次合并改动了项目的检查方式，所以没法自动检查。');
 
-    // 全部运行（通过 / 失败）均返回 kind: 'ran'
-    const ranOk = await runProjectChecks(withScripts, testSandboxRunner(), { authorizedDigest: digest });
+    // 非 Vitest 测试脚本：命令退出 0 但拿不到可信测试证据 → unverified（不是 ran，更不是通过）
+    const unverifiedRes = await runProjectChecks(withScripts, testSandboxRunner(), { authorizedDigest: digest });
+    expect(unverifiedRes).toMatchObject({ kind: 'unverified', unavailableReason: 'evidence_unverified', checked: false, summary: { passed: 1, failed: 0 } });
+    expect(unverifiedRes.checkedAt).toBeTruthy();
+    expect(unverifiedRes.unverified.map((c) => c.name)).toEqual(['test']);
+    expect(unverifiedRes.unverified[0]?.status === 'unverified' ? unverifiedRes.unverified[0].unknownReason : null).toBe('unsupported_test_runner');
+    expect(unverifiedRes.failed).toEqual([]);
+
+    // 全部运行且都有可信通过证据 → ran / checked=true
+    const okRepo = await makeRepo({
+      'package.json': JSON.stringify({ scripts: { build: 'node -e "process.exit(0)"', test: realVitestScript() } }),
+    });
+    await useRealVitest(okRepo);
+    const okDigest = await scriptsDigest(okRepo);
+    const ranOk = await runProjectChecks(okRepo, testSandboxRunner(), { authorizedDigest: okDigest });
     expect(ranOk).toMatchObject({ kind: 'ran', checked: true, summary: { passed: 2, failed: 0 } });
     expect(ranOk.checkedAt).toBeTruthy();
+    expect(ranOk.unverified).toEqual([]);
 
     const failRepo = await makeRepo({ 'package.json': JSON.stringify({ scripts: { test: 'node -e "process.exit(1)"' } }) });
     const failDigest = await scriptsDigest(failRepo);
     const ranFail = await runProjectChecks(failRepo, testSandboxRunner(), { authorizedDigest: failDigest });
     expect(ranFail).toMatchObject({ kind: 'ran', checked: false, summary: { passed: 0, failed: 1 } });
+    expect(ranFail.failed.map((c) => c.name)).toEqual(['test']);
   });
 
   it('有检查但沙箱不可用：首次保存返回 unchecked_needs_confirm（type=unavailable，主项目不变），确认后写入并记录 uncheckedKind 与确认时间', async () => {

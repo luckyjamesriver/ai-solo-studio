@@ -870,6 +870,19 @@ export class TaskController {
     }));
   }
 
+  /** 用户明确确认「已知晓测试范围被削弱 / 验证基础设施被修改，仍按当前范围验收」。绑定当前验收版本。 */
+  async confirmScopeChange(id: unknown, version: unknown): Promise<AcceptanceActionResult> {
+    const tid = this.checkArg(TASK_ID, id);
+    const v = this.checkVersion(version);
+    await this.load(tid);
+    return this.act(tid, async (t: Task) => {
+      if (v !== acceptanceVersion(t)) return { ok: false, message: MESSAGES.acceptanceInvalid };
+      if (t.state !== 'reviewing') return { ok: false, message: MESSAGES.notReady };
+      await this.r().confirmScopeChange(t.id);
+      return { ok: true, message: '已按当前测试范围重新检查。之前的确认已清空，请重新确认。' };
+    });
+  }
+
   async recheck(id: unknown): Promise<AcceptanceActionResult> {
     const tid = this.checkArg(TASK_ID, id);
     await this.load(tid);
