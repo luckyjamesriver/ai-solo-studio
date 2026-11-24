@@ -3,7 +3,7 @@
 **更新时间：** 2026-11-25
 **权威基线分支：** `rebuild` (`origin/rebuild`)
 **产品代码交付基线 (Product Code Merge SHA)：** `1c65aedd808b14207d8b6db6ef0d68ee3b065194`（PR #7 Merged）
-**当前任务基线（Reference HEAD，写本文件时点）：** `1c65aedd808b14207d8b6db6ef0d68ee3b065194`
+**当前任务基线（Reference HEAD，本文件更新时点）：** `ce04628ff428b6a7be6583e38949fe6aa6179fc2`（基线同步 PR #8 的合并提交；本文件更新提交会再推进动态 HEAD，产品交付基线仍以 `1c65aed` 为准）
 **工程状态声明：** `AISS_A1_MERGED_VERIFIED_COMPLETE`
 **基线解耦与治理原则：** 严格区分三类 SHA，禁止自引用循环：
 1. **产品合入 SHA**：`1c65aed`（PR #7 合并提交，静态唯一准绳）；
@@ -16,8 +16,8 @@
 
 | 层次划分 | 覆盖范围与分支路径 | 当前真实状态与事实边界 |
 |---|---|---|
-| **第一层：主线已合并 (Mainline Merged)** | 分支：`origin/rebuild`<br>产品代码基线: `1c65aed`<br>(动态 HEAD 随文档与工程治理推进) | • **M0 / M1 / M2 / M3-BASE** 基础架构稳固。<br>• **PR #1 (Merged)**：CI 最小恢复与安全边界（`1b5fe76`）。<br>• **PR #2 (Merged)**：修复 ADR 0005 存储语义、消除 URL 逃逸、收敛单源 SOP 蓝图（`443773c`）。<br>• **PR #4 (Merged)**：统一 7 字段代理交付回复强制标准与全局工作区规则（`442c73f` / `255e635`）。<br>• **PR #5 (Merged)**：代码地图、基线记忆与 CRG 索引试点及失效降级规范（`441770f` / `dfa38ef`）。<br>• **PR #3 (Merged)**：ChatGPT 网页安全交互、方案受控导入门禁与审查反馈包（`9aecd45` / `f2900a8`）。<br>• **PR #7 (Merged)**：AISS-A1 可信证据链 R1–R4 与合入前门禁收尾（MERGE_SHA `1c65aed`；批准 HEAD `1a454e4`；产品代码提交 `a739d02`）。此层代码为目前正式交付产品基线。 |
-| **第二层：独立 PR 待审 (Open PRs Pending Review)** | 本轮基线同步 PR（`docs/aiss-a1-merge-baseline-sync`，本文件所在提交） | • 仅包含本文件、`CODE_MAP.md`、A1 任务台账/计划状态与最终验收报告，无产品代码改动。<br>• 合入后本层关闭；`docs/novice-website-mode` 仍为本地独立分支（未提 PR，等待维护者裁定）。 |
+| **第一层：主线已合并 (Mainline Merged)** | 分支：`origin/rebuild`<br>产品代码基线: `1c65aed`<br>(动态 HEAD 随文档与工程治理推进) | • **M0 / M1 / M2 / M3-BASE** 基础架构稳固。<br>• **PR #1 (Merged)**：CI 最小恢复与安全边界（`1b5fe76`）。<br>• **PR #2 (Merged)**：修复 ADR 0005 存储语义、消除 URL 逃逸、收敛单源 SOP 蓝图（`443773c`）。<br>• **PR #4 (Merged)**：统一 7 字段代理交付回复强制标准与全局工作区规则（`442c73f` / `255e635`）。<br>• **PR #5 (Merged)**：代码地图、基线记忆与 CRG 索引试点及失效降级规范（`441770f` / `dfa38ef`）。<br>• **PR #3 (Merged)**：ChatGPT 网页安全交互、方案受控导入门禁与审查反馈包（`9aecd45` / `f2900a8`）。<br>• **PR #7 (Merged)**：AISS-A1 可信证据链 R1–R4 与合入前门禁收尾（MERGE_SHA `1c65aed`；批准 HEAD `1a454e4`；产品代码提交 `a739d02`）。此层代码为目前正式交付产品基线。<br>• **PR #8 (Merged)**：A1 合入后工程基线同步（docs-only；MERGE_SHA `ce04628`；合并结果 tree 与分支 HEAD `394fbcc` 一致，无产品代码改动）。 |
+| **第二层：独立 PR 待审 (Open PRs Pending Review)** | 当前无 OPEN PR | • PR #7（A1）与基线同步 PR #8 均已合入；`docs/novice-website-mode` 仍为本地独立分支（未提 PR，等待维护者裁定）。 |
 | **第三层：本地工作区在研未提交 (Local In-Progress / Uncommitted)** | 路径：`/Users/jamesho/ai-solo-studio-rebuild`<br>（原工作区未提交文件） | • 包含 8 个未提交修改（`e2e/shell.e2e.ts`, `src/core/app/task-controller.ts`, `src/core/thinking/index.ts`, `App.tsx`, `SettingsPage.tsx`，以及未跟踪的 `autonomous-feedback-loop.ts`, `chatgpt-devkit.ts`, `tests/autonomous-feedback-loop.test.ts`）。<br>• 8 个文件 SHA-256 在 A1 全程与收尾时逐一核对一致（见 `docs/reviews/AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001/workspace-protection-after.txt`）。<br>• **严格约束**：受 100% 隔离保护，严禁画入当前主线架构，不能作为现有代码引用。 |
 
 ---

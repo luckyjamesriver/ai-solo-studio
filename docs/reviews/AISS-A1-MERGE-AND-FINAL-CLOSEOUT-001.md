@@ -5,6 +5,7 @@
 - **领取基底（合并前）**：`rebuild = e69ca8511a17acfc4427954af13ef6d364ffb553`；PR HEAD = 批准 HEAD（严格一致）
 - **主干 MERGE_SHA**：`1c65aedd808b14207d8b6db6ef0d68ee3b065194`（合并时间 2026-11-24T19:28:38Z）
 - **合并方式**：GitHub 受管合并（Merge pull request → merge commit，保留全部提交历史）
+- **本报告最终更新提交**：docs-only（记录基线同步合并、实际清理与最终台账）；该更新 PR 合入后动态 HEAD 前移，**产品交付基线仍为 `1c65aed`**，最终 HEAD 与其 CI 见最终回执
 - **A1 关闭状态**：`AISS_A1_MERGED_VERIFIED_COMPLETE`
 - **边界**：不启动 R5，不启动 A2–A6，不扩大产品范围，不修改候选身份。
 
@@ -16,12 +17,12 @@
 | :-- | :-- | :-- |
 | PR #7 已合入 | **是**：state=MERGED，MERGE_SHA `1c65aed` | `gates/merge-verification.txt`、PR #7 页面 |
 | 合并结果源码身份核对通过 | **是**：merge tree `48eb6243…` = 批准 HEAD tree；`git diff 1a454e4..1c65aed` 为空；产品文件 blob 逐一相同 | `gates/merge-verification.txt` §3–§4 |
-| 精确主干适用 CI 全部通过 | **是**：合并提交 `1c65aed` 的 `push` CI Run `45470615272` 4/4 job success（不是 PR CI） | `gates/ci-merge-1c65aed.json` |
+| 精确主干适用 CI 全部通过 | **是**：产品合并提交 `1c65aed` 的 push CI Run `45470615272` **4/4**；基线同步合并提交 `ce04628` 的 push CI Run `45474562401` **4/4**（均不是 PR CI） | `gates/ci-merge-1c65aed.json`、`gates/ci-merge2-ce04628.json` |
 | 工程基线及代码地图完成同步 | **是**：`docs/CURRENT_BASELINE.md`、`docs/engineering/CODE_MAP.md`、A1 计划台账状态、本验收报告 | 本文 §4 |
 | 双索引状态如实登记 | **是**：CRG 三字段 + 真实检索命中；Graphify 语义索引 `NOT_VERIFIED` | 本文 §5 |
 | 历史证据完整保留 | **是**：R1–R4 / 合入前收尾全部报告与证据未删除、未改写；临时副本中唯一未入仓探针已另存 | 本文 §6、`historical-temp-copies/` |
 | 原主工作区及其他任务未受损 | **是**：8 个在研文件 SHA-256 8/8 一致；其他工作树未改动 | `workspace-protection-*.txt` |
-| 本任务资源完成核销或有明确保留记录 | **是**：清理明细与保留原因见 §6 | `cleanup-before.txt` / `cleanup-after.txt` |
+| 本任务资源完成核销或有明确保留记录 | **是**：`/tmp/a1-baseline`、CRG 索引副本、dist 产物、本任务接管工作树均已实际退役；保留项均有原因（§6） | `cleanup-before.txt` / `cleanup-after.txt` |
 
 ---
 
@@ -51,6 +52,13 @@ PR 标题与描述已更新为最终修订、45 项探针、最终 HEAD、CI 身
   - `git diff --stat a739d02..1c65aed -- src tests vitest.probes.config.ts` 为空；
   - `runner.ts` / `adjudicate.ts` / `vitest.ts` / probes / 探针配置 blob 逐一相同（见证据）。
 
+### 2.1 基线同步 PR（docs-only）
+
+- PR #8 `docs/aiss-a1-merge-baseline-sync` → `rebuild`：分支 HEAD `394fbcc2000204f7a0fb8100839299b44184a099`。
+- **MERGE_SHA = `ce04628ff428b6a7be6583e38949fe6aa6179fc2`**；父提交：`1c65aed`（产品合并）+ `394fbcc`（基线同步）。
+- 合并结果 tree `d3a321b8…` = 分支 HEAD tree；`git diff 394fbcc..ce04628` 为空；`git diff 1c65aed..ce04628 -- src tests e2e package.json vitest*.ts` 为空（确认**无产品代码改动**）。
+- 该合并使「工程基线、代码地图、A1 台账与最终验收报告」进入主干；产品交付基线仍为 `1c65aed`。
+
 ---
 
 ## 3. 主干 CI（合并提交 `1c65aed`，push 触发，非 PR CI）
@@ -69,6 +77,19 @@ PR 标题与描述已更新为最终修订、45 项探针、最终 HEAD、CI 身
 - 该 CI 由 **push 到 `rebuild`（合并提交）** 触发，**不是 PR CI**；
 - 与批准 HEAD 的 exact-HEAD CI（Run `45455480459`）结果一致：同一 tree、同一门禁；
 - 证据：`gates/ci-merge-1c65aed.json`（每个 job / step 的 conclusion），`gates/ci-pr-1a454e4.json`。
+
+### 3.1 基线同步合并提交 `ce04628` 的主干 CI（push 触发）
+
+- **基线同步分支 HEAD**：`394fbcc2000204f7a0fb8100839299b44184a099`（PR #8）→ PR CI Run `45472104910` **4/4 success**（合入门禁）。
+- **合并提交**：`ce04628ff428b6a7be6583e38949fe6aa6179fc2`（event=`push`）→ Run `45474562401`
+- **结论**：**4/4 job success**（重跑后）。
+  - `test (ubuntu-latest)`：success（19:51:08 → 19:52:42，`771 passed / 40 skipped` + build）
+  - `probes (ubuntu-latest)`：success（19:51:08 → 19:52:07，45 passed）
+  - `probes (macos-latest)`：success（20:01:08 → 20:03:03，45 passed）
+  - `test (macos-latest)`：success（20:22:37 → 20:32:40，`773 passed / 38 skipped` + build + Electron E2E `56 passed`）
+- **基础设施事实（如实记录，未伪装）**：`test (macos-latest)` 前两次排队约 15 分钟后在**任何 step 开始前**被 GitHub runner 队列取消（`steps: []` / `cancelled`），属 macOS runner 容量问题；执行 `gh run rerun --failed` 两次后第三次成功。同一次 run 的其余三个 job 首次即 success；取消不改变提交身份，最终以同一 `ce04628` 的重跑结果为准。
+- 该 CI 由 push 到 `rebuild`（合并提交）触发，**不是 PR CI**；合并 tree `d3a321b8…` = 分支 HEAD tree。
+- 证据：`gates/ci-merge2-ce04628.json`（含重跑后的 job/step conclusion）、`gates/ci-pr8-394fbcc.json`。
 
 ---
 
@@ -124,15 +145,15 @@ PR 标题与描述已更新为最终修订、45 项探针、最终 HEAD、CI 身
 | `a1-r3/dist-electron`、`dist-renderer` | 可重建构建产物 | **退役** | 6.1M |
 | `/tmp/a1-closeout-old` | 上一轮旧候选对照 worktree | **已退役**（上一轮证据落盘后） | — |
 | `graphify-out/` | AST 状态检查产物 | **已退役**（可重建） | — |
-| `/Users/jamesho/ai-solo-studio-a1-r3` | 本任务接管工作树（已合入、无独有修改；`node_modules` 为指向 a1 的符号链接） | **本报告 PR 推送且 CI 通过后、合入前退役**（执行记录见最终回执） | 37M |
+| `/Users/jamesho/ai-solo-studio-a1-r3` | 本任务接管工作树（已合入、无独有修改；`node_modules` 为指向 a1 的符号链接） | **已退役（实测）**：PR #8 推送且 CI 4/4 后、合入前执行；仅移除符号链接，未触碰 a1 的 node_modules（459M 完好） | 37M |
 | `/Users/jamesho/ai-solo-studio-a1` | **其他执行体**（Cursor A1）工作树；分支已合入、工作区干净 | **保留**（任务禁令：不得强制删除其他执行体工作树） | 500M |
 | `/tmp/a1-*.log`、`/tmp/a1-*.json` | 历轮 A1 测试输出/失败日志 | **保留**（历史失败日志） | 2.4M（18 文件） |
 | `/Users/jamesho/a1-evidence` | 历轮 A1/A0 证据索引与清单 | **保留**（历史证据） | 1.3M |
 | 其他任务工作树与资源（a0-delivery、audit、ci-fix、p0-integrity、codemap、novice-docs、reporting-standard、AI-CoWork-old-archive、a0-scratch、studio-test、studio-try） | 非本任务 | **不触碰** | — |
 | Electron/Vitest 进程 | 本任务测试实例 | 已全部退出，无遗留 | 0 |
 
-- **实测释放**：176M + 69M + 6.1M ≈ 251M（本报告提交时）+ 37M（a1-r3 于本报告 PR 合入前退役）≈ **288M**；
-- **工作树数量**：11（清理前）→ 11（上一轮临时 worktree 已移除）→ **10**（a1-r3 退役后）；
+- **实测释放**：176M + 69M + 6.1M + 37M = **288M**（全部已实际执行）；
+- **工作树数量**：11（清理前）→ **10**（a1-r3 退役后实测）；
 - 清理前后空间明细：`cleanup-before.txt` / `cleanup-after.txt`。
 
 ### 6.2 原主工作区保护
@@ -173,8 +194,10 @@ docs/reviews/
 └── AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001/
     ├── gates/
     │   ├── merge-verification.txt                    # 合入前核对 + MERGE_SHA + 源码身份
-    │   ├── ci-pr-1a454e4.json                        # 批准 HEAD 的 exact-HEAD CI（4/4）
-    │   ├── ci-merge-1c65aed.json                     # 合并提交的主干 CI（4/4）
+    │   ├── ci-pr-1a454e4.json                        # A1 批准 HEAD 的 exact-HEAD CI（4/4）
+    │   ├── ci-merge-1c65aed.json                     # A1 合并提交的主干 CI（4/4）
+    │   ├── ci-pr8-394fbcc.json                       # 基线同步分支的 PR CI（4/4）
+    │   ├── ci-merge2-ce04628.json                    # 基线同步合并提交的主干 CI（4/4）
     │   ├── code-review-graph-status.txt
     │   ├── code-review-graph-query.txt
     │   ├── code-review-graph-update.txt
@@ -195,9 +218,9 @@ docs/reviews/
 ```markdown
 **任务：** `AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001` ｜ **状态：** `COMPLETE`
 **结果：** PR #7 已受管合入 rebuild，合并源码身份与批准候选一致，主干 CI 4/4，A1 基线/代码地图/双索引与资源核销完成，A1 关闭。
-**交付：** PR #7 (Merged)、MERGE_SHA `1c65aed`、产品基线 `1c65aed`、`docs/CURRENT_BASELINE.md`、`docs/engineering/CODE_MAP.md`、`docs/reviews/AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001.md`。
-**验证：** 合并提交 CI 4/4（Ubuntu/macOS test+probes，probes 各 45）；合并 tree = 批准 HEAD tree；本机 typecheck/build 通过、单测 773、E2E 56、Seatbelt 25/25；CRG 3691 节点/56359 边/271 文件且检索可用。
-**风险：** Graphify 语义索引 NOT_VERIFIED；Windows/真实登录态未验证（其余已接受风险沿用既有登记）。
-**下一步：** A1 已关闭，停止；不自行启动 A2–A6（无须维护者介入）。
+**交付：** PR #7 (Merged, MERGE_SHA `1c65aed`)、PR #8 (Merged, MERGE_SHA `ce04628`)、产品基线 `1c65aed`、`docs/CURRENT_BASELINE.md`、`docs/engineering/CODE_MAP.md`、`docs/reviews/AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001.md`。
+**验证：** `1c65aed` 与 `ce04628` 两次主干 CI 均 4/4（Ubuntu/macOS test+probes，probes 各 45）；两次合并 tree 均与对应分支 HEAD 一致；本机单测 773、E2E 56、Seatbelt 25/25；CRG 3691 节点/56359 边/271 文件且检索可用；原主工作区 8/8 SHA-256 一致。
+**风险：** Graphify 语义索引 NOT_VERIFIED；Windows 与真实登录态未验证（其余已接受风险沿用既有登记）。
+**下一步：** A1 已关闭并停止；不自行启动 A2–A6（无须维护者介入）。
 **详细证据：** `docs/reviews/AISS-A1-MERGE-AND-FINAL-CLOSEOUT-001.md`
 ```
